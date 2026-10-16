@@ -12,8 +12,8 @@
 
     <id>wps-claude-addon</id>
     <version>1.1.0</version>
-    <name>WPS Claude 智能助手</name>
-    <description>通过自然语言操控 WPS Office，让你的办公变得更智能。使用 PowerShell COM 桥接，稳定可靠。</description>
+    <name>MCP 工具</name>
+    <description>MCP（Model Context Protocol）工具集：让 AI 助手通过 PowerShell COM 桥接直接操控 WPS Office 的文字、表格与演示。</description>
     <author>WPS-Claude-Skills Team (老王出品)</author>
 
     <!-- 支持的WPS应用类型 -->

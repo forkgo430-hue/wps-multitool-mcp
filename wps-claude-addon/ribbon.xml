@@ -2,12 +2,16 @@
 <!-- Input: 功能区 UI 定义 -->
 <!-- Output: WPS 功能区按钮布局 -->
 <!-- Pos: Windows 加载项功能区配置。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。 -->
+<!-- 注意：WPS 对 customUI 属性支持有限，仅使用已验证的 imageMso（Info），不添加 size/screentip/supertip 等 Office 专有属性。 -->
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
     <ribbon startFromScratch="false">
         <tabs>
-            <tab id="tabClaude" label="Claude助手">
-                <group id="claudeGroup" label="COM桥接">
+            <tab id="tabMcp" label="MCP工具">
+                <group id="grpMcp" label="MCP">
                     <button id="btnStatus" onAction="ribbonCheckStatus" label="连接状态" imageMso="Info"/>
+                    <button id="btnShowWindow" onAction="ribbonShowWindow" label="显示窗口" imageMso="Info"/>
+                    <button id="btnDocInfo" onAction="ribbonDocInfo" label="文档概览" imageMso="Info"/>
+                    <button id="btnAbout" onAction="ribbonHelp" label="使用说明" imageMso="Info"/>
                 </group>
             </tab>
         </tabs>
