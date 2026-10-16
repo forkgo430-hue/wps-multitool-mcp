@@ -4,12 +4,16 @@
 
 AI编程助手通过自然语言操控WPS Office的MCP工具集。
 
+> **WPS Office 多面手 MCP** — 基于 [wps-skills](https://github.com/lc2panda/wps-skills) 演进。
+> 当前维护者：**赢容**；原作者：**钱七 & 老王团队**。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 项目定位
 
 本项目是MCP Server + Skills框架，让AI助手（Claude Code/Cursor/Augment等）能操控WPS Office。
 - 259 个专业工具 + 12 个内置工具 = 271 个；**默认只列 40 个**（基础档，按需加载）
-- 分布：Excel 82 / Word 45 / PPT 115 / 通用 13 / 工具组管理 5
+- 分布：Excel 82 / Word 45 / PPT 115 / 通用 14 / 工具组管理 5
 - 仅支持 Windows（WPS 的 COM 自动化只在 Windows 可用）
+- v2.0 起走**常驻桥进程**：冷启动约 5 秒，之后每次调用 2~3ms（一应用一进程，互不阻塞）
 
 ## 前提条件
 

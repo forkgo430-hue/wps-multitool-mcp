@@ -23,6 +23,7 @@ import { allTools } from '../tools';
 import { onToolGroupsChanged } from '../tools/common/toolgroups';
 import { createChildLogger } from '../utils/logger';
 import { McpError } from '../utils/error';
+import { MCP_NAME, MCP_VERSION } from '../version';
 
 const logger = createChildLogger('McpServer');
 
@@ -42,8 +43,9 @@ export interface McpServerConfig {
  * 默认配置
  */
 const DEFAULT_CONFIG: McpServerConfig = {
-  name: 'wps-office-mcp',
-  version: '1.0.0',
+  name: MCP_NAME,
+  // 版本号只有 package.json 一个真相源，见 src/version.ts
+  version: MCP_VERSION,
   debug: false,
 };
 

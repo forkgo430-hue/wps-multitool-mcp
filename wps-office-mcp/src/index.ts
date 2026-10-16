@@ -13,6 +13,7 @@
 import { createMcpServer } from './server/mcp-server';
 import { log, createChildLogger } from './utils/logger';
 import { psDaemon } from './client/ps-daemon';
+import { MCP_NAME, MCP_VERSION } from './version';
 
 // 导出所有模块，方便外部使用
 export { WpsMcpServer, createMcpServer } from './server/mcp-server';
@@ -36,8 +37,8 @@ async function main(): Promise<void> {
 
   // 创建服务器实例
   const server = createMcpServer({
-    name: 'wps-office-mcp',
-    version: '1.0.0',
+    name: MCP_NAME,
+    version: MCP_VERSION,
     debug: process.env.DEBUG === 'true',
   });
 

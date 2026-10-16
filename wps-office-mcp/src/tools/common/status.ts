@@ -28,6 +28,7 @@ import {
 } from '../../types/tools';
 import { wpsClient } from '../../client/wps-client';
 import { psDaemon } from '../../client/ps-daemon';
+import { versionLine, MCP_VERSION, MCP_AUTHOR, MCP_BASED_ON } from '../../version';
 
 /** PowerShell 侧 wpsStatus 动作返回的数据形状 */
 interface AppState {
@@ -143,6 +144,12 @@ export const statusHandler: ToolHandler = async (): Promise<ToolCallResult> => {
   }
 
   const payload = {
+    version: {
+      line: versionLine(),
+      version: MCP_VERSION,
+      author: MCP_AUTHOR,
+      basedOn: MCP_BASED_ON,
+    },
     bridge,
     wps: wps
       ? {
