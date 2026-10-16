@@ -21,6 +21,8 @@ import { log, logRequest, logResponse } from '../utils/logger';
 import { errorUtils } from '../utils/error';
 import { psDaemon, DaemonUnavailableError } from './ps-daemon';
 import { AppKey, resolveAppKey } from './action-routes';
+import { currentSignal } from '../server/cancel-context';
+import { CancelError } from '../bridge/cancellable';
 
 // 仅 Windows：优先走常驻桥（省掉每次 spawn powershell + 解析 5000 行脚本）。
 // 设 WPS_USE_DAEMON=0 可强制退回直跑模式。
@@ -160,7 +162,8 @@ async function execWpsAction(
 ): Promise<unknown> {
   if (USE_DAEMON && !daemonBroken) {
     try {
-      return await psDaemon.call(action, params, app);
+      // 取消信号从 MCP 的 notifications/cancelled 一路传到这里（见 server/cancel-context）
+      return await psDaemon.call(action, params, app, { signal: currentSignal() });
     } catch (err) {
       // 只有"请求压根没送出去"（桥起不来）才允许退回直跑。
       // 超时那类错误请求可能已经在 WPS 里执行了一半，自动重放会变成执行两次 —— 一律如实抛出。
@@ -213,6 +216,8 @@ export class WpsClient {
     } catch (error) {
       const duration = Date.now() - startTime;
       logResponse(action, false, duration);
+      // 取消不是 WPS 出错，别被 wrap 成"WPS 调用失败"；原样往上抛
+      if (error instanceof CancelError) throw error;
       this.status.connected = false;
       throw errorUtils.wrap(error, `WPS 调用失败（COM 桥）: ${action}`);
     }

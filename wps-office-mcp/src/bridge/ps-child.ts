@@ -25,6 +25,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { CancelError, isReadOnlyAction } from './cancellable';
 
 /** 常驻分发脚本（随包分发，见 .npmignore） */
 const PS_SCRIPT = path.join(__dirname, '../../scripts/wps-comd.ps1');
@@ -111,6 +112,15 @@ interface PendingCall {
   resolve: (value: Record<string, unknown>) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+  /** 调用方已放弃等待（只读动作专属）：回话到了直接丢，不再交给调用方 */
+  abandoned?: boolean;
+  /**
+   * 通知调用方"不等了"的专用通道。
+   * 不能直接用 reject —— reject 是 dispatch 自己的 promise 的 reject，
+   * 一 reject 就会让 drain 收尾、把 inFlight 置 false，
+   * 于是下一个请求会被写进一个【还在跑上一个动作】的 STA 进程。
+   */
+  onAbandon?: (err: Error) => void;
 }
 
 /** 队列里等位的一个请求 */
@@ -123,6 +133,18 @@ interface QueuedTask {
   reject: (err: Error) => void;
   /** 排队超时定时器 */
   timer?: NodeJS.Timeout;
+  /** 调用方（桥）给的关联 id，用于跨进程取消 */
+  externalId?: string;
+  /** 调用方的取消信号 */
+  signal?: AbortSignal;
+}
+
+/** call() 的可选参数 */
+export interface CallOptions {
+  /** 取消信号：来自 MCP 客户端的 notifications/cancelled */
+  signal?: AbortSignal;
+  /** 桥侧的请求 id，用于后续按 id 取消 */
+  externalId?: string;
 }
 
 export interface ChildStats {
@@ -145,6 +167,8 @@ export interface ChildStats {
   lastQueueWaitMs: number;
   /** 累计因队列满/排队超时被拒的次数 */
   rejected: number;
+  /** 累计被取消的次数（排队中出队 + 只读动作放弃等待） */
+  cancelled: number;
 }
 
 export class PsChildDaemon {
@@ -168,6 +192,12 @@ export class PsChildDaemon {
    * 也让 STA 约束失效）。所以这里用一个同步置位的标志位。
    */
   private inFlight = false;
+  /** 在途请求的桥侧 id / 动作名 / 子进程侧 id —— 取消时要靠它们定位 */
+  private inFlightId: string | null = null;
+  private inFlightAction: string | null = null;
+  private inFlightPendingId: string | null = null;
+  /** 累计被取消的次数 */
+  private cancelled = 0;
 
   constructor(private readonly appKey: string) {}
 
@@ -189,6 +219,7 @@ export class PsChildDaemon {
       queueTimeoutMs: queueTimeoutMs(),
       lastQueueWaitMs: this.lastQueueWaitMs,
       rejected: this.rejected,
+      cancelled: this.cancelled,
     };
   }
 
@@ -203,8 +234,18 @@ export class PsChildDaemon {
    *   - 队列上限 queueMax（默认 4），超了立刻回 QueueBusyError，不让调用方干等；
    *   - 排队超时 queueTimeoutMs（默认 10s），与动作超时独立；
    *   - 排他的动作（open/save/quit 等）插队，避免用户主动操作被一堆读操作压住。
+   *
+   * 取消语义（详见 bridge/cancellable.ts）
+   * --------------------------------------
+   *   排队中被取消 → 直接出队，请求从未送达，任何动作都安全
+   *   已在途中被取消 → 只有【只读动作】才放弃等待（回话到了丢弃，子进程继续跑完）；
+   *                    写入动作一律不放弃，老实等它跑完如实返回
    */
-  async call(action: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  async call(
+    action: string,
+    params: Record<string, unknown> = {},
+    opts: CallOptions = {}
+  ): Promise<Record<string, unknown>> {
     if (this.disposed) {
       throw new ChildUnavailableError(`[${this.appKey}] 子进程已关闭`);
     }
@@ -220,6 +261,11 @@ export class PsChildDaemon {
 
     const exclusive = exclusiveSet().has(action);
 
+    const signal = opts.signal;
+    if (signal?.aborted) {
+      throw new CancelError(`[${this.appKey}] 请求在送出前已被取消（动作=${action}），从未送达`);
+    }
+
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       const task: QueuedTask = {
         action,
@@ -228,6 +274,8 @@ export class PsChildDaemon {
         enqueuedAt: Date.now(),
         resolve,
         reject,
+        externalId: opts.externalId,
+        signal,
       };
       const qTimeout = queueTimeoutMs();
       task.timer = setTimeout(() => {
@@ -245,8 +293,79 @@ export class PsChildDaemon {
       if (exclusive) this.queue.unshift(task);
       else this.queue.push(task);
 
+      // 取消信号：只管"还在排队"这一档（已送出的由 dispatch 里的监听器按只读/写入分开处理）
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => {
+            const i = this.queue.indexOf(task);
+            if (i < 0) return; // 已经送出了，不归这里管
+            this.queue.splice(i, 1);
+            if (task.timer) clearTimeout(task.timer);
+            this.cancelled += 1;
+            reject(
+              new CancelError(
+                `WPS ${this.appKey} 请求在排队中被取消（动作=${action}）。该请求从未送达，可以安全重发。`
+              )
+            );
+          },
+          { once: true }
+        );
+      }
+
       void this.drain();
     });
+  }
+
+  /**
+   * 按桥侧 id 取消一个请求（跨进程取消入口）。
+   * @returns 是否真的取消了。false = 找不到 / 已送出且是写入动作（不许取消）
+   */
+  cancelByExternalId(externalId: string): { ok: boolean; reason: string } {
+    const i = this.queue.findIndex((t) => t.externalId === externalId);
+    if (i >= 0) {
+      const task = this.queue[i];
+      this.queue.splice(i, 1);
+      if (task.timer) clearTimeout(task.timer);
+      this.cancelled += 1;
+      task.reject(
+        new CancelError(
+          `WPS ${this.appKey} 请求在排队中被取消（动作=${task.action}）。该请求从未送达，可以安全重发。`
+        )
+      );
+      return { ok: true, reason: '排队中，已出队（从未送达）' };
+    }
+    if (this.inFlightId === externalId) {
+      if (!isReadOnlyAction(this.inFlightAction ?? '')) {
+        return {
+          ok: false,
+          reason: `动作 ${this.inFlightAction} 已送出且是【写入】动作，中途放弃会让调用方误判成败，不予取消`,
+        };
+      }
+      const p = this.pending.get(this.inFlightPendingId ?? '');
+      if (!p) return { ok: false, reason: '已在途但找不到在途记录' };
+      this.abandonPending(this.inFlightPendingId ?? '');
+      this.cancelled += 1;
+      return { ok: true, reason: `动作 ${this.inFlightAction} 已在途（只读）：放弃等待，子进程会跑完，回话丢弃` };
+    }
+    return { ok: false, reason: '没有找到该请求（已完成或从未进入本应用）' };
+  }
+
+  /**
+   * 放弃一个在途请求：只通知调用方"不等了"，【不动 dispatch 的 promise】。
+   * dispatch 必须继续等到子进程真的回话，否则 inFlight 会提前释放 ——
+   * 那等于允许下一个请求闯进一个还在忙的 STA 进程。
+   */
+  private abandonPending(pendingId: string): void {
+    const p = this.pending.get(pendingId);
+    if (!p || p.abandoned) return;
+    p.abandoned = true;
+    p.onAbandon?.(
+      new CancelError(
+        `WPS ${this.appKey} 请求已被放弃等待（动作=${this.inFlightAction}）。` +
+          '动作仍在子进程里跑完（只读，无副作用），其回话会被丢弃。'
+      )
+    );
   }
 
   /**
@@ -262,15 +381,31 @@ export class PsChildDaemon {
       task.timer = undefined;
     }
     this.inFlight = true;
+    this.inFlightId = task.externalId ?? null;
+    this.inFlightAction = task.action;
+    this.inFlightPendingId = null;
     this.lastQueueWaitMs = Date.now() - task.enqueuedAt;
 
     try {
-      const msg = await this.dispatch(task.action, task.params);
+      // 注意：dispatch 的 promise 要一直等到子进程【真的】回话才 settle ——
+      // 哪怕调用方中途放弃了等待，inFlight 也不能提前变 false，
+      // 否则下一个请求会被写进一个还在忙的 STA 进程里。
+      const msg = await this.dispatch(task.action, task.params, {
+        signal: task.signal,
+        onPending: (pendingId) => {
+          this.inFlightPendingId = pendingId;
+        },
+        // 只读动作被放弃等待时走这条；写入动作永远不会触发
+        onAbandon: (err) => task.reject(err),
+      });
       task.resolve(msg);
     } catch (err) {
       task.reject(err as Error);
     } finally {
       this.inFlight = false;
+      this.inFlightId = null;
+      this.inFlightAction = null;
+      this.inFlightPendingId = null;
       // 无论成败都继续放下一个，否则一次失败会把整个队列堵死
       void this.drain();
     }
@@ -279,7 +414,12 @@ export class PsChildDaemon {
   /** 真正把一行 JSON 写进子进程并等它的响应 */
   private dispatch(
     action: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    opts: {
+      signal?: AbortSignal;
+      onPending?: (pendingId: string) => void;
+      onAbandon?: (err: Error) => void;
+    } = {}
   ): Promise<Record<string, unknown>> {
     return new Promise<Record<string, unknown>>((resolve, reject) => {
       // 冷启动放在真正送出时才做：排队中的请求不必陪着等握手
@@ -301,7 +441,34 @@ export class PsChildDaemon {
             );
           }, timeoutMs);
 
-          this.pending.set(id, { resolve, reject, timer });
+          this.pending.set(id, {
+            resolve,
+            reject,
+            timer,
+            onAbandon: opts.onAbandon,
+          });
+          opts.onPending?.(id);
+
+          // 已送出之后的取消：只读动作才能"放弃等待"，写入动作一律不许
+          if (opts.signal) {
+            opts.signal.addEventListener(
+              'abort',
+              () => {
+                if (!isReadOnlyAction(action)) {
+                  // 不取消，也不抛错 —— 让它老实跑完，调用方如实拿到结果
+                  this.logStderr(
+                    `[${this.appKey}] 收到取消信号，但动作 ${action} 是写入动作：` +
+                      '中途放弃会让调用方误判成败，已忽略取消，等它跑完'
+                  );
+                  return;
+                }
+                this.abandonPending(id);
+                this.cancelled += 1;
+              },
+              { once: true }
+            );
+          }
+
           try {
             if (!this.proc?.stdin || this.proc.stdin.destroyed) {
               throw new Error('stdin 不可写');
@@ -478,6 +645,12 @@ export class PsChildDaemon {
     }
     clearTimeout(pending.timer);
     this.pending.delete(id);
+    // 调用方已放弃等待：这条回话只用来放行 drain（让队列继续），不交给调用方
+    if (pending.abandoned) {
+      this.logStderr(`[${this.appKey}] 已放弃的请求回话到达，丢弃（动作=${this.inFlightAction}）`);
+      pending.resolve({ cancelled: true });
+      return;
+    }
     pending.resolve(msg);
   }
 

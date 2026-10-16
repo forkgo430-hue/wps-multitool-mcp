@@ -5933,6 +5933,30 @@ switch ($Action) {
         }
     }
 
+    # 【诊断】故意占住这一路一段时间 —— 用来实测排队、超时、取消这些时序行为。
+    # 没有它，"队列上限有没有生效""取消后 inFlight 会不会提前变 false"这类问题
+    # 只能靠猜，因为本机动作都太快，观察不到中间状态。
+    "__sleep" {
+        $ms = 1000
+        try { if ($p.ms) { $ms = [int]$p.ms } } catch {}
+        if ($ms -lt 0) { $ms = 0 }
+        if ($ms -gt 600000) { $ms = 600000 }
+        Start-Sleep -Milliseconds $ms
+        Output-Json @{ success = $true; data = @{ slept = $ms } }
+    }
+
+    # 同上，但被 TS 侧判为【只读】（见 bridge/cancellable.ts 的白名单）。
+    # 之所以要两个：取消机制对"已在途"的请求是按只读/写入分岔的，
+    # 两条路都得能实测，只留一个就有一条永远验不到。
+    "__sleepRead" {
+        $ms = 1000
+        try { if ($p.ms) { $ms = [int]$p.ms } } catch {}
+        if ($ms -lt 0) { $ms = 0 }
+        if ($ms -gt 600000) { $ms = 600000 }
+        Start-Sleep -Milliseconds $ms
+        Output-Json @{ success = $true; data = @{ slept = $ms } }
+    }
+
     # 【临时诊断】原样回显收到的参数，用来判断"参数到底有没有送到"
     "__probeParams" {
         $keys = @()

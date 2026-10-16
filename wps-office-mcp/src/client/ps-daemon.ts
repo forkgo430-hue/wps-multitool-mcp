@@ -34,6 +34,7 @@ import * as path from 'path';
 import { ChildProcess, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from '../utils/logger';
+import { CancelError } from '../bridge/cancellable';
 
 /** 桥进程入口（与客户端同时随包分发） */
 const BRIDGE_ENTRY = path.join(__dirname, '..', 'bridge', 'index.js');
@@ -84,6 +85,8 @@ export interface BridgeClientStats {
   restarts: number;
   pending: number;
   disposed: boolean;
+  /** 累计被取消的次数 */
+  cancelled: number;
 }
 
 export class PsDaemon {
@@ -96,6 +99,8 @@ export class PsDaemon {
   private connectedAt: number | null = null;
   private restarts = 0;
   private bridgeProc: ChildProcess | null = null;
+  /** 累计被取消的次数 */
+  private cancelled = 0;
 
   get isReady(): boolean {
     return this.sock !== null && this.helloOk;
@@ -115,19 +120,28 @@ export class PsDaemon {
       restarts: this.restarts,
       pending: this.pending.size,
       disposed: this.disposed,
+      cancelled: this.cancelled,
     };
   }
 
   /**
    * 调用一个动作。业务成功/失败都以响应对象 resolve；只有基础设施问题才 reject。
+   *
+   * 取消：传 signal 即可。server 侧收到 notifications/cancelled 时这个 signal 会 abort，
+   * 此时本端立刻 reject（不再等），同时给桥发一条 __cancel —— 让桥那边也把请求撤了
+   * （排队中的直接出队；已在途且是只读动作则放弃等待）。
    */
   async call(
     action: string,
     params: Record<string, unknown> = {},
-    app: string = 'common'
+    app: string = 'common',
+    opts: { signal?: AbortSignal } = {}
   ): Promise<unknown> {
     if (this.disposed) {
       throw new DaemonUnavailableError('桥客户端已关闭（dispose 之后不再接受调用）');
+    }
+    if (opts.signal?.aborted) {
+      throw new CancelError(`请求在送出前已被取消（动作=${action}），从未送达`);
     }
     await this.ensureConnected();
 
@@ -150,6 +164,25 @@ export class PsDaemon {
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
+
+      // 取消：本端立刻不等了，同时请桥把对应的请求撤掉
+      if (opts.signal) {
+        opts.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            this.pending.delete(id);
+            this.cancelled += 1;
+            reject(new CancelError(`请求已被取消（动作=${action}，应用=${app}）`));
+            // 通知桥（fire-and-forget：桥回不回都不影响本端已经放弃）
+            void this.sendCancel(id, app).catch(() => {
+              /* 通知失败无所谓，本端已经不等了 */
+            });
+          },
+          { once: true }
+        );
+      }
+
       try {
         if (!this.sock || this.sock.destroyed) throw new Error('桥连接不可写');
         this.sock.write(line + '\n');
@@ -159,6 +192,15 @@ export class PsDaemon {
         reject(new Error(`写入桥失败: ${(err as Error).message}`));
       }
     });
+  }
+
+  /** 给桥发一条取消指令（不等待结果） */
+  private async sendCancel(targetId: string, app: string): Promise<void> {
+    try {
+      await this.call('__cancel', { targetId }, app);
+    } catch {
+      /* 忽略：取消通知是尽力而为 */
+    }
   }
 
   /** 查桥自身状态（不落到 PowerShell）：桥 PID、各应用子进程状态等 */

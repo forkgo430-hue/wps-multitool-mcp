@@ -255,9 +255,22 @@ async function handleRequest(
     return;
   }
 
+  // 取消：按【原请求的 id】撤。排队中的一定撤得掉；已在途的只有只读动作会"放弃等待"。
+  if (action === '__cancel') {
+    const targetId = String(params.targetId ?? '');
+    const app = normalizeApp(req.app);
+    if (!targetId) {
+      writeLine(sock, { id, success: false, error: '__cancel 缺少 targetId' });
+      return;
+    }
+    const r = getChild(app).cancelByExternalId(targetId);
+    writeLine(sock, { id, success: r.ok, data: { cancelled: r.ok, reason: r.reason } });
+    return;
+  }
+
   const app = normalizeApp(req.app);
   try {
-    const msg = await getChild(app).call(action, params);
+    const msg = await getChild(app).call(action, params, { externalId: id });
     recordLog(app, action, params, msg.success !== false);
     writeLine(sock, {
       id,

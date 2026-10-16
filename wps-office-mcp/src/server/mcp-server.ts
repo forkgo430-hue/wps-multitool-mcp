@@ -18,11 +18,13 @@ import {
 
 import { toolRegistry, ToolRegistry } from './tool-registry';
 import { wpsClient } from '../client/wps-client';
-import { ToolCallResult, ToolCategory } from '../types/tools';
+import { ToolCallResult, ToolCategory, ToolContent } from '../types/tools';
 import { allTools } from '../tools';
 import { onToolGroupsChanged } from '../tools/common/toolgroups';
 import { createChildLogger } from '../utils/logger';
-import { McpError } from '../utils/error';
+import { McpError, formatWpsErrorTag, WpsErrorType } from '../utils/error';
+import { runWithCancel } from './cancel-context';
+import { CancelError } from '../bridge/cancellable';
 import { MCP_NAME, MCP_VERSION } from '../version';
 
 const logger = createChildLogger('McpServer');
@@ -119,11 +121,33 @@ export class WpsMcpServer {
     });
 
     // 处理 tools/call 请求
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
 
       logger.debug('Handling tools/call request', { name, args });
 
+      // 客户端发 notifications/cancelled 时 extra.signal 会 abort。
+      // 把它放进 AsyncLocalStorage，调用链深处（wps-client → 桥 → 子进程）自己取，
+      // 不用改 273 个工具的签名。真正"能不能取消"由 bridge/cancellable.ts 裁决。
+      const signal = extra?.signal;
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => logger.info('Tool call cancelled by client', { name }),
+          { once: true }
+        );
+      }
+      const runIt = () => this.handleToolCall(name, args ?? {});
+      return signal ? runWithCancel({ signal, toolName: name }, runIt) : runIt();
+    });
+  }
+
+  /** tools/call 的实际处理（拆出来是为了好包取消上下文） */
+  private async handleToolCall(
+    name: string,
+    args: Record<string, unknown>
+  ): Promise<{ content: ToolContent[]; isError: boolean }> {
+    {
       // 检查Tool是否存在。不存在时给个线索：是不是"组没加载"？
       if (!this.registry.hasTool(name)) {
         const similar = this.registry.suggestSimilar(name);
@@ -143,12 +167,16 @@ export class WpsMcpServer {
         const callRequest = ToolRegistry.createRequest(name, args || {});
         const result: ToolCallResult = await this.registry.callTool(callRequest);
 
-        // 失败时把稳定错误类型透出去（前缀形式，不改动 isError 语义）
+        // 失败时把错误类型 + 可重试性透出去（前缀形式，不改动 isError 语义）
+        // 形如 [busy|可重试·稍后退避] / [timeout|勿重试·可能已执行一半]
         const content = result.success
           ? result.content
           : result.content.map((c, i) =>
               i === 0 && c.type === 'text' && typeof c.text === 'string' && result.errorType
-                ? { ...c, text: `[${result.errorType}] ${c.text}` }
+                ? {
+                    ...c,
+                    text: `${formatWpsErrorTag(result.errorType, result.retryable)} ${c.text}`,
+                  }
                 : c
             );
 
@@ -157,11 +185,30 @@ export class WpsMcpServer {
           isError: !result.success,
         };
       } catch (error) {
+        // 取消不是故障：单独走一条，别记成 error 吓唬人
+        if (error instanceof CancelError) {
+          logger.info('Tool call cancelled', { name, reason: error.message });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `${formatWpsErrorTag(WpsErrorType.CANCELLED, false)} ${error.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         logger.error('Tool call failed', error);
 
         if (error instanceof McpError) {
           return {
-            content: [{ type: 'text', text: `[${error.wpsType}] ${error.message}` }],
+            content: [
+              {
+                type: 'text',
+                text: `${formatWpsErrorTag(error.wpsType, error.retryable)} ${error.message}`,
+              },
+            ],
             isError: true,
           };
         }
@@ -171,7 +218,7 @@ export class WpsMcpServer {
           error instanceof Error ? error.message : 'Unknown error'
         );
       }
-    });
+    }
   }
 
   /**
