@@ -12,6 +12,8 @@
  * - wps_common_get_app_info: 获取WPS应用信息
  * - wps_common_get_selected_text: 获取选中文本
  * - wps_common_set_selected_text: 替换选中文本
+ * - wps_common_show_window: 将 WPS 置于前台
+ * - wps_common_quit: 结束 WPS
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -529,6 +531,162 @@ export const setSelectedTextHandler: ToolHandler = async (
 };
 
 // ============================================================
+// 8. wps_common_show_window - 将 WPS 置于前台
+// ============================================================
+
+export const showWindowDefinition: ToolDefinition = {
+  name: 'wps_common_show_window',
+  description: `把 WPS 窗口显示出来并置于前台。
+
+使用场景：
+- "WPS 看不见了"
+- "把 WPS 调出来"
+- "显示 WPS 窗口"
+- "WPS 跑到后台了"
+
+特点：
+- 激活已有 WPS 窗口并置于最前
+- COM 自动化实例本身无窗口时，会自动启动一个可见的 WPS 实例
+- 传 launch=false 可只做激活、不启动新实例`,
+  category: ToolCategory.COMMON,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      launch: {
+        type: 'boolean',
+        description: '无可激活窗口时是否启动可见 WPS 实例，默认 true',
+      },
+    },
+    required: [],
+  },
+};
+
+export const showWindowHandler: ToolHandler = async (
+  args: Record<string, unknown>
+): Promise<ToolCallResult> => {
+  const launch = args.launch === undefined ? true : Boolean(args.launch);
+  try {
+    const response = await wpsClient.executeMethod<{
+      apps?: string[];
+      visible?: number;
+      activated?: number;
+      foreground?: boolean;
+      launched?: boolean;
+      message?: string;
+    }>('showWps', { launch });
+
+    if (response.success && response.data) {
+      const d = response.data;
+      const lines: string[] = ['WPS 窗口已唤起：'];
+      if (d.apps && d.apps.length) lines.push(`应用: ${d.apps.join(' / ')}`);
+      lines.push(`设为可见: ${d.visible ?? 0} 个`);
+      lines.push(`激活窗口: ${d.activated ?? 0} 个`);
+      lines.push(`启动可见实例: ${d.launched ? '是' : '否'}`);
+      lines.push(`置前成功: ${d.foreground ? '是' : '否'}`);
+      if (d.message) lines.push(d.message);
+      return {
+        id: uuidv4(),
+        success: true,
+        content: [{ type: 'text', text: lines.join('\n') }],
+      };
+    }
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [
+        {
+          type: 'text',
+          text: `唤起 WPS 窗口失败: ${response.error || '未找到运行中的 WPS 实例'}`,
+        },
+      ],
+      error: response.error,
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `唤起 WPS 窗口出错: ${errMsg}` }],
+      error: errMsg,
+    };
+  }
+};
+
+// ============================================================
+// 9. wps_common_quit - 结束 WPS
+// ============================================================
+
+export const quitDefinition: ToolDefinition = {
+  name: 'wps_common_quit',
+  description: `结束 WPS（Word / Excel / PPT 全部）。
+
+使用场景：
+- "关掉 WPS"
+- "退出 WPS"
+- "结束 WPS 进程"
+
+特点：
+- 先走优雅退出（Quit），未清干净时强制结束残留进程
+- 默认抑制保存提示，避免弹窗阻塞
+- 传 force=false 时只做优雅退出`,
+  category: ToolCategory.COMMON,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      force: {
+        type: 'boolean',
+        description: '是否强制结束残留进程，默认 true；设为 false 只做优雅退出',
+      },
+    },
+    required: [],
+  },
+};
+
+export const quitHandler: ToolHandler = async (
+  args: Record<string, unknown>
+): Promise<ToolCallResult> => {
+  const force = args.force === undefined ? true : Boolean(args.force);
+  try {
+    const response = await wpsClient.executeMethod<{
+      quit?: string[];
+      forced?: boolean;
+      remaining?: number;
+      message?: string;
+    }>('quitWps', { force });
+
+    if (response.success && response.data) {
+      const d = response.data;
+      return {
+        id: uuidv4(),
+        success: true,
+        content: [
+          {
+            type: 'text',
+            text: `${d.message || 'WPS 已退出'}\n优雅退出: ${
+              (d.quit || []).join(', ') || '无活动实例'
+            }\n强制清理: ${d.forced ? '是' : '否'}\n剩余进程: ${d.remaining ?? 0}`,
+          },
+        ],
+      };
+    }
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `结束 WPS 失败: ${response.error}` }],
+      error: response.error,
+    };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `结束 WPS 出错: ${errMsg}` }],
+      error: errMsg,
+    };
+  }
+};
+
+// ============================================================
 // 导出所有通用操作Tools
 // ============================================================
 
@@ -540,6 +698,8 @@ export const generalTools: RegisteredTool[] = [
   { definition: getAppInfoDefinition, handler: getAppInfoHandler },
   { definition: getSelectedTextDefinition, handler: getSelectedTextHandler },
   { definition: setSelectedTextDefinition, handler: setSelectedTextHandler },
+  { definition: showWindowDefinition, handler: showWindowHandler },
+  { definition: quitDefinition, handler: quitHandler },
 ];
 
 export default generalTools;

@@ -20,7 +20,7 @@ function Get-WpsExcel {
     catch {
         try {
             $app = New-Object -ComObject 'Ket.Application'
-            if ($app) { return $app }
+            if ($app) { try { $app.Visible = $true } catch {}; return $app }
         } catch {
             try {
                 $clsid = (Get-ItemProperty -Path 'HKCU:\Software\Classes\Ket.Application\CLSID' -ErrorAction Stop).'(default)'
@@ -28,7 +28,7 @@ function Get-WpsExcel {
                     $type = [Type]::GetTypeFromCLSID($clsid)
                     if ($type) {
                         $app = [Activator]::CreateInstance($type)
-                        if ($app) { return $app }
+                        if ($app) { try { $app.Visible = $true } catch {}; return $app }
                     }
                 }
             } catch {}
@@ -42,7 +42,7 @@ function Get-WpsWord {
     catch {
         try {
             $app = New-Object -ComObject 'Kwps.Application'
-            if ($app) { return $app }
+            if ($app) { try { $app.Visible = $true } catch {}; return $app }
         } catch {
             try {
                 $clsid = (Get-ItemProperty -Path 'HKCU:\Software\Classes\Kwps.Application\CLSID' -ErrorAction Stop).'(default)'
@@ -50,7 +50,7 @@ function Get-WpsWord {
                     $type = [Type]::GetTypeFromCLSID($clsid)
                     if ($type) {
                         $app = [Activator]::CreateInstance($type)
-                        if ($app) { return $app }
+                        if ($app) { try { $app.Visible = $true } catch {}; return $app }
                     }
                 }
             } catch {}
@@ -83,6 +83,46 @@ function Get-WpsPpt {
         }
         return $null
     }
+}
+
+# ==================== 窗口置前 / 进程退出 辅助 ====================
+
+# 仅获取【已运行】的 WPS 实例（不创建新实例），供 showWps / quitWps 这类不应产生副作用的操作使用
+function Get-ActiveWpsApp([string]$ProgId) {
+    try { return [System.Runtime.InteropServices.Marshal]::GetActiveObject($ProgId) } catch { return $null }
+}
+
+# 将已运行的 WPS 主窗口置于前台（按进程主窗口句柄激活）
+function Bring-WpsToFront {
+    try {
+        $procs = @(Get-Process -Name wps -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+        if ($procs.Count -eq 0) { return $false }
+        try { Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction SilentlyContinue } catch {}
+        $ok = $false
+        foreach ($proc in $procs) {
+            try { if ([Microsoft.VisualBasic.Interaction]::AppActivate($proc.Id)) { $ok = $true } } catch {}
+        }
+        return $ok
+    } catch { return $false }
+}
+
+# 定位 wps.exe 路径（优先取运行中进程的路径，其次查注册表 App Paths）
+function Get-WpsExePath {
+    try {
+        $proc = Get-Process -Name wps -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+        if ($proc) { return $proc.Path }
+    } catch {}
+    foreach ($key in @(
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\wps.exe',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wps.exe',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\wps.exe'
+    )) {
+        try {
+            $v = (Get-ItemProperty -Path $key -ErrorAction Stop).'(default)'
+            if ($v) { return $v }
+        } catch {}
+    }
+    return $null
 }
 
 # 解析目标演示文稿：优先按 presentationName 精确定位（避免多文稿打开时 ActivePresentation 漂移），
@@ -263,6 +303,84 @@ switch ($Action) {
     # ==================== Common ====================
     "ping" {
         Output-Json @{ success = $true; data = @{ message = "pong"; timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() } }
+    }
+
+    # 让 WPS 可见并置于前台：① 激活已有窗口 ② 唤起 COM 实例 ③ 兜底启动可见实例
+    "showWps" {
+        $apps = @()
+        $visible = 0
+        $activated = 0
+        foreach ($item in @(
+            @{ name = 'Word';  progId = 'Kwps.Application' },
+            @{ name = 'Excel'; progId = 'Ket.Application'  },
+            @{ name = 'PPT';   progId = 'Kwpp.Application' }
+        )) {
+            $app = Get-ActiveWpsApp $item.progId
+            if ($null -ne $app) {
+                $apps += $item.name
+                try { $app.Visible = $true; $visible++ } catch {}
+                try { $app.Activate(); $activated++ } catch {}
+            }
+        }
+
+        $front = Bring-WpsToFront
+        $launched = $false
+
+        # 兜底：没有可激活的窗口（COM 自动化实例本身无窗口）时，启动一个可见的 WPS 实例
+        if (-not $front -and $p.launch -ne $false) {
+            $exe = Get-WpsExePath
+            if ($exe) {
+                try {
+                    Start-Process -FilePath $exe | Out-Null
+                    $launched = $true
+                    # 轮询等待可见窗口出现（最多约 14 秒）
+                    for ($i = 0; $i -lt 14; $i++) {
+                        Start-Sleep -Seconds 1
+                        if (Bring-WpsToFront) { $front = $true; break }
+                    }
+                } catch {}
+            }
+        }
+
+        if ($apps.Count -eq 0 -and -not $front -and -not $launched) {
+            Output-Json @{ success = $false; error = "未能唤起 WPS 窗口（无可激活窗口，且启动可见实例失败）" }
+            exit
+        }
+
+        # 最终确认：只要系统里存在可见的 WPS 主窗口即视为成功
+        if (-not $front) {
+            $hasVisible = @(Get-Process -Name wps -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }).Count -gt 0
+            if ($hasVisible) { $front = $true }
+        }
+
+        $msg = if ($front) { "WPS 窗口已置于前台" } elseif ($launched) { "已启动 WPS 可见实例" } else { "已将 WPS 设为可见" }
+        Output-Json @{ success = $true; data = @{ apps = $apps; visible = $visible; activated = $activated; foreground = $front; launched = $launched; message = $msg } }
+    }
+
+    # 结束 WPS（含强制兜底）
+    "quitWps" {
+        $quit = @()
+        foreach ($progId in @('Kwps.Application','Ket.Application','Kwpp.Application')) {
+            $app = Get-ActiveWpsApp $progId
+            if ($null -ne $app) {
+                try { $app.DisplayAlerts = 0 } catch {}
+                try { $app.Quit() } catch {}
+                $quit += $progId
+            }
+        }
+        Start-Sleep -Milliseconds 900
+        $remainBefore = @(Get-Process -Name wps -ErrorAction SilentlyContinue).Count
+        $forced = $false
+        # 兜底：Quit 未清干净则强制结束残留进程（force 默认 true，传 force=false 只走优雅退出）
+        if ($remainBefore -gt 0 -and $p.force -ne $false) {
+            try { $null = & taskkill /F /IM wps.exe /T 2>&1 } catch {}
+            try { $null = & taskkill /F /IM wpscloudsvr.exe /T 2>&1 } catch {}
+            $forced = $true
+        }
+        Start-Sleep -Milliseconds 700
+        $left = @(Get-Process -Name wps -ErrorAction SilentlyContinue).Count
+        $msg = if ($left -eq 0) { "WPS 已退出" } else { "仍有 $left 个 WPS 进程残留" }
+        Output-Json @{ success = $true; data = @{ quit = $quit; forced = $forced; remaining = $left; message = $msg } }
     }
 
     "wireCheck" {
