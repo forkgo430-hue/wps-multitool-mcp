@@ -3,40 +3,47 @@
 <!-- Output: WPS 功能区按钮布局 -->
 <!-- Pos: Windows 加载项功能区配置。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。 -->
 <!--
-  多面手 MCP 功能区（v2.0）
-  11 个按钮分 4 组：
-    窗口：置于前台 / 面板
-    快照：保存快照 / 还原快照 / 撤销改动
-    输出：导出 PDF / 导出本页 / 另存副本
-    维护：刷新状态 / 解除卡死 / 关于
+  多面手 MCP 功能区（v2.2）
 
-  ⚠️ WPS 对 customUI 属性支持有限，仅使用已验证的 imageMso（Info），
-     不添加 size/screentip/supertip 等 Office 专有属性（加了不报错但也不生效）。
-  ⚠️ 「面板」做不到真任务面板：WPS JS 加载项没有侧边栏 API，
-     它是"用对话框展示完整状态"。README 已如实说明这一点。
+  关于 imageMso（重要，实测结论）
+  ------------------------------
+  v2.1 我给 11 个按钮各配了一个"语义对应"的 imageMso，结果赢容截图反馈：
+  只有 4 个显示出来，其余 7 个全是问号方块。
+  实测在本机 WPS 12.1 上【可用】的只有：
+      Info / Undo / Redo / PrintPreview
+  实测【不可用】（显示问号）的：
+      ViewsSwitchToNormalView / WindowDialog / SaveAs / ExportPdf /
+      FileSaveAs / RecurrenceRefresh / Cancel
+  → WPS 对 Office imageMso 名字的支持很有限，猜名字的代价是 UI 上出现一片问号，
+    比统一用 Info 更难看。所以本版只用上面那 4 个已验证可用的。
+
+  想更丰富（每个按钮不同图标）需要走 getImage 自定义图片回调，
+  那是另一件事，WPS 的支持程度同样要实测。要做再说。
+
+  ⚠️ size="large" 未验证是否生效（截图里按钮是小号）。
 -->
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
     <ribbon startFromScratch="false">
         <tabs>
             <tab id="tabMcp" label="多面手 MCP">
                 <group id="grpWindow" label="窗口">
-                    <button id="btnShowWindow" onAction="ribbonShowWindow" label="置于前台" imageMso="Info"/>
-                    <button id="btnPanel" onAction="ribbonPanel" label="面板" imageMso="Info"/>
+                    <button id="btnShowWindow" onAction="ribbonShowWindow" label="置于前台" imageMso="Info" size="large"/>
+                    <button id="btnPanel" onAction="ribbonPanel" label="面板" imageMso="PrintPreview" size="large"/>
                 </group>
                 <group id="grpSnapshot" label="快照">
-                    <button id="btnSnapSave" onAction="ribbonSnapshotSave" label="保存快照" imageMso="Info"/>
-                    <button id="btnSnapRestore" onAction="ribbonSnapshotRestore" label="还原快照" imageMso="Info"/>
-                    <button id="btnUndo" onAction="ribbonUndo" label="撤销改动" imageMso="Info"/>
+                    <button id="btnSnapSave" onAction="ribbonSnapshotSave" label="保存快照" imageMso="Info" size="large"/>
+                    <button id="btnSnapRestore" onAction="ribbonSnapshotRestore" label="还原快照" imageMso="Redo" size="large"/>
+                    <button id="btnUndo" onAction="ribbonUndo" label="撤销改动" imageMso="Undo" size="large"/>
                 </group>
                 <group id="grpOutput" label="输出">
-                    <button id="btnExportPdf" onAction="ribbonExportPdf" label="导出 PDF" imageMso="Info"/>
-                    <button id="btnExportPage" onAction="ribbonExportPage" label="导出本页" imageMso="Info"/>
-                    <button id="btnSaveCopy" onAction="ribbonSaveCopy" label="另存副本" imageMso="Info"/>
+                    <button id="btnExportPdf" onAction="ribbonExportPdf" label="导出 PDF" imageMso="Info" size="large"/>
+                    <button id="btnExportPage" onAction="ribbonExportPage" label="导出本页" imageMso="PrintPreview" size="large"/>
+                    <button id="btnSaveCopy" onAction="ribbonSaveCopy" label="另存副本" imageMso="Info" size="large"/>
                 </group>
                 <group id="grpMaintain" label="维护">
-                    <button id="btnRefresh" onAction="ribbonRefresh" label="刷新状态" imageMso="Info"/>
-                    <button id="btnUnstick" onAction="ribbonUnstick" label="解除卡死" imageMso="Info"/>
-                    <button id="btnAbout" onAction="ribbonAbout" label="关于" imageMso="Info"/>
+                    <button id="btnRefresh" onAction="ribbonRefresh" label="刷新状态" imageMso="Info" size="large"/>
+                    <button id="btnUnstick" onAction="ribbonUnstick" label="解除卡死" imageMso="Info" size="large"/>
+                    <button id="btnAbout" onAction="ribbonAbout" label="关于" imageMso="Info" size="large"/>
                 </group>
             </tab>
         </tabs>

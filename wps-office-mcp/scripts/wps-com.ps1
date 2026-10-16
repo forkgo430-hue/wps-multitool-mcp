@@ -638,6 +638,39 @@ switch ($Action) {
         Output-Json @{ success = $true; data = $r }
     }
 
+    "__probeClose" {
+        # 试不同的关闭方式，找出哪种在"未命名未保存文档"上管用。
+        # 背景：Close(0) 报 RPC_E_CALL_REJECTED，但读文档列表是成功的 ——
+        # 说明不是 COM 整体坏掉，而是关闭这个特定动作被拒。
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $r = @{}
+        $docs = @($word.Documents)
+        $r.countBefore = $docs.Count
+        $i = 0
+        foreach ($d in $docs) {
+            $i++
+            $nm = ''
+            try { $nm = [string]$d.Name } catch {}
+            $full = ''
+            try { $full = [string]$d.FullName } catch {}
+            $tag = "$i(nm=$nm saved=$([bool]$full))"
+            # 方式1：Close($false)
+            try { $d.Close($false); $r["1_CloseFalse"] += "$tag:ok "; continue } catch { $r["1_CloseFalse"] += "$tag:FAIL($($_.Exception.Message.Substring(0,[Math]::Min(40,$_.Exception.Message.Length)))) " }
+            # 方式2：先 SaveAs 到临时文件再关
+            try {
+                $tmp = [IO.Path]::GetTempFileName() + '.docx'
+                $d.SaveAs([ref]$tmp, [ref]$missing)
+                $d.Close($false)
+                $r["2_SaveAsThenClose"] += "$tag:ok "
+            } catch { $r["2_SaveAsThenClose"] += "$tag:FAIL " }
+            # 方式3：Documents.Close 集合级
+            try { $word.Documents.Close($false); $r["3_CollectionClose"] += "$tag:ok "; break } catch { $r["3_CollectionClose"] += "$tag:FAIL " }
+        }
+        $r.countAfter = @($word.Documents).Count
+        Output-Json @{ success = $true; data = $r }
+    }
+
     "__probeDialogs" {
         $dlgs = @(Get-WpsModalDialogs)
         Output-Json @{ success = $true; data = @{ dialogs = $dlgs; count = $dlgs.Count; hint = (Get-ModalBlockHint) } }
@@ -676,11 +709,14 @@ switch ($Action) {
                         saved = (-not [string]::IsNullOrWhiteSpace($full))
                         healthy = $healthy
                     }
-                    # 只关"无名"文档：没有标题也没有路径 —— 那是自动化残留的空壳
+                    # 只关"无名"文档：没有标题也没有路径 —— 那是自动化残留的空壳。
+                    # ⚠️ 关闭用【集合级】Close，不要逐个 $d.Close()。
+                    #   实测（__probeClose）：逐个关闭未命名文档会被 WPS 拒
+                    #   （RPC_E_CALL_REJECTED），而 $app.Documents.Close($false) 一次成功
+                    #   （countBefore=2 → countAfter=0）。这是 WPS 12.1 的实际行为。
+                    #   真正执行在下面循环结束后统一做（先收集，再一次关）。
                     if ([string]::IsNullOrWhiteSpace($nm) -and [string]::IsNullOrWhiteSpace($full)) {
-                        try { $d.Close(0); $report.closed += "$($a.key):<无名文档>" } catch {
-                            $report.closed += "$($a.key):<无名文档> 关闭失败: $(Get-CallError $_)"
-                        }
+                        $unnamed += $a.key
                     }
                 }
                 # 活动文档健康度单独报一份，便于判断"是不是 ActiveDocument 空壳"
@@ -699,6 +735,23 @@ switch ($Action) {
             $hint = "检测到挡路对话框，请先关闭：" + ((@($report.dialogs | Select-Object -First 3)) -join '；')
         }
         $report.hint = $hint
+        # 收尾：对收集到的"有无名文档"的应用做一次【集合级】关闭
+        # （逐个 $d.Close() 会被 WPS 拒，集合级一次成功 —— 见 __probeClose 实测）
+        foreach ($k in ($unnamed | Select-Object -Unique)) {
+            $app = $null
+            $coll = 'Documents'
+            if ($k -eq 'word') { $app = Get-ActiveWpsApp 'Kwps.Application' }
+            elseif ($k -eq 'excel') { $app = Get-ActiveWpsApp 'Ket.Application'; $coll = 'Workbooks' }
+            elseif ($k -eq 'ppt') { $app = Get-ActiveWpsApp 'Kwpp.Application'; $coll = 'Presentations' }
+            if ($null -eq $app) { continue }
+            try {
+                $app.$coll.Close($false)
+                $report.closed += "$k`: 已关闭无名文档（集合级 Close）"
+            } catch {
+                $report.closed += "$k`: 关闭失败 $($_.Exception.Message)"
+            }
+        }
+
         Output-Json @{ success = $true; data = $report }
     }
 
@@ -1030,8 +1083,38 @@ switch ($Action) {
     "createDocument" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $word.Documents.Add() | Out-Null
-        Output-Json @{ success = $true }
+        $n0 = 0
+        try { $n0 = [int]$word.Documents.Count } catch {}
+        $doc = $word.Documents.Add()
+
+        # 等文档真正就绪（关键，之前漏了）
+        # ----------------------------------
+        # 原实现是 `Documents.Add() | Out-Null` 然后立刻返回 success，零等待。
+        # 后果：新建的文档要过一小会儿才取得到 Content/Styles，紧接着的任何动作
+        # 都会拿到"非空但空壳"的对象 —— 实测反复踩到（表现为莫名 "No active document"、
+        # 以及样式/修订/交叉引用一连串失败）。
+        #
+        # 实现要点（踩过）：
+        #   1) 每次都重新 `Documents.Item(Count)` 取最新文档，不要复用 Add() 的返回值 ——
+        #      实测复用那个引用会让 Test-DocHealthy 永远 false（6 秒超时）。
+        #   2) 等不到也【按成功返回】，只带 warning：Resolve-Doc 有遍历兜底，
+        #      而且实测"不等 + 调用方自己等一会"是能工作的。抛异常会把后续全堵死。
+        $warn = $null
+        $ready = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Milliseconds 150
+            try {
+                $cur = $word.Documents.Item($word.Documents.Count)
+                if (Test-DocHealthy $cur) { $ready = $true; break }
+            } catch {}
+        }
+        if (-not $ready) {
+            $warn = "文档已创建但 6 秒内未通过健康检查（可能是 WPS 正在初始化）。" +
+                    "后续操作会自动遍历集合找健康文档；若报错请重试或检查对话框。"
+        }
+        $data = @{ count = [int]$word.Documents.Count }
+        if ($warn) { $data.warning = $warn }
+        Output-Json @{ success = $true; data = $data }
     }
 
     "createPresentation" {
@@ -6255,10 +6338,19 @@ switch ($Action) {
         $doc = Resolve-Doc $word $p
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if (-not $p.name) { Output-Json @{ success = $false; error = "缺少 name（样式名）" }; return }
+        # "样式是否已存在"必须用 try/catch 判，不能看返回值
+        # --------------------------------------------------
+        # $doc.Styles.Item(不存在的名字) 在 WPS 里是【抛异常】，不是返回 null。
+        # 第一版写成 `if ($null -ne $doc.Styles.Item($p.name))`，异常被外层 catch
+        # 接住，于是"想建个新样式"永远报 E_FAIL —— 而同样的 Styles.Add 调用
+        # 单独跑（见 __probeStyleAdd 的 A~F 六组对照）是完全成功的。
+        # 坑就在这个已存在检查上。
+        $alreadyExists = $false
+        try { $null = $doc.Styles.Item([string]$p.name); $alreadyExists = $true } catch { $alreadyExists = $false }
+        if ($alreadyExists) {
+            Output-Json @{ success = $false; error = "样式 '$($p.name)' 已存在；改样式请用 modifyStyle" }; return
+        }
         try {
-            if ($null -ne $doc.Styles.Item([string]$p.name)) {
-                Output-Json @{ success = $false; error = "样式 '$($p.name)' 已存在；改样式请用 modifyStyle" }; return
-            }
             # wdStyleTypeParagraph=1
             # 样式类型用【字符串】参数 styleType，而不是数字 type ——
             # 数字 1/2 直接传太脆（调用方要查表），而 schema 里的 type 字段本身就是字符串，
@@ -6303,12 +6395,20 @@ switch ($Action) {
                 $k = [string]$p.alignment
                 if ($map.ContainsKey($k)) { try { $s.ParagraphFormat.Alignment = $map[$k]; $applied += "alignment" } catch { $failed += "alignment" } }
             }
+            # ⚠️ note 先算好再放进 hashtable。不要写成 `note = (if ...)`：
+            #    hashtable 字面里带括号的 if 会在运行期报
+            #    "无法将 if 项识别为 cmdlet"（而文件级 PARSE 却是通的，很迷惙）。
+            #    同文件 addCaption 那处不带括号能跗，但别依赖这种微妙差异。
+            $note = $null
+            if ($failed.Count -gt 0) {
+                $note = "以下属性本机 WPS 不接受：$($failed -join '/')。样式已建成，其余属性已设上。"
+            }
             Output-Json @{ success = $true; data = @{
                 name = [string]$p.name
                 styleName = [string]$s.NameLocal
                 applied = $applied
                 failed = $failed
-                note = (if ($failed.Count -gt 0) { "以下属性本机 WPS 不接受：$($failed -join '/')。样式已建成，其余属性已设上。" } else { $null })
+                note = $note
             } }
         } catch {
             Output-Json @{ success = $false; error = "新建样式失败: $(Get-CallError $_)" }
