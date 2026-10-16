@@ -16,8 +16,12 @@ import {
   ToolCallResult,
   ToolCategory,
   ListToolsResponse,
+  DEFAULT_LOADED_GROUPS,
+  ALWAYS_LOADED_GROUP,
+  groupOfTool,
 } from '../types/tools';
 import { createChildLogger } from '../utils/logger';
+import { emitToolGroupsChanged } from './tool-group-events';
 import {
   ToolNotFoundError,
   ToolExecutionError,
@@ -34,6 +38,8 @@ export class ToolRegistry {
   private static instance: ToolRegistry;
   private readonly tools: Map<string, RegisteredTool>;
   private readonly categories: Map<ToolCategory, Set<string>>;
+  /** 当前已加载的工具组。未加载的组不出现在 tools/list（省上下文） */
+  private readonly loadedGroups: Set<string>;
 
   private constructor() {
     this.tools = new Map();
@@ -44,7 +50,16 @@ export class ToolRegistry {
       this.categories.set(category, new Set());
     });
 
-    logger.info('ToolRegistry initialized');
+    // 初始加载的组：环境变量 WPS_TOOL_GROUPS 可覆盖（逗号分隔），默认见 DEFAULT_LOADED_GROUPS
+    const fromEnv = (process.env.WPS_TOOL_GROUPS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    this.loadedGroups = new Set(fromEnv.length ? fromEnv : DEFAULT_LOADED_GROUPS);
+    // core 永远加载
+    this.loadedGroups.add(ALWAYS_LOADED_GROUP);
+
+    logger.info('ToolRegistry initialized', { loadedGroups: [...this.loadedGroups] });
   }
 
   /**
@@ -124,16 +139,27 @@ export class ToolRegistry {
   }
 
   /**
-   * 获取所有Tool定义 - MCP的tools/list用的
+   * 获取【已加载组】的 Tool 定义 —— MCP 的 tools/list 用的。
+   * 未加载的组不出现在这里（这就是省上下文的手段）。
    */
   listTools(): ListToolsResponse {
-    const tools = Array.from(this.tools.values()).map((t) => t.definition);
+    const tools = Array.from(this.tools.values())
+      .filter((t) => this.isListed(t.definition))
+      .map((t) => t.definition);
     return { tools };
   }
 
-  /**
-   * 按分类获取Tools
-   */
+  /** 取全部 Tool（含未加载组）—— 供搜索/统计用，不要拿去当 tools/list */
+  listAllTools(): ToolDefinition[] {
+    return Array.from(this.tools.values()).map((t) => t.definition);
+  }
+
+  /** 该工具当前是否会被列出（所属组已加载） */
+  isListed(def: ToolDefinition): boolean {
+    return this.loadedGroups.has(groupOfTool(def));
+  }
+
+  /** 按分类获取Tools */
   getToolsByCategory(category: ToolCategory): ToolDefinition[] {
     const toolNames = this.categories.get(category);
     if (!toolNames) {
@@ -143,6 +169,133 @@ export class ToolRegistry {
     return Array.from(toolNames)
       .map((name) => this.tools.get(name)?.definition)
       .filter((t): t is ToolDefinition => t !== undefined);
+  }
+
+  // ==================== 工具组 ====================
+
+  /** 各组概况：loaded=是否已加载，total=工具数，listed=已加载组里实际会列出的数量 */
+  getGroups(): Array<{ group: string; loaded: boolean; total: number }> {
+    const counts = new Map<string, number>();
+    for (const t of this.tools.values()) {
+      const g = groupOfTool(t.definition);
+      counts.set(g, (counts.get(g) ?? 0) + 1);
+    }
+    // core 组一定存在（哪怕暂时没有工具）
+    if (!counts.has(ALWAYS_LOADED_GROUP)) counts.set(ALWAYS_LOADED_GROUP, 0);
+
+    return Array.from(counts.entries())
+      .map(([group, total]) => ({ group, loaded: this.loadedGroups.has(group), total }))
+      .sort((a, b) => a.group.localeCompare(b.group));
+  }
+
+  getLoadedGroups(): string[] {
+    return [...this.loadedGroups];
+  }
+
+  /** 加载一个组。返回是否真的发生了变化（用于决定要不要发 list_changed 通知） */
+  loadGroup(name: string): { ok: boolean; changed: boolean; toolCount: number; error?: string } {
+    const exists = this.getGroups().some((g) => g.group === name);
+    if (!exists) {
+      return { ok: false, changed: false, toolCount: 0, error: `没有名为 "${name}" 的工具组` };
+    }
+    const changed = !this.loadedGroups.has(name);
+    this.loadedGroups.add(name);
+    const toolCount = this.getGroups().find((g) => g.group === name)?.total ?? 0;
+    if (changed) {
+      logger.info(`Tool group loaded: ${name}`, { toolCount });
+      emitToolGroupsChanged();
+    }
+    return { ok: true, changed, toolCount };
+  }
+
+  /** 卸载一个组。core 不允许卸载（否则连加载工具都找不到了） */
+  unloadGroup(name: string): { ok: boolean; changed: boolean; toolCount: number; error?: string } {
+    if (name === ALWAYS_LOADED_GROUP) {
+      return {
+        ok: false,
+        changed: false,
+        toolCount: 0,
+        error: `"${ALWAYS_LOADED_GROUP}" 组包含工具组管理本身，不允许卸载`,
+      };
+    }
+    const exists = this.getGroups().some((g) => g.group === name);
+    if (!exists) {
+      return { ok: false, changed: false, toolCount: 0, error: `没有名为 "${name}" 的工具组` };
+    }
+    const changed = this.loadedGroups.has(name);
+    this.loadedGroups.delete(name);
+    const toolCount = this.getGroups().find((g) => g.group === name)?.total ?? 0;
+    if (changed) {
+      logger.info(`Tool group unloaded: ${name}`, { toolCount });
+      emitToolGroupsChanged();
+    }
+    return { ok: true, changed, toolCount };
+  }
+
+  /**
+   * 搜索工具（含未加载组）—— 这是"用到再拉"的关键：
+   * 组没加载时工具不在列表里，但可以先搜出名字再 load_tool_group。
+   */
+  searchTools(
+    keyword: string,
+    opts: { group?: string; limit?: number } = {}
+  ): Array<{ name: string; group: string; listed: boolean; description: string }> {
+    const kw = (keyword || '').trim().toLowerCase();
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
+    const out: Array<{ name: string; group: string; listed: boolean; description: string; score: number }> = [];
+
+    for (const t of this.tools.values()) {
+      const def = t.definition;
+      const group = groupOfTool(def);
+      if (opts.group && group !== opts.group) continue;
+      const name = def.name.toLowerCase();
+      const desc = (def.description || '').toLowerCase();
+      let score = 0;
+      if (!kw) score = 1;
+      else if (name === kw) score = 100;
+      else if (name.includes(kw)) score = 60;
+      else if (desc.includes(kw)) score = 20;
+      if (score === 0) continue;
+      out.push({
+        name: def.name,
+        group,
+        listed: this.isListed(def),
+        description: (def.description || '').split('\n')[0].slice(0, 120),
+        score,
+      });
+    }
+
+    return out
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, limit)
+      .map(({ score: _score, ...rest }) => rest);
+  }
+
+  /**
+   * 调用未知名工具时给个线索：是不是"组没加载"导致的？
+   * 返回最近似的几个工具名与它们所在组。
+   */
+  suggestSimilar(name: string, limit = 3): Array<{ name: string; group: string; loaded: boolean }> {
+    const tokens = (name || '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length > 2);
+    if (!tokens.length) return [];
+
+    const scored: Array<{ name: string; group: string; loaded: boolean; score: number }> = [];
+    for (const t of this.tools.values()) {
+      const def = t.definition;
+      const lower = def.name.toLowerCase();
+      const score = tokens.reduce((acc, tok) => (lower.includes(tok) ? acc + 1 : acc), 0);
+      const group = groupOfTool(def);
+      if (score > 0) {
+        scored.push({ name: def.name, group, loaded: this.loadedGroups.has(group), score });
+      }
+    }
+    return scored
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, limit)
+      .map(({ score: _score, ...rest }) => rest);
   }
 
   /**
@@ -185,6 +338,7 @@ export class ToolRegistry {
           success: false,
           content: [{ type: 'text', text: error.message }],
           error: error.message,
+          errorType: error.wpsType,
         };
       }
 
@@ -200,6 +354,7 @@ export class ToolRegistry {
         success: false,
         content: [{ type: 'text', text: execError.message }],
         error: execError.message,
+        errorType: execError.wpsType,
       };
     }
   }

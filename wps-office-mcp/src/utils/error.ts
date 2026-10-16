@@ -37,23 +37,191 @@ export enum ErrorCode {
 }
 
 /**
+ * 稳定的 WPS 错误类型标识 - 给调用方分辨"到底哪一层坏了"。
+ * 底层错误五花八门（COM / 桥 / 守护进程 / 超时 / 协议），这里收敛成一组固定值。
+ */
+export enum WpsErrorType {
+  /** 桥起不来 / 命名管道连不上 / 桥进程未就绪 */
+  BRIDGE_UNAVAILABLE = 'bridge_unavailable',
+  /** 常驻守护进程不可用 / 已关闭 / 已退出 */
+  DAEMON_UNAVAILABLE = 'daemon_unavailable',
+  /** 动作超时（等太久，连接被断开） */
+  TIMEOUT = 'timeout',
+  /** WPS 没打开 / 类未注册（MK_E_UNAVAILABLE） */
+  APP_NOT_RUNNING = 'app_not_running',
+  /** 没有活动文档 / 目标块不存在 */
+  DOCUMENT_NOT_FOUND = 'document_not_found',
+  /** WPS 不支持该接口 / 未知动作 / 取值超范围 */
+  UNSUPPORTED_OPERATION = 'unsupported_operation',
+  /** 入参不合法 / 缺必填参数 */
+  INVALID_PARAMS = 'invalid_params',
+  /** 其余 COM 错误（含 RPC_E_CALL_REJECTED 等） */
+  COM_ERROR = 'com_error',
+  /** 输出不是合法 JSON / PowerShell 异常退出码 */
+  PROTOCOL_ERROR = 'protocol_error',
+  /** 无法归类 */
+  UNKNOWN = 'unknown',
+}
+
+/**
+ * 把底层错误信息归类成稳定的 WpsErrorType。
+ * 纯函数：只看字符串，不碰 IO，规则按"越具体越靠前"排列。
+ */
+export function classifyWpsError(message: string): WpsErrorType {
+  const msg = typeof message === 'string' ? message : String(message ?? '');
+  if (!msg.trim()) {
+    return WpsErrorType.UNKNOWN;
+  }
+  const lower = msg.toLowerCase();
+
+  // 1) RPC_E_CALL_REJECTED / 0x80010001 —— COM 调用被拒，明确不是超时，别被 "call" 误导
+  if (
+    msg.includes('0x80010001') ||
+    msg.includes('RPC_E_CALL_REJECTED') ||
+    lower.includes('call was rejected')
+  ) {
+    return WpsErrorType.COM_ERROR;
+  }
+
+  // 2) MK_E_UNAVAILABLE / 0x800401E3 —— WPS 实例没在跑 / 类未注册
+  if (msg.includes('0x800401E3') || msg.includes('MK_E_UNAVAILABLE')) {
+    return WpsErrorType.APP_NOT_RUNNING;
+  }
+
+  // 3) 超时：WPS 动作超时 / timed out
+  if (msg.includes('超时') || lower.includes('timed out') || lower.includes('timeout')) {
+    return WpsErrorType.TIMEOUT;
+  }
+
+  // 4) 桥起不来：桥进程未就绪 / 管道连不上
+  if (
+    msg.includes('未就绪') ||
+    msg.includes('桥进程') ||
+    msg.includes('桥连接不可写') ||
+    msg.includes('写入桥失败') ||
+    (lower.includes('bridge') && (lower.includes('not ready') || lower.includes('unavailable')))
+  ) {
+    return WpsErrorType.BRIDGE_UNAVAILABLE;
+  }
+
+  // 5) 守护进程 / 桥已关闭
+  if (
+    msg.includes('守护进程已关闭') ||
+    msg.includes('守护进程已退出') ||
+    msg.includes('桥连接已关闭') ||
+    msg.includes('桥客户端已关闭') ||
+    lower.includes('daemon unavailable')
+  ) {
+    return WpsErrorType.DAEMON_UNAVAILABLE;
+  }
+
+  // 6) WPS 没开
+  if (
+    msg.includes('not running') ||
+    msg.includes('未运行') ||
+    msg.includes('未启动') ||
+    msg.includes('未打开')
+  ) {
+    return WpsErrorType.APP_NOT_RUNNING;
+  }
+
+  // 7) 没有活动文档 / 目标块不存在
+  if (
+    msg.includes('No active document') ||
+    msg.includes('没有活动文档') ||
+    msg.includes('无活动文档') ||
+    msg.includes('块未找到') ||
+    msg.includes('块不存在') ||
+    msg.includes('文档未找到') ||
+    (msg.includes('未找到') && (lower.includes('doc') || msg.includes('块') || msg.includes('文档')))
+  ) {
+    return WpsErrorType.DOCUMENT_NOT_FOUND;
+  }
+
+  // 8) WPS 不支持该接口 / 未知动作 / 取值超范围
+  if (
+    msg.includes('Unknown action') ||
+    msg.includes('值不在预期的范围内') ||
+    msg.includes('不支持') ||
+    msg.includes('未实现') ||
+    lower.includes('not implemented') ||
+    lower.includes('unsupported')
+  ) {
+    return WpsErrorType.UNSUPPORTED_OPERATION;
+  }
+
+  // 9) 入参问题
+  if (
+    msg.includes('Missing required parameter') ||
+    msg.includes('参数错误') ||
+    msg.includes('参数无效') ||
+    msg.includes('缺少必填参数') ||
+    lower.includes('invalid param')
+  ) {
+    return WpsErrorType.INVALID_PARAMS;
+  }
+
+  // 10) 协议层：输出不是合法 JSON / PowerShell 异常退出码
+  if (
+    msg.includes('输出解析失败') ||
+    msg.includes('非有效JSON') ||
+    msg.includes('非有效 JSON') ||
+    msg.includes('PowerShell 退出码') ||
+    (lower.includes('powershell') && msg.includes('退出码')) ||
+    (msg.includes('解析失败') && lower.includes('json'))
+  ) {
+    return WpsErrorType.PROTOCOL_ERROR;
+  }
+
+  // 10.5) 缺参 / 参数不合法
+  //   实测本仓自己会产出这些消息：PS 侧 "Missing outputPath"、"Missing range"、
+  //   "items 为空"，它们都该归 invalid_params 而不是掉进下面的兜底。
+  if (
+    /^\s*missing\b/i.test(msg) ||
+    msg.includes('缺少') ||
+    msg.includes('为空') ||
+    (msg.includes('参数') && (msg.includes('无效') || msg.includes('不合法') || msg.includes('错误')))
+  ) {
+    return WpsErrorType.INVALID_PARAMS;
+  }
+
+  // 11) 其余 COM 错误：HRESULT / 异常来自 / 中文兜底（带中文前缀的错误不应崩）
+  if (
+    msg.includes('HRESULT') ||
+    msg.includes('异常来自') ||
+    msg.includes('不能对 Null 值表达式调用方法') ||
+    lower.includes('0x8') ||
+    lower.includes('callee') ||
+    /[\u4e00-\u9fff]/.test(msg)
+  ) {
+    return WpsErrorType.COM_ERROR;
+  }
+
+  return WpsErrorType.UNKNOWN;
+}
+
+/**
  * 自定义错误基类 - 所有错误的祖宗
  */
 export class McpError extends Error {
   public readonly code: ErrorCode;
   public readonly details?: Record<string, unknown>;
   public readonly timestamp: Date;
+  /** 稳定的 WPS 错误类型标识（由 message 自动分类，可显式覆盖） */
+  public readonly wpsType: WpsErrorType;
 
   constructor(
     message: string,
     code: ErrorCode = ErrorCode.UNKNOWN,
-    details?: Record<string, unknown>
+    details?: Record<string, unknown>,
+    wpsType?: WpsErrorType
   ) {
     super(message);
     this.name = 'McpError';
     this.code = code;
     this.details = details;
     this.timestamp = new Date();
+    this.wpsType = wpsType ?? classifyWpsError(message);
 
     // 保持正确的原型链
     Object.setPrototypeOf(this, McpError.prototype);
@@ -67,6 +235,7 @@ export class McpError extends Error {
       name: this.name,
       message: this.message,
       code: this.code,
+      wpsType: this.wpsType,
       details: this.details,
       timestamp: this.timestamp.toISOString(),
       stack: this.stack,

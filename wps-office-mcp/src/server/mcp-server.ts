@@ -20,6 +20,7 @@ import { toolRegistry, ToolRegistry } from './tool-registry';
 import { wpsClient } from '../client/wps-client';
 import { ToolCallResult, ToolCategory } from '../types/tools';
 import { allTools } from '../tools';
+import { onToolGroupsChanged } from '../tools/common/toolgroups';
 import { createChildLogger } from '../utils/logger';
 import { McpError } from '../utils/error';
 
@@ -54,6 +55,8 @@ export class WpsMcpServer {
   private readonly server: Server;
   private readonly registry: ToolRegistry;
   private isRunning: boolean = false;
+  /** 工具组变更通知是否已接上（避免重复订阅） */
+  private groupsNotifyWired: boolean = false;
 
   // 跨应用数据缓存 - 解决macOS WPS无法跨应用操作的P0问题
   private static dataCache: Map<string, { data: unknown; timestamp: number; appType: string }> = new Map();
@@ -97,9 +100,13 @@ export class WpsMcpServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       logger.debug('Handling tools/list request');
 
+      // 只返回【已加载组】里的工具；未加载组的不列出（省上下文，见 wps_list_tool_groups）
       const { tools } = this.registry.listTools();
+      const total = this.registry.listAllTools().length;
 
-      logger.info(`Returning ${tools.length} tools`);
+      logger.info(`Returning ${tools.length} tools (已加载组) / 共 ${total}`, {
+        loadedGroups: this.registry.getLoadedGroups(),
+      });
 
       return {
         tools: tools.map((tool) => ({
@@ -116,11 +123,17 @@ export class WpsMcpServer {
 
       logger.debug('Handling tools/call request', { name, args });
 
-      // 检查Tool是否存在
+      // 检查Tool是否存在。不存在时给个线索：是不是"组没加载"？
       if (!this.registry.hasTool(name)) {
+        const similar = this.registry.suggestSimilar(name);
+        const hint = similar.length
+          ? ` 近似工具：${similar
+              .map((s) => `${s.name}（${s.loaded ? '已列出' : `组 ${s.group} 未加载`}）`)
+              .join('、')}`
+          : ' 可用 wps_search_tools 搜一下，或 wps_list_tool_groups 看有哪些组';
         throw new SdkMcpError(
           McpErrorCode.MethodNotFound,
-          `Unknown tool: ${name}`
+          `Unknown tool: ${name}。${hint}`
         );
       }
 
@@ -129,8 +142,17 @@ export class WpsMcpServer {
         const callRequest = ToolRegistry.createRequest(name, args || {});
         const result: ToolCallResult = await this.registry.callTool(callRequest);
 
+        // 失败时把稳定错误类型透出去（前缀形式，不改动 isError 语义）
+        const content = result.success
+          ? result.content
+          : result.content.map((c, i) =>
+              i === 0 && c.type === 'text' && typeof c.text === 'string' && result.errorType
+                ? { ...c, text: `[${result.errorType}] ${c.text}` }
+                : c
+            );
+
         return {
-          content: result.content,
+          content,
           isError: !result.success,
         };
       } catch (error) {
@@ -138,7 +160,7 @@ export class WpsMcpServer {
 
         if (error instanceof McpError) {
           return {
-            content: [{ type: 'text', text: error.message }],
+            content: [{ type: 'text', text: `[${error.wpsType}] ${error.message}` }],
             isError: true,
           };
         }
@@ -701,8 +723,32 @@ export class WpsMcpServer {
     // 连接传输层
     await this.server.connect(transport);
 
+    // 工具组 load/unload 后通知客户端刷新 tools/list（否则客户端缓存里还是老列表）
+    if (!this.groupsNotifyWired) {
+      this.groupsNotifyWired = true;
+      onToolGroupsChanged(() => {
+        void this.notifyToolsChanged();
+      });
+    }
+
     this.isRunning = true;
     logger.info('MCP Server started successfully');
+  }
+
+  /**
+   * 发 notifications/tools/list_changed，让客户端重新拉工具列表。
+   * 失败只记日志 —— 通知失败不该影响工具本身的结果。
+   */
+  private async notifyToolsChanged(): Promise<void> {
+    try {
+      await this.server.notification({ method: 'notifications/tools/list_changed' });
+      logger.info('已通知客户端工具列表变化', {
+        listed: this.registry.listTools().tools.length,
+        loadedGroups: this.registry.getLoadedGroups(),
+      });
+    } catch (err) {
+      logger.warn('发送 tools/list_changed 通知失败', { error: (err as Error).message });
+    }
   }
 
   /**

@@ -40,6 +40,37 @@ export interface ToolDefinition {
   inputSchema: ToolInputSchema;
   /** Tool分类，方便管理 */
   category?: ToolCategory;
+  /**
+   * 工具组名。不填则按 category 推导（document→word / spreadsheet→excel /
+   * presentation→ppt / common→common）。
+   * 组的意义：未加载的组【不会出现在 tools/list 里】，以节省上下文。
+   * 仅 `core` 组永远加载且不允许卸载（工具组管理工具自己在里面）。
+   */
+  group?: ToolGroupName;
+}
+
+/** 工具组名 —— 与三件套对应，另加 core（常驻管理类） */
+export type ToolGroupName = 'core' | 'common' | 'word' | 'excel' | 'ppt';
+
+/** 默认加载哪些组：ppt（115 个）默认不加载，用到再拉 */
+export const DEFAULT_LOADED_GROUPS: ToolGroupName[] = ['core', 'common', 'word', 'excel'];
+
+/** core 组永远加载，不允许卸载 */
+export const ALWAYS_LOADED_GROUP: ToolGroupName = 'core';
+
+/** 由 ToolDefinition 推导所属组（显式 group 优先） */
+export function groupOfTool(def: ToolDefinition): ToolGroupName {
+  if (def.group) return def.group;
+  switch (def.category) {
+    case ToolCategory.DOCUMENT:
+      return 'word';
+    case ToolCategory.SPREADSHEET:
+      return 'excel';
+    case ToolCategory.PRESENTATION:
+      return 'ppt';
+    default:
+      return 'common';
+  }
 }
 
 /**
@@ -80,6 +111,8 @@ export interface ToolCallResult {
   content: ToolContent[];
   /** 错误信息（失败时） */
   error?: string;
+  /** 稳定的错误类型标识（失败时），取值见 WpsErrorType */
+  errorType?: string;
 }
 
 /**
