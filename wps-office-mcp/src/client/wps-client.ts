@@ -26,6 +26,7 @@ import {
 import { log, logRequest, logResponse } from '../utils/logger';
 import { errorUtils } from '../utils/error';
 import { macPollServer } from './mac-poll-server';
+import { psDaemon, DaemonUnavailableError } from './ps-daemon';
 
 // 平台判断
 const PLATFORM = os.platform();
@@ -33,6 +34,12 @@ const IS_MAC = PLATFORM === 'darwin';
 const IS_LINUX = PLATFORM === 'linux';
 // Mac 和 Linux 均通过反向轮询（wps-claude-assistant 加载项 HTTP 轮询模式），仅 Windows 走 PowerShell COM
 const USE_POLL = IS_MAC || IS_LINUX;
+
+// Windows 优先走常驻守护进程（省掉每次 spawn powershell + 解析 5000 行脚本）。
+// 设 WPS_USE_DAEMON=0 可强制退回直跑模式。
+const USE_DAEMON = !USE_POLL && process.env.WPS_USE_DAEMON !== '0';
+// 守护进程一旦起不来就本次全程直跑，不再每次调用都白等 20 秒握手
+let daemonBroken = false;
 
 // PowerShell脚本路径 (Windows)
 const PS_SCRIPT_PATH = path.join(__dirname, '../../scripts/wps-com.ps1');
@@ -85,6 +92,9 @@ async function execPowerShell(action: string, params: Record<string, unknown> = 
     // JSON参数通过spawn args数组传递，Node自动处理Windows引号转义
     const paramsJson = JSON.stringify(params);
     const args = [
+      // -NoProfile/-NonInteractive：直跑是回退路径，不该再花时间读用户 profile
+      '-NoProfile',
+      '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', PS_SCRIPT_PATH,
       '-Action', action,
@@ -154,15 +164,30 @@ async function execPowerShell(action: string, params: Record<string, unknown> = 
 
 /**
  * 统一执行接口 - 根据平台选择调用方式
- * Mac: 反向轮询模式（MCP Server是服务端，WPS加载项来取命令）
- * Windows: PowerShell调用COM接口
+ * Mac/Linux: 反向轮询模式（MCP Server是服务端，WPS加载项来取命令）
+ * Windows:   常驻守护进程优先，起不来则退回一调用一进程的直跑方式
  */
 async function execWpsAction(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
   if (USE_POLL) {
     return execMacPoll(action, params);
-  } else {
-    return execPowerShell(action, params);
   }
+
+  if (USE_DAEMON && !daemonBroken) {
+    try {
+      return await psDaemon.call(action, params);
+    } catch (err) {
+      // 只有"请求压根没送出去"（进程起不来）才允许退回直跑。
+      // 超时那类错误请求可能已经在 WPS 里执行了一半，自动重放会变成执行两次 —— 一律如实抛出。
+      if (err instanceof DaemonUnavailableError) {
+        daemonBroken = true;
+        log.warn('守护进程不可用，本进程后续改用直跑模式', { reason: err.message });
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  return execPowerShell(action, params);
 }
 
 /**

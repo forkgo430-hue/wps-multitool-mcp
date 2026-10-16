@@ -1,4 +1,5 @@
 # 源码和测试
+scripts/manual/
 src/
 tests/
 *.test.ts

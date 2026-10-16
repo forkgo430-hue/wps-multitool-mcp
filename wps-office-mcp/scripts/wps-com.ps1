@@ -214,6 +214,9 @@ function Replace-InShapeTree($shape, [string]$findText, [string]$replaceText) {
 }
 
 function Output-Json($obj) {
+    # 常驻模式下把请求 id 带回响应，供 Node 侧按 id 匹配请求/响应。
+    # 直跑模式 $script:WpsReqId 为空，不注入，输出与改造前逐字节一致。
+    if ($script:WpsReqId -and ($obj -is [hashtable])) { $obj['id'] = $script:WpsReqId }
     $obj | ConvertTo-Json -Depth 10 -Compress
 }
 
@@ -296,6 +299,15 @@ function Get-PptSaveFormat([string]$format) {
     return $map[$f]
 }
 
+# ==================== 动作分发（常驻模式复用入口）====================
+# 把原先裸的 switch 包进函数，是为了让 wps-comd.ps1 能常驻下来反复调用；
+# 脚本直跑（-File wps-com.ps1 -Action X -Params Y）的用法完全不变（见文件末尾入口段）。
+# 函数体内原先的 367 个 `exit` 已全部改成 `return` —— 常驻进程里 `exit` 会直接干掉守护进程，
+# 而 switch 之后没有任何代码，两者语义等价。
+# 注：函数体沿用原缩进（未整体右移），以便 diff 只体现必要改动。
+function Invoke-WpsAction {
+    param([string]$Action, $p)
+
 try { $p = $Params | ConvertFrom-Json } catch { $p = @{} }
 
 switch ($Action) {
@@ -344,7 +356,7 @@ switch ($Action) {
 
         if ($apps.Count -eq 0 -and -not $front -and -not $launched) {
             Output-Json @{ success = $false; error = "未能唤起 WPS 窗口（无可激活窗口，且启动可见实例失败）" }
-            exit
+            return
         }
 
         # 最终确认：只要系统里存在可见的 WPS 主窗口即视为成功
@@ -393,21 +405,21 @@ switch ($Action) {
             $hasSelection = $false
             try { $hasSelection = ($null -ne $excel.Selection) } catch {}
             Output-Json @{ success = $true; data = @{ appType = "excel"; appName = $excel.Name; hasSelection = $hasSelection } }
-            exit
+            return
         }
         $word = Get-WpsWord
         if ($null -ne $word) {
             $hasSelection = $false
             try { $hasSelection = ($null -ne $word.Selection) } catch {}
             Output-Json @{ success = $true; data = @{ appType = "word"; appName = $word.Name; hasSelection = $hasSelection } }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt) {
             $hasSelection = $false
             try { $hasSelection = ($null -ne $ppt.ActiveWindow.Selection) } catch {}
             Output-Json @{ success = $true; data = @{ appType = "ppt"; appName = $ppt.Name; hasSelection = $hasSelection } }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No WPS application running" }
     }
@@ -421,7 +433,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "Word selection not available" }
             }
-            exit
+            return
         }
         $excel = Get-WpsExcel
         if ($null -ne $excel) {
@@ -432,7 +444,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "Excel selection not available" }
             }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt) {
@@ -447,7 +459,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "PPT selection not available" }
             }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No WPS application running" }
     }
@@ -462,7 +474,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "Word selection not available" }
             }
-            exit
+            return
         }
         $excel = Get-WpsExcel
         if ($null -ne $excel) {
@@ -473,7 +485,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "Excel selection not available" }
             }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt) {
@@ -488,7 +500,7 @@ switch ($Action) {
             } catch {
                 Output-Json @{ success = $false; error = "PPT selection not available" }
             }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No WPS application running" }
     }
@@ -498,95 +510,95 @@ switch ($Action) {
         if ($null -ne $excel -and $null -ne $excel.ActiveWorkbook) {
             $excel.ActiveWorkbook.Save()
             Output-Json @{ success = $true; app = "excel" }
-            exit
+            return
         }
         $word = Get-WpsWord
         if ($null -ne $word -and $null -ne $word.ActiveDocument) {
             $word.ActiveDocument.Save()
             Output-Json @{ success = $true; app = "word" }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt -and $null -ne $ppt.ActivePresentation) {
             $ppt.ActivePresentation.Save()
             Output-Json @{ success = $true; app = "ppt" }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No active document" }
     }
 
     "saveAs" {
         $path = $p.path
-        if (-not $path) { Output-Json @{ success = $false; error = "Path required" }; exit }
+        if (-not $path) { Output-Json @{ success = $false; error = "Path required" }; return }
         $appType = if ($p.appType) { $p.appType } else { Get-AppTypeByExtension $path }
         if ($appType -eq 'excel') {
             $excel = Get-WpsExcel
-            if ($null -eq $excel -or $null -eq $excel.ActiveWorkbook) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+            if ($null -eq $excel -or $null -eq $excel.ActiveWorkbook) { Output-Json @{ success = $false; error = "No active workbook" }; return }
             $format = Get-ExcelFileFormat $p.format
             if ($null -ne $format) { $excel.ActiveWorkbook.SaveAs($path, $format) }
             else { $excel.ActiveWorkbook.SaveAs($path) }
             Output-Json @{ success = $true; data = @{ path = $path; appType = "excel" } }
-            exit
+            return
         }
         if ($appType -eq 'word') {
             $word = Get-WpsWord
-            if ($null -eq $word -or $null -eq $word.ActiveDocument) { Output-Json @{ success = $false; error = "No active document" }; exit }
+            if ($null -eq $word -or $null -eq $word.ActiveDocument) { Output-Json @{ success = $false; error = "No active document" }; return }
             $format = Get-WordSaveFormat $p.format
             if ($null -ne $format) { $word.ActiveDocument.SaveAs($path, $format) }
             else { $word.ActiveDocument.SaveAs($path) }
             Output-Json @{ success = $true; data = @{ path = $path; appType = "word" } }
-            exit
+            return
         }
         if ($appType -eq 'ppt') {
             $ppt = Get-WpsPpt
-            if ($null -eq $ppt -or $null -eq $ppt.ActivePresentation) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+            if ($null -eq $ppt -or $null -eq $ppt.ActivePresentation) { Output-Json @{ success = $false; error = "No active presentation" }; return }
             $format = Get-PptSaveFormat $p.format
             if ($null -ne $format) { $ppt.ActivePresentation.SaveAs($path, $format) }
             else { $ppt.ActivePresentation.SaveAs($path) }
             Output-Json @{ success = $true; data = @{ path = $path; appType = "ppt" } }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "Unknown app type" }
     }
 
     "openFile" {
         $path = $p.path
-        if (-not $path) { Output-Json @{ success = $false; error = "Path required" }; exit }
+        if (-not $path) { Output-Json @{ success = $false; error = "Path required" }; return }
         $appType = if ($p.appType) { $p.appType } else { Get-AppTypeByExtension $path }
         if ($appType -eq 'excel') {
             $excel = Get-WpsExcel
-            if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+            if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
             $excel.Workbooks.Open($path)
             Output-Json @{ success = $true; data = @{ path = $path; appType = "excel" } }
-            exit
+            return
         }
         if ($appType -eq 'word') {
             $word = Get-WpsWord
-            if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+            if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
             $word.Documents.Open($path)
             Output-Json @{ success = $true; data = @{ path = $path; appType = "word" } }
-            exit
+            return
         }
         if ($appType -eq 'ppt') {
             $ppt = Get-WpsPpt
-            if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+            if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
             $ppt.Presentations.Open($path)
             Output-Json @{ success = $true; data = @{ path = $path; appType = "ppt" } }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "Unknown app type" }
     }
 
     "createDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $word.Documents.Add() | Out-Null
         Output-Json @{ success = $true }
     }
 
     "createPresentation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $ppt.Presentations.Add() | Out-Null
         Output-Json @{ success = $true }
     }
@@ -599,7 +611,7 @@ switch ($Action) {
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $wb.ExportAsFixedFormat(0, $outputPath)
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "excel" } }
-            exit
+            return
         }
         $word = Get-WpsWord
         if ($null -ne $word -and $null -ne $word.ActiveDocument) {
@@ -608,7 +620,7 @@ switch ($Action) {
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $doc.ExportAsFixedFormat($outputPath, 17)
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "word" } }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt -and $null -ne $ppt.ActivePresentation) {
@@ -617,14 +629,14 @@ switch ($Action) {
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $pres.SaveAs($outputPath, 32)
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "ppt" } }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No active document" }
     }
 
     "convertFormat" {
         $targetFormat = $p.targetFormat
-        if (-not $targetFormat) { Output-Json @{ success = $false; error = "targetFormat required" }; exit }
+        if (-not $targetFormat) { Output-Json @{ success = $false; error = "targetFormat required" }; return }
         $excel = Get-WpsExcel
         if ($null -ne $excel -and $null -ne $excel.ActiveWorkbook) {
             $wb = $excel.ActiveWorkbook
@@ -633,7 +645,7 @@ switch ($Action) {
             $format = Get-ExcelFileFormat $targetFormat
             if ($null -ne $format) { $wb.SaveAs($outputPath, $format) } else { $wb.SaveAs($outputPath) }
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "excel"; targetFormat = $targetFormat } }
-            exit
+            return
         }
         $word = Get-WpsWord
         if ($null -ne $word -and $null -ne $word.ActiveDocument) {
@@ -643,7 +655,7 @@ switch ($Action) {
             $format = Get-WordSaveFormat $targetFormat
             if ($null -ne $format) { $doc.SaveAs($outputPath, $format) } else { $doc.SaveAs($outputPath) }
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "word"; targetFormat = $targetFormat } }
-            exit
+            return
         }
         $ppt = Get-WpsPpt
         if ($null -ne $ppt -and $null -ne $ppt.ActivePresentation) {
@@ -653,7 +665,7 @@ switch ($Action) {
             $format = Get-PptSaveFormat $targetFormat
             if ($null -ne $format) { $pres.SaveAs($outputPath, $format) } else { $pres.SaveAs($outputPath) }
             Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "ppt"; targetFormat = $targetFormat } }
-            exit
+            return
         }
         Output-Json @{ success = $false; error = "No active document" }
     }
@@ -661,9 +673,9 @@ switch ($Action) {
     # ==================== Excel Basic ====================
     "getActiveWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheets = @()
         for ($i = 1; $i -le $wb.Sheets.Count; $i++) { $sheets += $wb.Sheets.Item($i).Name }
         Output-Json @{ success = $true; data = @{ name = $wb.Name; path = $wb.FullName; sheetCount = $wb.Sheets.Count; sheets = $sheets } }
@@ -671,9 +683,9 @@ switch ($Action) {
 
     "getCellValue" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $cell = $sheet.Cells.Item($p.row, $p.col)
         Output-Json @{ success = $true; data = @{ value = $cell.Value2; text = $cell.Text; formula = $cell.Formula } }
@@ -681,7 +693,7 @@ switch ($Action) {
 
     "setCellValue" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $sheet.Cells.Item($p.row, $p.col).Value2 = $p.value
@@ -690,7 +702,7 @@ switch ($Action) {
 
     "getRangeData" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
@@ -705,7 +717,7 @@ switch ($Action) {
 
     "setRangeData" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
@@ -717,9 +729,9 @@ switch ($Action) {
 
     "diagnoseFormula" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
         $value = $cell.Value2
@@ -752,9 +764,9 @@ switch ($Action) {
 
     "cleanData" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
         $opsResult = @()
@@ -804,9 +816,9 @@ switch ($Action) {
 
     "createPivotTable" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sourceRange = Get-RangeFromAddress $wb $p.sourceRange
         $destSheet = if ($p.destinationSheet) { $wb.Sheets.Item($p.destinationSheet) } else { $excel.ActiveSheet }
         $destCell = $destSheet.Range($p.destinationCell)
@@ -844,9 +856,9 @@ switch ($Action) {
 
     "updatePivotTable" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $table = $null
         if ($p.pivotTableName) {
@@ -855,7 +867,7 @@ switch ($Action) {
         if ($null -eq $table -and $p.pivotTableCell) {
             try { $table = $sheet.Range($p.pivotTableCell).PivotTable } catch {}
         }
-        if ($null -eq $table) { Output-Json @{ success = $false; error = "PivotTable not found" }; exit }
+        if ($null -eq $table) { Output-Json @{ success = $false; error = "PivotTable not found" }; return }
         $ops = @()
         if ($p.addRowFields) {
             foreach ($f in $p.addRowFields) {
@@ -925,7 +937,7 @@ switch ($Action) {
 
     "setFormula" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = if ($p.range) { $sheet.Range($p.range) } else { $sheet.Cells.Item($p.row, $p.col) }
@@ -935,7 +947,7 @@ switch ($Action) {
 
     "setCellFormat" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         if ($p.numberFormat) { $range.NumberFormat = $p.numberFormat }
@@ -944,7 +956,7 @@ switch ($Action) {
 
     "setCellStyle" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         if ($p.fontSize) { $range.Font.Size = $p.fontSize }
@@ -981,7 +993,7 @@ switch ($Action) {
 
     "setBorder" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $styleMap = @{ thin = 1; medium = 2; thick = 4; double = 6; none = 0 }
@@ -1012,7 +1024,7 @@ switch ($Action) {
 
     "copyFormat" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $sourceRange = $sheet.Range($p.source)
         $targetRange = $sheet.Range($p.target)
@@ -1024,7 +1036,7 @@ switch ($Action) {
 
     "clearFormats" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $range.ClearFormats()
@@ -1033,7 +1045,7 @@ switch ($Action) {
 
     "addConditionalFormat" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $formatType = if ($p.type) { $p.type } else { "cellValue" }
@@ -1063,7 +1075,7 @@ switch ($Action) {
 
     "removeConditionalFormat" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         if ($p.index) {
@@ -1076,7 +1088,7 @@ switch ($Action) {
 
     "getConditionalFormats" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $formats = @()
@@ -1090,7 +1102,7 @@ switch ($Action) {
 
     "addDataValidation" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $typeMap = @{ list = 3; whole = 1; decimal = 2; date = 4; time = 5; textLength = 6; custom = 7 }
@@ -1124,7 +1136,7 @@ switch ($Action) {
 
     "removeDataValidation" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $range.Validation.Delete()
@@ -1133,7 +1145,7 @@ switch ($Action) {
 
     "getDataValidations" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $validation = $range.Validation
@@ -1142,7 +1154,7 @@ switch ($Action) {
 
     "getFormula" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
         $formula = if ($cell.Formula) { $cell.Formula } else { "" }
@@ -1153,7 +1165,7 @@ switch ($Action) {
 
     "setArrayFormula" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $range.FormulaArray = $p.formula
@@ -1162,7 +1174,7 @@ switch ($Action) {
 
     "getCellInfo" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
         $value = $cell.Value2
@@ -1177,9 +1189,9 @@ switch ($Action) {
 
     "refreshLinks" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $links = $wb.LinkSources(1)
         if ($links) {
             for ($i = 1; $i -le $links.Length; $i++) {
@@ -1193,7 +1205,7 @@ switch ($Action) {
 
     "consolidate" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $destRange = $sheet.Range($p.destination)
         $funcMap = @{ sum = 9; count = 2; average = 1; max = 4; min = 5 }
@@ -1205,7 +1217,7 @@ switch ($Action) {
 
     "calculateSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         if ($p.all) {
             $excel.Calculate()
             Output-Json @{ success = $true; data = @{ calculated = "all" } }
@@ -1219,9 +1231,9 @@ switch ($Action) {
     # ==================== Excel Advanced ====================
     "getExcelContext" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $usedRange = $sheet.UsedRange
         $headers = @()
@@ -1240,9 +1252,9 @@ switch ($Action) {
 
     "getContext" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $usedRange = $sheet.UsedRange
         $headers = @()
@@ -1261,7 +1273,7 @@ switch ($Action) {
 
     "sortRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $keyCol = $sheet.Range($p.keyColumn)
@@ -1272,7 +1284,7 @@ switch ($Action) {
 
     "autoFilter" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         if ($p.criteria) {
@@ -1285,7 +1297,7 @@ switch ($Action) {
 
     "createChart" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.dataRange)
         $chartType = $p.chartType
@@ -1310,7 +1322,7 @@ switch ($Action) {
 
     "updateChart" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $chartObj = $null
         if ($p.chartName) {
@@ -1319,7 +1331,7 @@ switch ($Action) {
         if ($null -eq $chartObj -and $p.chartIndex) {
             try { $chartObj = $sheet.ChartObjects().Item([int]$p.chartIndex) } catch {}
         }
-        if ($null -eq $chartObj) { Output-Json @{ success = $false; error = "Chart not found" }; exit }
+        if ($null -eq $chartObj) { Output-Json @{ success = $false; error = "Chart not found" }; return }
         $updated = @()
         if ($null -ne $p.title) {
             if ($p.title -eq "") { $chartObj.Chart.HasTitle = $false }
@@ -1369,12 +1381,12 @@ switch ($Action) {
 
     "exportChartAsImage" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $outputPath = if ($p.outputPath) { $p.outputPath } else { $p.path }
-        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; exit }
+        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; return }
         $chartName = $p.chartName
-        if ([string]::IsNullOrEmpty($chartName)) { Output-Json @{ success = $false; error = "Missing chartName" }; exit }
+        if ([string]::IsNullOrEmpty($chartName)) { Output-Json @{ success = $false; error = "Missing chartName" }; return }
         $rawFormat = if ($p.format) { $p.format.ToString().ToUpper() } else { "PNG" }
         # JPEG 在 Excel COM 中按 JPG 滤镜处理
         $filterName = if ($rawFormat -eq "JPEG") { "JPG" } else { $rawFormat }
@@ -1385,11 +1397,11 @@ switch ($Action) {
 
     "exportRangeAsImage" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $outputPath = if ($p.outputPath) { $p.outputPath } else { $p.path }
-        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; exit }
-        if ([string]::IsNullOrEmpty($p.range)) { Output-Json @{ success = $false; error = "Missing range" }; exit }
+        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; return }
+        if ([string]::IsNullOrEmpty($p.range)) { Output-Json @{ success = $false; error = "Missing range" }; return }
         $rawFormat = if ($p.format) { $p.format.ToString().ToUpper() } else { "PNG" }
         $filterName = if ($rawFormat -eq "JPEG") { "JPG" } else { $rawFormat }
         $range = $sheet.Range($p.range)
@@ -1413,7 +1425,7 @@ switch ($Action) {
 
     "removeDuplicates" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $originalCount = $range.Rows.Count
@@ -1437,9 +1449,9 @@ switch ($Action) {
 
     "createSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $wb.Sheets.Add()
         if ($p.name) { $sheet.Name = $p.name }
         Output-Json @{ success = $true; data = @{ sheetName = $sheet.Name; sheetIndex = $sheet.Index } }
@@ -1447,9 +1459,9 @@ switch ($Action) {
 
     "deleteSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $name = $sheet.Name
         $excel.DisplayAlerts = $false
@@ -1460,9 +1472,9 @@ switch ($Action) {
 
     "renameSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $oldName = $sheet.Name
         $sheet.Name = $p.newName
@@ -1471,9 +1483,9 @@ switch ($Action) {
 
     "copySheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         if ($p.before) {
             $sheet.Copy($wb.Sheets.Item($p.before))
@@ -1487,9 +1499,9 @@ switch ($Action) {
 
     "getSheetList" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheets = @()
         for ($i = 1; $i -le $wb.Sheets.Count; $i++) {
             $sheet = $wb.Sheets.Item($i)
@@ -1500,9 +1512,9 @@ switch ($Action) {
 
     "switchSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $wb.Sheets.Item($p.sheet)
         $sheet.Activate()
         Output-Json @{ success = $true; data = @{ activeSheet = $sheet.Name } }
@@ -1510,9 +1522,9 @@ switch ($Action) {
 
     "moveSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         if ($p.before) {
             $sheet.Move($wb.Sheets.Item($p.before))
@@ -1524,7 +1536,7 @@ switch ($Action) {
 
     "mergeCells" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $across = if ($null -ne $p.across) { [bool]$p.across } else { $false }
@@ -1534,7 +1546,7 @@ switch ($Action) {
 
     "unmergeCells" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $range.UnMerge()
@@ -1543,7 +1555,7 @@ switch ($Action) {
 
     "setColumnWidth" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $col = $p.column
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
@@ -1553,7 +1565,7 @@ switch ($Action) {
 
     "setRowHeight" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $sheet.Range("$($p.row):$($p.row)").RowHeight = $p.height
         Output-Json @{ success = $true; data = @{ row = $p.row; height = $p.height } }
@@ -1561,7 +1573,7 @@ switch ($Action) {
 
     "autoFitColumn" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         if ($p.range) {
             $sheet.Range($p.range).Columns.AutoFit()
@@ -1577,7 +1589,7 @@ switch ($Action) {
 
     "autoFitRow" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         if ($p.range) {
             $sheet.Range($p.range).Rows.AutoFit()
@@ -1591,7 +1603,7 @@ switch ($Action) {
 
     "autoFitAll" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
         $range.Columns.AutoFit()
@@ -1601,7 +1613,7 @@ switch ($Action) {
 
     "setNumberFormat" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         if ($p.format) { $range.NumberFormat = $p.format }
@@ -1610,7 +1622,7 @@ switch ($Action) {
 
     "wrapText" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $wrap = if ($null -ne $p.wrap) { [bool]$p.wrap } else { $true }
@@ -1620,7 +1632,7 @@ switch ($Action) {
 
     "setPrintArea" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         if ($p.range) { $sheet.PageSetup.PrintArea = $p.range } else { $sheet.PageSetup.PrintArea = "" }
         Output-Json @{ success = $true; data = @{ printArea = if ($p.range) { $p.range } else { "cleared" } } }
@@ -1628,16 +1640,16 @@ switch ($Action) {
 
     "getSelection" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sel = $excel.Selection
-        if ($null -eq $sel) { Output-Json @{ success = $false; error = "No selection" }; exit }
+        if ($null -eq $sel) { Output-Json @{ success = $false; error = "No selection" }; return }
         $addr = $sel.Address()
         Output-Json @{ success = $true; data = @{ address = $addr; rows = $sel.Rows.Count; columns = $sel.Columns.Count } }
     }
 
     "clearRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $clearType = if ($p.type) { $p.type } else { "all" }
@@ -1650,10 +1662,10 @@ switch ($Action) {
 
     "insertRows" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $startRow = if ($p.row) { [int]$p.row } elseif ($p.startRow) { [int]$p.startRow } else { $null }
-        if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; exit }
+        if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; return }
         $count = if ($p.count) { [int]$p.count } else { 1 }
         $endRow = $startRow + $count - 1
         $sheet.Range("${startRow}:${endRow}").Insert()
@@ -1662,10 +1674,10 @@ switch ($Action) {
 
     "insertColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $col = if ($p.column) { $p.column } elseif ($p.startColumn) { $p.startColumn } else { $null }
-        if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; exit }
+        if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; return }
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
         $count = if ($p.count) { [int]$p.count } else { 1 }
         for ($i = 0; $i -lt $count; $i++) {
@@ -1676,10 +1688,10 @@ switch ($Action) {
 
     "deleteRows" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $startRow = if ($p.row) { [int]$p.row } elseif ($p.startRow) { [int]$p.startRow } else { $null }
-        if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; exit }
+        if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; return }
         $count = if ($p.count) { [int]$p.count } else { 1 }
         $endRow = $startRow + $count - 1
         $sheet.Range("${startRow}:${endRow}").Delete()
@@ -1688,10 +1700,10 @@ switch ($Action) {
 
     "deleteColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $col = if ($p.column) { $p.column } elseif ($p.startColumn) { $p.startColumn } else { $null }
-        if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; exit }
+        if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; return }
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
         $count = if ($p.count) { [int]$p.count } else { 1 }
         for ($i = 0; $i -lt $count; $i++) {
@@ -1702,20 +1714,20 @@ switch ($Action) {
 
     "hideRows" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $rows = if ($p.rows) { $p.rows } elseif ($p.row) { @($p.row) } else { @() }
-        if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; exit }
+        if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; return }
         foreach ($r in $rows) { $sheet.Range("${r}:${r}").Hidden = $true }
         Output-Json @{ success = $true; data = @{ hiddenRows = $rows } }
     }
 
     "hideColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cols = if ($p.columns) { $p.columns } elseif ($p.column) { @($p.column) } else { @() }
-        if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; exit }
+        if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; return }
         $hidden = @()
         foreach ($c in $cols) {
             $col = $c
@@ -1728,20 +1740,20 @@ switch ($Action) {
 
     "showRows" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $rows = if ($p.rows) { $p.rows } elseif ($p.row) { @($p.row) } else { @() }
-        if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; exit }
+        if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; return }
         foreach ($r in $rows) { $sheet.Range("${r}:${r}").Hidden = $false }
         Output-Json @{ success = $true; data = @{ shownRows = $rows } }
     }
 
     "showColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cols = if ($p.columns) { $p.columns } elseif ($p.column) { @($p.column) } else { @() }
-        if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; exit }
+        if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; return }
         $shown = @()
         foreach ($c in $cols) {
             $col = $c
@@ -1754,18 +1766,18 @@ switch ($Action) {
 
     "groupRows" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
-        if (-not $p.startRow -or -not $p.endRow) { Output-Json @{ success = $false; error = "startRow/endRow required" }; exit }
+        if (-not $p.startRow -or -not $p.endRow) { Output-Json @{ success = $false; error = "startRow/endRow required" }; return }
         $sheet.Range("$($p.startRow):$($p.endRow)").Group()
         Output-Json @{ success = $true; data = @{ grouped = "$($p.startRow):$($p.endRow)" } }
     }
 
     "groupColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
-        if (-not $p.startColumn -or -not $p.endColumn) { Output-Json @{ success = $false; error = "startColumn/endColumn required" }; exit }
+        if (-not $p.startColumn -or -not $p.endColumn) { Output-Json @{ success = $false; error = "startColumn/endColumn required" }; return }
         $startCol = $p.startColumn
         $endCol = $p.endColumn
         if ($startCol -is [int]) { $startCol = Convert-ColumnNumberToLetter([int]$startCol) }
@@ -1776,7 +1788,7 @@ switch ($Action) {
 
     "freezePanes" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         if ($p.cell) {
             $sheet.Range($p.cell).Select()
@@ -1791,14 +1803,14 @@ switch ($Action) {
 
     "unfreezePanes" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $excel.ActiveWindow.FreezePanes = $false
         Output-Json @{ success = $true; data = @{ message = "窗格冻结已取消" } }
     }
 
     "findInSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $searchRange = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
         $results = @()
@@ -1819,7 +1831,7 @@ switch ($Action) {
 
     "replaceInSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $searchRange = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
         $lookAt = if ($p.matchCase) { 1 } else { 2 }
@@ -1829,7 +1841,7 @@ switch ($Action) {
 
     "copyRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $range.Copy()
@@ -1838,7 +1850,7 @@ switch ($Action) {
 
     "pasteRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $destRange = $sheet.Range($p.destination)
         if ($p.pasteType -eq "values") {
@@ -1855,7 +1867,7 @@ switch ($Action) {
 
     "fillSeries" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $startCell = $range.Cells.Item(1, 1)
@@ -1870,11 +1882,11 @@ switch ($Action) {
 
     "transpose" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $sourceRange = $sheet.Range($p.sourceRange)
         $destCell = if ($p.destinationCell) { $p.destinationCell } elseif ($p.targetCell) { $p.targetCell } else { $null }
-        if ($null -eq $destCell) { Output-Json @{ success = $false; error = "destinationCell/targetCell required" }; exit }
+        if ($null -eq $destCell) { Output-Json @{ success = $false; error = "destinationCell/targetCell required" }; return }
         $destRange = $sheet.Range($destCell)
         $sourceRange.Copy()
         $destRange.PasteSpecial(-4163, -4142, $false, $true)
@@ -1884,7 +1896,7 @@ switch ($Action) {
 
     "textToColumns" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $delimiter = if ($p.delimiter) { $p.delimiter } else { "," }
@@ -1900,7 +1912,7 @@ switch ($Action) {
 
     "subtotal" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $funcMap = @{ sum = 9; count = 2; average = 1; max = 4; min = 5 }
@@ -1916,9 +1928,9 @@ switch ($Action) {
 
     "createNamedRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $addr = $range.Address()
@@ -1928,18 +1940,18 @@ switch ($Action) {
 
     "deleteNamedRange" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $wb.Names.Item($p.name).Delete()
         Output-Json @{ success = $true; data = @{ deletedName = $p.name } }
     }
 
     "getNamedRanges" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $names = @()
         for ($i = 1; $i -le $wb.Names.Count; $i++) {
             $n = $wb.Names.Item($i)
@@ -1950,7 +1962,7 @@ switch ($Action) {
 
     "addCellComment" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
         if ($cell.Comment) { $cell.Comment.Delete() }
@@ -1961,7 +1973,7 @@ switch ($Action) {
 
     "deleteCellComment" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
         if ($cell.Comment) { $cell.Comment.Delete() }
@@ -1970,7 +1982,7 @@ switch ($Action) {
 
     "getCellComments" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $comments = @()
         for ($i = 1; $i -le $sheet.Comments.Count; $i++) {
@@ -1983,7 +1995,7 @@ switch ($Action) {
 
     "protectSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $password = if ($p.password) { $p.password } else { "" }
         $sheet.Protect($password, $p.drawingObjects, $p.contents, $p.scenarios)
@@ -1992,7 +2004,7 @@ switch ($Action) {
 
     "unprotectSheet" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $password = if ($p.password) { $p.password } else { "" }
         $sheet.Unprotect($password)
@@ -2001,9 +2013,9 @@ switch ($Action) {
 
     "protectWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.ActiveWorkbook
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $password = if ($p.password) { $p.password } else { "" }
         $structure = if ($null -ne $p.structure) { [bool]$p.structure } else { $true }
         $wb.Protect($password, $structure, $p.windows)
@@ -2012,7 +2024,7 @@ switch ($Action) {
 
     "insertExcelImage" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $left = if ($null -ne $p.left) { $p.left } else { 100 }
         $top = if ($null -ne $p.top) { $p.top } else { 100 }
@@ -2024,7 +2036,7 @@ switch ($Action) {
 
     "setHyperlink" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.cell)
         $address = if ($p.address) { $p.address } else { "" }
@@ -2037,7 +2049,7 @@ switch ($Action) {
 
     "lockCells" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
         $locked = if ($null -ne $p.locked) { [bool]$p.locked } else { $true }
@@ -2047,14 +2059,14 @@ switch ($Action) {
 
     "openWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.Workbooks.Open($p.path, $p.updateLinks, $p.readOnly)
         Output-Json @{ success = $true; data = @{ name = $wb.Name; path = $wb.FullName; sheets = $wb.Sheets.Count } }
     }
 
     "getOpenWorkbooks" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $workbooks = @()
         for ($i = 1; $i -le $excel.Workbooks.Count; $i++) {
             $wb = $excel.Workbooks.Item($i)
@@ -2065,7 +2077,7 @@ switch ($Action) {
 
     "switchWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.Workbooks.Item($(if ($p.name) { $p.name } else { $p.index }))
         $wb.Activate()
         Output-Json @{ success = $true; data = @{ name = $wb.Name; path = $wb.FullName } }
@@ -2073,9 +2085,9 @@ switch ($Action) {
 
     "closeWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = if ($p.name) { $excel.Workbooks.Item($p.name) } else { $excel.ActiveWorkbook }
-        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No workbook" }; exit }
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No workbook" }; return }
         $name = $wb.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
         $wb.Close($saveChanges)
@@ -2084,7 +2096,7 @@ switch ($Action) {
 
     "createWorkbook" {
         $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; exit }
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $excel.Workbooks.Add()
         if ($p.name) { $wb.SaveAs($p.name) }
         Output-Json @{ success = $true; data = @{ name = $wb.Name; path = $wb.FullName; sheets = $wb.Sheets.Count } }
@@ -2093,9 +2105,9 @@ switch ($Action) {
     # ==================== Word ====================
     "getActiveDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         Output-Json @{ success = $true; data = @{
             name = $doc.Name; path = $doc.FullName
             paragraphCount = $doc.Paragraphs.Count; wordCount = $doc.Words.Count; characterCount = $doc.Characters.Count
@@ -2104,9 +2116,9 @@ switch ($Action) {
 
     "generateTOC" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $position = if ($p.position) { $p.position } else { "start" }
         $levels = if ($p.levels) { [int]$p.levels } else { 3 }
         $includePageNumbers = if ($null -ne $p.includePageNumbers) { [bool]$p.includePageNumbers } else { $true }
@@ -2117,9 +2129,9 @@ switch ($Action) {
 
     "getDocumentText" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $text = $doc.Content.Text
         if ($text.Length -gt 10000) { $text = $text.Substring(0, 10000) + "...(truncated)" }
         Output-Json @{ success = $true; data = @{ text = $text; length = $doc.Content.Text.Length } }
@@ -2127,7 +2139,7 @@ switch ($Action) {
 
     "getOpenDocuments" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $documents = @()
         for ($i = 1; $i -le $word.Documents.Count; $i++) {
             $docItem = $word.Documents.Item($i)
@@ -2138,7 +2150,7 @@ switch ($Action) {
 
     "switchDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $docItem = $word.Documents.Item($(if ($p.name) { $p.name } else { $p.index }))
         $docItem.Activate()
         Output-Json @{ success = $true; data = @{ name = $docItem.Name; path = $docItem.FullName } }
@@ -2146,17 +2158,17 @@ switch ($Action) {
 
     "openDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
-        if (-not $p.path) { Output-Json @{ success = $false; error = "path required" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        if (-not $p.path) { Output-Json @{ success = $false; error = "path required" }; return }
         $docItem = $word.Documents.Open($p.path)
         Output-Json @{ success = $true; data = @{ name = $docItem.Name; path = $docItem.FullName; paragraphs = $docItem.Paragraphs.Count } }
     }
 
     "closeDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $docItem = if ($p.name) { $word.Documents.Item($p.name) } else { $word.ActiveDocument }
-        if ($null -eq $docItem) { Output-Json @{ success = $false; error = "No document" }; exit }
+        if ($null -eq $docItem) { Output-Json @{ success = $false; error = "No document" }; return }
         $name = $docItem.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
         $docItem.Close($saveChanges)
@@ -2165,9 +2177,9 @@ switch ($Action) {
 
     "insertText" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $position = if ($p.position) { $p.position } else { "cursor" }
         switch ($position) {
             "start" { $range = $doc.Range(0, 0); $range.InsertBefore($p.text) }
@@ -2182,7 +2194,7 @@ switch ($Action) {
 
     "setFont" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $range = if ($p.range -eq "all") { $doc.Content } else { $word.Selection.Range }
         if ($p.fontName) { $range.Font.Name = $p.fontName }
@@ -2201,7 +2213,7 @@ switch ($Action) {
 
     "findReplace" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $find = $doc.Content.Find
         $find.ClearFormatting()
@@ -2218,7 +2230,7 @@ switch ($Action) {
 
     "insertTable" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $rows = if ($p.rows) { [int]$p.rows } else { 3 }
         $cols = if ($p.cols) { [int]$p.cols } else { 3 }
@@ -2237,9 +2249,9 @@ switch ($Action) {
 
     "setParagraph" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $range = if ($p.range -eq "all") { $doc.Content } else { $word.Selection.Range }
         $para = $range.ParagraphFormat
         if ($null -ne $p.alignment) {
@@ -2262,9 +2274,9 @@ switch ($Action) {
 
     "setPageSetup" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $ps = $doc.PageSetup
         if ($null -ne $p.topMargin) { $ps.TopMargin = [double]$p.topMargin * 28.35 }
         if ($null -ne $p.bottomMargin) { $ps.BottomMargin = [double]$p.bottomMargin * 28.35 }
@@ -2284,7 +2296,7 @@ switch ($Action) {
 
     "insertPageBreak" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $breakType = if ($p.type) { $p.type } else { "page" }
         $breakTypeMap = @{ page = 7; column = 8; section = 2; sectionContinuous = 3 }
@@ -2296,7 +2308,7 @@ switch ($Action) {
 
     "insertHeader" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $section = $doc.Sections.Item(1)
         $header = $section.Headers.Item(1)
@@ -2310,7 +2322,7 @@ switch ($Action) {
 
     "insertFooter" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $section = $doc.Sections.Item(1)
         $footer = $section.Footers.Item(1)
@@ -2329,7 +2341,7 @@ switch ($Action) {
 
     "insertHyperlink" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $range = $word.Selection.Range
         $url = if ($p.url) { $p.url } else { $p.address }
@@ -2345,9 +2357,9 @@ switch ($Action) {
 
     "insertBookmark" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; exit }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; return }
         $range = $word.Selection.Range
         $doc.Bookmarks.Add($p.name, $range)
         Output-Json @{ success = $true; data = @{ name = $p.name } }
@@ -2355,7 +2367,7 @@ switch ($Action) {
 
     "getBookmarks" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $bookmarks = @()
         for ($i = 1; $i -le $doc.Bookmarks.Count; $i++) {
@@ -2367,9 +2379,9 @@ switch ($Action) {
 
     "getDocumentParagraphs" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $startIdx = if ($null -ne $p.startParagraph) { [int]$p.startParagraph } else { 1 }
         $endIdx = if ($null -ne $p.endParagraph) { [int]$p.endParagraph } else { [Math]::Min($doc.Paragraphs.Count, $startIdx + 49) }
         if ($endIdx -gt $doc.Paragraphs.Count) { $endIdx = $doc.Paragraphs.Count }
@@ -2388,10 +2400,10 @@ switch ($Action) {
 
     "findInDocument" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
-        if (-not $p.findText) { Output-Json @{ success = $false; error = "findText required" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.findText) { Output-Json @{ success = $false; error = "findText required" }; return }
         $matchCase = if ($null -ne $p.matchCase) { [bool]$p.matchCase } else { $false }
         $matchWholeWord = if ($null -ne $p.matchWholeWord) { [bool]$p.matchWholeWord } else { $false }
         $maxResults = if ($null -ne $p.maxResults) { [int]$p.maxResults } else { 20 }
@@ -2424,18 +2436,18 @@ switch ($Action) {
 
     "smartFillField" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
-        if (-not $p.keyword) { Output-Json @{ success = $false; error = "keyword required" }; exit }
-        if ($null -eq $p.value) { Output-Json @{ success = $false; error = "value required（空字符串将清除该字段内容）" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.keyword) { Output-Json @{ success = $false; error = "keyword required" }; return }
+        if ($null -eq $p.value) { Output-Json @{ success = $false; error = "value required（空字符串将清除该字段内容）" }; return }
         $fillMode = if ($p.fillMode) { $p.fillMode.ToLower() } else { "auto" }
 
         $searchRange = $doc.Content.Duplicate
         $searchRange.Find.ClearFormatting()
         $searchRange.Find.Text = $p.keyword
         $found = $searchRange.Find.Execute($p.keyword, $false, $false, $false, $false, $false, $true, 1, $false, "", 0)
-        if (-not $found) { Output-Json @{ success = $false; error = "Keyword '$($p.keyword)' not found" }; exit }
+        if (-not $found) { Output-Json @{ success = $false; error = "Keyword '$($p.keyword)' not found" }; return }
 
         $matchStart = $searchRange.Start
         $matchEnd = $searchRange.End
@@ -2547,11 +2559,11 @@ switch ($Action) {
 
     "replaceBookmarkContent" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
-        if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; exit }
-        if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; return }
+        if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; return }
         try {
             $bm = $doc.Bookmarks.Item($p.name)
             $bmStart = $bm.Start
@@ -2568,10 +2580,10 @@ switch ($Action) {
 
     "addComment" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $text = if ($p.text) { $p.text } else { $p.comment }
-        if (-not $text) { Output-Json @{ success = $false; error = "text required" }; exit }
+        if (-not $text) { Output-Json @{ success = $false; error = "text required" }; return }
         $range = $word.Selection.Range
         $doc.Comments.Add($range, $text)
         Output-Json @{ success = $true }
@@ -2579,7 +2591,7 @@ switch ($Action) {
 
     "getComments" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $comments = @()
         for ($i = 1; $i -le $doc.Comments.Count; $i++) {
@@ -2591,7 +2603,7 @@ switch ($Action) {
 
     "getDocumentStats" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $stats = @{ name = $doc.Name; path = $doc.FullName; pages = $doc.ComputeStatistics(2); words = $doc.ComputeStatistics(0); characters = $doc.ComputeStatistics(3); paragraphs = $doc.ComputeStatistics(4); lines = $doc.ComputeStatistics(1) }
         Output-Json @{ success = $true; data = $stats }
@@ -2599,10 +2611,10 @@ switch ($Action) {
 
     "insertImage" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $path = if ($p.path) { $p.path } else { $p.filePath }
-        if (-not $path) { Output-Json @{ success = $false; error = "path required" }; exit }
+        if (-not $path) { Output-Json @{ success = $false; error = "path required" }; return }
         $range = $word.Selection.Range
         $shape = $doc.InlineShapes.AddPicture($path, $false, $true, $range)
         if ($p.width) { $shape.Width = $p.width }
@@ -2613,9 +2625,9 @@ switch ($Action) {
 
     "applyStyle" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if ($p.range -and $null -ne $p.range.start -and $null -ne $p.range.end) {
             $range = $doc.Range([int]$p.range.start, [int]$p.range.end)
         } else {
@@ -2628,9 +2640,9 @@ switch ($Action) {
     # ==================== Word: Proofreading ====================
     "enableTrackChanges" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $enable = if ($null -ne $p.enable) { [bool]$p.enable } else { $true }
         $doc.TrackRevisions = $enable
         Output-Json @{ success = $true; data = @{ trackChanges = $enable; active = $doc.TrackRevisions } }
@@ -2638,9 +2650,9 @@ switch ($Action) {
 
     "getTrackChangesStatus" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $revisionCount = 0
         try { $revisionCount = $doc.Revisions.Count } catch {}
         Output-Json @{ success = $true; data = @{ trackChanges = [bool]$doc.TrackRevisions; revisionCount = $revisionCount } }
@@ -2648,11 +2660,11 @@ switch ($Action) {
 
     "replaceRange" {
         $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; exit }
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
-        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; exit }
-        if ($null -eq $p.startPos -or $null -eq $p.endPos) { Output-Json @{ success = $false; error = "startPos and endPos required" }; exit }
-        if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; exit }
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($null -eq $p.startPos -or $null -eq $p.endPos) { Output-Json @{ success = $false; error = "startPos and endPos required" }; return }
+        if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; return }
         try {
             $range = $doc.Range([int]$p.startPos, [int]$p.endPos)
             $originalText = $range.Text
@@ -2667,9 +2679,9 @@ switch ($Action) {
     # ==================== PPT ====================
     "getActivePresentation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $slides = @()
         for ($i = 1; $i -le $pres.Slides.Count; $i++) {
             $slide = $pres.Slides.Item($i)
@@ -2687,17 +2699,17 @@ switch ($Action) {
 
     "openPresentation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
-        if (-not $p.path) { Output-Json @{ success = $false; error = "path required" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
+        if (-not $p.path) { Output-Json @{ success = $false; error = "path required" }; return }
         $pres = $ppt.Presentations.Open($p.path)
         Output-Json @{ success = $true; data = @{ name = $pres.Name; path = $pres.FullName; slideCount = $pres.Slides.Count } }
     }
 
     "closePresentation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = if ($p.name) { $ppt.Presentations.Item($p.name) } else { $ppt.ActivePresentation }
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No presentation" }; return }
         $name = $pres.Name
         $pres.Close()
         Output-Json @{ success = $true; data = @{ closed = $name } }
@@ -2705,7 +2717,7 @@ switch ($Action) {
 
     "getOpenPresentations" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $presentations = @()
         for ($i = 1; $i -le $ppt.Presentations.Count; $i++) {
             $presItem = $ppt.Presentations.Item($i)
@@ -2716,7 +2728,7 @@ switch ($Action) {
 
     "switchPresentation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $presItem = $ppt.Presentations.Item($(if ($p.name) { $p.name } else { $p.index }))
         $presItem.Windows.Item(1).Activate()
         Output-Json @{ success = $true; data = @{ name = $presItem.Name } }
@@ -2724,9 +2736,9 @@ switch ($Action) {
 
     "deleteSlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         $pres.Slides.Item($index).Delete()
         Output-Json @{ success = $true; data = @{ deleted = $index } }
@@ -2734,9 +2746,9 @@ switch ($Action) {
 
     "duplicateSlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         if (-not $index) { $index = 1 }
         $slide = $pres.Slides.Item($index)
@@ -2748,12 +2760,12 @@ switch ($Action) {
     "insertSlidesFromFile" {
         # 从另一个 PPT 文件把整页幻灯片插入当前演示文稿，保留来源格式（跨PPT整合）
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $src = if ($p.filePath) { $p.filePath } elseif ($p.path) { $p.path } else { $null }
-        if (-not $src) { Output-Json @{ success = $false; error = "filePath required" }; exit }
-        if (-not (Test-Path $src)) { Output-Json @{ success = $false; error = "source file not found: $src" }; exit }
+        if (-not $src) { Output-Json @{ success = $false; error = "filePath required" }; return }
+        if (-not (Test-Path $src)) { Output-Json @{ success = $false; error = "source file not found: $src" }; return }
         $before = $pres.Slides.Count
         $afterIndex = if ($null -ne $p.afterIndex) { [int]$p.afterIndex } else { $before }
         if ($afterIndex -lt 0) { $afterIndex = 0 }
@@ -2771,9 +2783,9 @@ switch ($Action) {
 
     "moveSlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $fromIndex = if ($p.from) { $p.from } else { $p.fromIndex }
         $toIndex = if ($p.to) { $p.to } else { $p.toIndex }
         $pres.Slides.Item($fromIndex).MoveTo($toIndex)
@@ -2782,17 +2794,17 @@ switch ($Action) {
 
     "getSlideCount" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         Output-Json @{ success = $true; data = @{ count = $pres.Slides.Count } }
     }
 
     "getSlideInfo" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         if (-not $index) { $index = 1 }
         $slide = $pres.Slides.Item($index)
@@ -2827,9 +2839,9 @@ switch ($Action) {
 
     "switchSlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         $ppt.ActiveWindow.View.GotoSlide($index)
         Output-Json @{ success = $true; data = @{ currentSlide = $index } }
@@ -2837,9 +2849,9 @@ switch ($Action) {
 
     "setSlideLayout" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         if (-not $index) { $index = 1 }
         $layoutMap = @{ title = 1; titleContent = 2; blank = 12; twoColumn = 4; comparison = 5; titleOnly = 11 }
@@ -2851,9 +2863,9 @@ switch ($Action) {
 
     "getSlideNotes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         if (-not $index) { $index = 1 }
         $slide = $pres.Slides.Item($index)
@@ -2864,9 +2876,9 @@ switch ($Action) {
 
     "setSlideNotes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $index = if ($p.index) { $p.index } else { $p.slideIndex }
         if (-not $index) { $index = 1 }
         $slide = $pres.Slides.Item($index)
@@ -2876,7 +2888,7 @@ switch ($Action) {
 
     "slide.add" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $layouts = @{ title = 1; title_content = 2; blank = 12; two_column = 3; comparison = 34 }
         $layoutKey = if ($p.layout) { $p.layout } else { "title_content" }
@@ -2901,7 +2913,7 @@ switch ($Action) {
 
     "addSlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $layouts = @{ title = 1; title_content = 2; blank = 12; two_column = 3; comparison = 34 }
         $layoutKey = if ($p.layout) { $p.layout } else { "title_content" }
@@ -2926,7 +2938,7 @@ switch ($Action) {
 
     "addTextBox" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { $ppt.ActiveWindow.Selection.SlideRange.SlideIndex }
         $slide = $pres.Slides.Item($slideIndex)
@@ -2943,7 +2955,7 @@ switch ($Action) {
 
     "deleteTextBox" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -2954,7 +2966,7 @@ switch ($Action) {
 
     "getTextBoxes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -2972,7 +2984,7 @@ switch ($Action) {
 
     "setTextBoxText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -2983,7 +2995,7 @@ switch ($Action) {
 
     "setTextBoxStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3006,7 +3018,7 @@ switch ($Action) {
 
     "setSlideTitle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3016,7 +3028,7 @@ switch ($Action) {
 
     "getSlideTitle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3027,7 +3039,7 @@ switch ($Action) {
 
     "setSlideSubtitle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3046,7 +3058,7 @@ switch ($Action) {
 
     "setSlideContent" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3065,7 +3077,7 @@ switch ($Action) {
 
     "addShape" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3087,7 +3099,7 @@ switch ($Action) {
 
     "deleteShape" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3098,7 +3110,7 @@ switch ($Action) {
 
     "getShapes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3112,7 +3124,7 @@ switch ($Action) {
 
     "setShapeStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3131,7 +3143,7 @@ switch ($Action) {
 
     "setShapeText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3142,7 +3154,7 @@ switch ($Action) {
 
     "setShapePosition" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3156,7 +3168,7 @@ switch ($Action) {
 
     "insertPptImage" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3170,7 +3182,7 @@ switch ($Action) {
 
     "deletePptImage" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3182,16 +3194,16 @@ switch ($Action) {
     "replacePptImage" {
         # 原位替换图片：保留原图位置/尺寸/旋转，删除旧图后在同一矩形插入新图（换图不动版式）
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
         $sel = if ($p.name) { $p.name } else { $p.shapeIndex }
-        if ($null -eq $sel) { Output-Json @{ success = $false; error = "shapeIndex or name required" }; exit }
+        if ($null -eq $sel) { Output-Json @{ success = $false; error = "shapeIndex or name required" }; return }
         $newPath = if ($p.path) { $p.path } elseif ($p.filePath) { $p.filePath } else { $null }
-        if (-not $newPath) { Output-Json @{ success = $false; error = "path required" }; exit }
-        if (-not (Test-Path $newPath)) { Output-Json @{ success = $false; error = "image not found: $newPath" }; exit }
+        if (-not $newPath) { Output-Json @{ success = $false; error = "path required" }; return }
+        if (-not (Test-Path $newPath)) { Output-Json @{ success = $false; error = "image not found: $newPath" }; return }
         $old = $slide.Shapes.Item($sel)
         $l = $old.Left; $t = $old.Top; $w = $old.Width; $h = $old.Height
         $rot = 0
@@ -3204,7 +3216,7 @@ switch ($Action) {
 
     "setImageStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3219,14 +3231,14 @@ switch ($Action) {
 
     "exportSlideAsImage" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No target presentation (presentationName not found or no active presentation)" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No target presentation (presentationName not found or no active presentation)" }; return }
         $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
-        if ($slideIndex -lt 1 -or $slideIndex -gt $pres.Slides.Count) { Output-Json @{ success = $false; error = "slideIndex $slideIndex out of range (1..$($pres.Slides.Count)) in '$($pres.Name)'" }; exit }
+        if ($slideIndex -lt 1 -or $slideIndex -gt $pres.Slides.Count) { Output-Json @{ success = $false; error = "slideIndex $slideIndex out of range (1..$($pres.Slides.Count)) in '$($pres.Name)'" }; return }
         $slide = $pres.Slides.Item($slideIndex)
         $outputPath = if ($p.outputPath) { $p.outputPath } else { $p.path }
-        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; exit }
+        if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; return }
         # 确保父目录存在
         $dir = Split-Path -Parent $outputPath
         if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -3238,7 +3250,7 @@ switch ($Action) {
         try {
             $slide.Export($outputPath, $filterName, $width, $height)
         } catch {
-            Output-Json @{ success = $false; error = "Slide.Export failed: $($_.Exception.Message)" }; exit
+            Output-Json @{ success = $false; error = "Slide.Export failed: $($_.Exception.Message)" }; return
         }
         # 关键修复：校验文件是否真生成，避免 Export 静默失败却报成功
         if (Test-Path $outputPath) {
@@ -3251,7 +3263,7 @@ switch ($Action) {
 
     "insertPptTable" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3267,7 +3279,7 @@ switch ($Action) {
 
     "setPptTableCell" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3285,7 +3297,7 @@ switch ($Action) {
                 }
             }
         }
-        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; exit }
+        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; return }
         $cell = $shape.Table.Cell($p.row, $p.col)
         $textValue = if ($p.text) { $p.text } elseif ($p.value) { $p.value } else { "" }
         $cell.Shape.TextFrame.TextRange.Text = $textValue
@@ -3294,7 +3306,7 @@ switch ($Action) {
 
     "getPptTableCell" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3312,7 +3324,7 @@ switch ($Action) {
                 }
             }
         }
-        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; exit }
+        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; return }
         $table = $shape.Table
         $rowCount = $table.Rows.Count
         $colCount = $table.Columns.Count
@@ -3325,7 +3337,7 @@ switch ($Action) {
 
     "setPptTableStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3339,7 +3351,7 @@ switch ($Action) {
 
     "setPptTableCellStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3357,7 +3369,7 @@ switch ($Action) {
                 }
             }
         }
-        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; exit }
+        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; return }
         $cell = $shape.Table.Cell($p.row, $p.col)
         $cellShape = $cell.Shape
         if ($p.backgroundColor) {
@@ -3375,7 +3387,7 @@ switch ($Action) {
 
     "setPptTableRowStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3393,7 +3405,7 @@ switch ($Action) {
                 }
             }
         }
-        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; exit }
+        if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; return }
         $rowIndex = if ($p.row) { $p.row } else { 1 }
         $row = $shape.Table.Rows.Item($rowIndex)
         for ($c = 1; $c -le $row.Cells.Count; $c++) {
@@ -3414,7 +3426,7 @@ switch ($Action) {
 
     "setShapeShadow" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3433,7 +3445,7 @@ switch ($Action) {
 
     "setBackgroundGradient" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3453,7 +3465,7 @@ switch ($Action) {
 
     "setShapeGradient" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3472,7 +3484,7 @@ switch ($Action) {
 
     "setShapeBorder" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3487,7 +3499,7 @@ switch ($Action) {
 
     "setShapeTransparency" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3498,7 +3510,7 @@ switch ($Action) {
 
     "setShapeRoundness" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3509,7 +3521,7 @@ switch ($Action) {
 
     "setShapeFullStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3523,7 +3535,7 @@ switch ($Action) {
 
     "alignShapes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3537,7 +3549,7 @@ switch ($Action) {
 
     "distributeShapes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3551,7 +3563,7 @@ switch ($Action) {
 
     "groupShapes" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3562,7 +3574,7 @@ switch ($Action) {
 
     "duplicateShape" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3573,7 +3585,7 @@ switch ($Action) {
 
     "setShapeZOrder" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3587,7 +3599,7 @@ switch ($Action) {
 
     "insertPptChart" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3601,7 +3613,7 @@ switch ($Action) {
 
     "addAnimation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3612,7 +3624,7 @@ switch ($Action) {
 
     "setSlideTransition" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3622,7 +3634,7 @@ switch ($Action) {
 
     "setSlideBackground" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3639,7 +3651,7 @@ switch ($Action) {
 
     "slide.unifyFont" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $fontName = if ($p.fontName) { $p.fontName } else { "微软雅黑" }
         $count = 0
@@ -3669,7 +3681,7 @@ switch ($Action) {
 
     "addConnector" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3683,7 +3695,7 @@ switch ($Action) {
 
     "addArrow" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3697,7 +3709,7 @@ switch ($Action) {
 
     "applyColorScheme" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $schemeKey = if ($p.scheme) { $p.scheme } elseif ($p.colorScheme) { $p.colorScheme } else { "business" }
         $schemes = @{ business = @{ title = 0x2F5496; body = 0x333333 }; tech = @{ title = 0x00B0F0; body = 0x404040 }; creative = @{ title = 0xFF6B6B; body = 0x4A4A4A }; minimal = @{ title = 0x000000; body = 0x666666 } }
@@ -3722,7 +3734,7 @@ switch ($Action) {
 
     "autoBeautifySlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { $ppt.ActiveWindow.Selection.SlideRange.SlideIndex }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3746,7 +3758,7 @@ switch ($Action) {
 
     "createKpiCards" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3789,7 +3801,7 @@ switch ($Action) {
 
     "createStyledTable" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3849,7 +3861,7 @@ switch ($Action) {
 
     "addTitleDecoration" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3867,7 +3879,7 @@ switch ($Action) {
 
     "addPageIndicator" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3887,7 +3899,7 @@ switch ($Action) {
 
     "beautifyAllSlides" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $schemeKey = if ($p.style) { $p.style } else { "business" }
         $schemes = @{ business = @{ title = 0x2F5496; body = 0x333333 }; tech = @{ title = 0x00B0F0; body = 0x404040 }; creative = @{ title = 0xFF6B6B; body = 0x4A4A4A }; minimal = @{ title = 0x000000; body = 0x666666 } }
@@ -3912,7 +3924,7 @@ switch ($Action) {
 
     "createProgressBar" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3953,7 +3965,7 @@ switch ($Action) {
 
     "createGauge" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -3995,7 +4007,7 @@ switch ($Action) {
 
     "createMiniCharts" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4042,7 +4054,7 @@ switch ($Action) {
 
     "createDonutChart" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4085,7 +4097,7 @@ switch ($Action) {
 
     "autoLayout" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4144,7 +4156,7 @@ switch ($Action) {
 
     "smartDistribute" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4200,7 +4212,7 @@ switch ($Action) {
 
     "createGrid" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4235,7 +4247,7 @@ switch ($Action) {
 
     "addAnimationPreset" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4265,7 +4277,7 @@ switch ($Action) {
 
     "addEmphasisAnimation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4284,7 +4296,7 @@ switch ($Action) {
 
     "createFlowChart" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4349,7 +4361,7 @@ switch ($Action) {
 
     "createOrgChart" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4405,7 +4417,7 @@ switch ($Action) {
 
     "createTimeline" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4459,7 +4471,7 @@ switch ($Action) {
 
     "getSlideMaster" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $master = $pres.SlideMaster
         $masters = @()
@@ -4472,7 +4484,7 @@ switch ($Action) {
 
     "setMasterBackground" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $master = $pres.SlideMaster
         if ($p.gradient) {
@@ -4491,7 +4503,7 @@ switch ($Action) {
 
     "addMasterElement" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $master = $pres.SlideMaster
 
@@ -4521,7 +4533,7 @@ switch ($Action) {
 
     "set3DRotation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4546,7 +4558,7 @@ switch ($Action) {
 
     "set3DDepth" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4569,7 +4581,7 @@ switch ($Action) {
 
     "set3DMaterial" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4585,7 +4597,7 @@ switch ($Action) {
 
     "create3DText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4618,7 +4630,7 @@ switch ($Action) {
 
     "setPptChartData" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4639,7 +4651,7 @@ switch ($Action) {
 
     "setPptChartStyle" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4657,7 +4669,7 @@ switch ($Action) {
 
     "removeAnimation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4672,7 +4684,7 @@ switch ($Action) {
 
     "getAnimations" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4687,7 +4699,7 @@ switch ($Action) {
 
     "setAnimationOrder" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4699,7 +4711,7 @@ switch ($Action) {
 
     "removeSlideTransition" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4709,7 +4721,7 @@ switch ($Action) {
 
     "applyTransitionToAll" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $transitionMap = @{ none = 0; fade = 1; push = 2; wipe = 3; split = 4; reveal = 5; random = 6 }
         $transition = if ($transitionMap[$p.transition]) { $transitionMap[$p.transition] } else { if ($p.transition) { $p.transition } else { 1 } }
@@ -4723,7 +4735,7 @@ switch ($Action) {
 
     "setBackgroundColor" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $colorValue = Convert-HexColorToRgbInt([string]$p.color)
         if ($p.applyToAll) {
@@ -4746,7 +4758,7 @@ switch ($Action) {
 
     "setBackgroundImage" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4757,7 +4769,7 @@ switch ($Action) {
 
     "addPptHyperlink" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4770,7 +4782,7 @@ switch ($Action) {
 
     "removePptHyperlink" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4781,7 +4793,7 @@ switch ($Action) {
 
     "setSlideNumber" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         if ($null -ne $p.visible) { $pres.SlideMaster.HeadersFooters.SlideNumber.Visible = $p.visible }
         Output-Json @{ success = $true; data = @{ visible = $p.visible } }
@@ -4789,7 +4801,7 @@ switch ($Action) {
 
     "setPptFooter" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $pres.SlideMaster.HeadersFooters.Footer.Visible = $true
         $pres.SlideMaster.HeadersFooters.Footer.Text = if ($p.text) { $p.text } else { "" }
@@ -4798,7 +4810,7 @@ switch ($Action) {
 
     "setPptDateTime" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $pres.SlideMaster.HeadersFooters.DateAndTime.Visible = if ($p.visible -ne $null) { $p.visible } else { $true }
         if ($p.useFixed) {
@@ -4810,7 +4822,7 @@ switch ($Action) {
 
     "findPptText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $results = @()
         for ($i = 1; $i -le $pres.Slides.Count; $i++) {
@@ -4832,13 +4844,13 @@ switch ($Action) {
 
     "replacePptText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No target presentation" }; exit }
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No target presentation" }; return }
         # 兼容两种参数名：TS 工具发送 find/replace，旧实现读 findText/replaceText（此前不匹配导致 0 替换）
         $findText = if ($null -ne $p.find) { [string]$p.find } else { [string]$p.findText }
         $replaceText = if ($null -ne $p.replace) { [string]$p.replace } elseif ($null -ne $p.replaceText) { [string]$p.replaceText } else { "" }
-        if ([string]::IsNullOrEmpty($findText)) { Output-Json @{ success = $false; error = "find text required" }; exit }
+        if ([string]::IsNullOrEmpty($findText)) { Output-Json @{ success = $false; error = "find text required" }; return }
         $count = 0
         for ($i = 1; $i -le $pres.Slides.Count; $i++) {
             $slide = $pres.Slides.Item($i)
@@ -4853,7 +4865,7 @@ switch ($Action) {
 
     "startSlideShow" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $pres.SlideShowSettings.Run()
         Output-Json @{ success = $true }
@@ -4861,14 +4873,14 @@ switch ($Action) {
 
     "endSlideShow" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         if ($ppt.SlideShowWindows.Count -gt 0) { $ppt.SlideShowWindows.Item(1).View.Exit() }
         Output-Json @{ success = $true }
     }
 
     "unifyFont" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $fontName = if ($p.fontName) { $p.fontName } else { "微软雅黑" }
         $count = 0
@@ -4889,7 +4901,7 @@ switch ($Action) {
 
     "slide.beautify" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $schemes = @{
             business = @{ title = 0x2F5496; body = 0x333333 }
@@ -4935,7 +4947,7 @@ switch ($Action) {
 
     "set3DRotation" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4962,7 +4974,7 @@ switch ($Action) {
 
     "set3DDepth" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4983,7 +4995,7 @@ switch ($Action) {
 
     "set3DMaterial" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -4998,7 +5010,7 @@ switch ($Action) {
 
     "create3DText" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
@@ -5024,7 +5036,7 @@ switch ($Action) {
 
     "beautifySlide" {
         $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; exit }
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { $ppt.ActiveWindow.Selection.SlideRange.SlideIndex }
         $slide = $pres.Slides.Item($slideIndex)
@@ -5054,4 +5066,15 @@ switch ($Action) {
     default {
         Output-Json @{ success = $false; error = "Unknown action: $Action" }
     }
+}
+
+}   # function Invoke-WpsAction（上一行的 } 是 switch 的收尾）
+
+# ==================== 入口 ====================
+# 常驻模式：wps-comd.ps1 先设 $env:WPS_COM_DAEMON=1 再 dot-source 本文件，
+#           此时只需拿到 Invoke-WpsAction 的定义，不执行任何动作。
+# 直跑模式（默认）：行为与改造前完全一致。
+if ($env:WPS_COM_DAEMON -ne '1') {
+    try { $p = $Params | ConvertFrom-Json } catch { $p = @{} }
+    Invoke-WpsAction -Action $Action -p $p
 }

@@ -12,6 +12,7 @@
 
 import { createMcpServer } from './server/mcp-server';
 import { log, createChildLogger } from './utils/logger';
+import { psDaemon } from './client/ps-daemon';
 
 // 导出所有模块，方便外部使用
 export { WpsMcpServer, createMcpServer } from './server/mcp-server';
@@ -45,6 +46,9 @@ async function main(): Promise<void> {
     mainLogger.info(`Received ${signal}, shutting down gracefully...`);
 
     try {
+      // 先收掉常驻的 PowerShell 守护进程：stdin 一关它会自行退出，
+      // 但显式 dispose 能保证不留孤儿进程（以前漏过实例在后台）
+      psDaemon.dispose();
       await server.stop();
       mainLogger.info('Server stopped successfully');
       process.exit(0);
