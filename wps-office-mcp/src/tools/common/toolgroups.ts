@@ -175,22 +175,36 @@ export const unloadToolGroupHandler: ToolHandler = async (args) => {
 
 export const searchToolsDefinition: ToolDefinition = {
   name: 'wps_search_tools',
-  description: `在所有工具里搜索（**包括未加载组的工具**），返回名字 + 所属组 + 是否已列出。
+  description: `在所有工具里搜索（**包括未加载组的工具**），返回名字 + 所属组 + 是否已列出 + 中文别名。
+
+关键词可以直接用中文（工具名是英文，描述和别名是中文）。
+**重点看 notFor**：本仓有一批近名工具（6 个 background、5 个 animation、4 个 transition、
+3 个插入图片、2 个 generate_*_toc、2 个 zoom），名字和描述几乎一样，光看名字分不出来。
+靠前的命中会带上 examples（什么诉求用它）和 notFor（它不干什么、该用谁），
+遇到一搜出来好几个同族工具时，务必按 notFor 挑，别瞎猜。
 
 用途：组没加载时工具不在列表里，先搜出来，再 wps_load_tool_group 把它所在的组拉起来。
 
 使用场景：
 - "有没有导出图片的工具"
 - "找一下和批注有关的工具"
-- "PPT 相关的工具都有哪些"（搜 ppt）`,
+- "PPT 相关的工具都有哪些"（搜 ppt）
+- "改背景色用哪个"（搜"背景"，看 notFor 分辨 6 个 background）`,
   category: ToolCategory.COMMON,
   group: 'core',
   inputSchema: {
     type: 'object',
     properties: {
-      keyword: { type: 'string', description: '关键词（匹配工具名与描述；留空则列出前 N 个）' },
+      keyword: {
+        type: 'string',
+        description: '关键词（中文也行，会匹配工具名、描述与中文别名；留空则列出前 N 个）',
+      },
       group: { type: 'string', description: '只在某个组里搜：word / excel / ppt / common' },
       limit: { type: 'number', description: '最多返回几项，默认 20' },
+      hints: {
+        type: 'boolean',
+        description: '是否给靠前的命中补 examples / notFor，默认 true（内容多时设 false 省上下文）',
+      },
     },
   },
 };
@@ -199,9 +213,16 @@ export const searchToolsHandler: ToolHandler = async (args) => {
   const keyword = String(args.keyword ?? '');
   const group = args.group ? String(args.group) : undefined;
   const limit = typeof args.limit === 'number' ? args.limit : 20;
-  const hits = toolRegistry.searchTools(keyword, { group, limit });
+  const hints = args.hints === undefined ? true : Boolean(args.hints);
+  const hits = toolRegistry.searchTools(keyword, { group, limit, hints });
   if (!hits.length) {
-    return text({ keyword, group: group ?? null, count: 0, message: '没搜到。可先用 wps_list_tool_groups 看有哪些组。' });
+    return text({
+      keyword,
+      group: group ?? null,
+      count: 0,
+      message:
+        '没搜到。中文关键词会去匹配别名，仍搜不到就换个说法（如"表格""背景""动画"）；也可先用 wps_list_tool_groups 看有哪些组。',
+    });
   }
   const unloaded = hits.filter((h) => !h.listed);
   return text({

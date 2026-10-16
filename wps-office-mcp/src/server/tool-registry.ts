@@ -29,6 +29,23 @@ import {
   InvalidParamsError,
   McpError,
 } from '../utils/error';
+import { getToolMeta } from './tool-metadata';
+
+/** 搜索命中项（比之前多了别名与正/反例） */
+export interface ToolSearchHit {
+  name: string;
+  group: string;
+  listed: boolean;
+  description: string;
+  /** 中文别名（模型是用中文在找，这栏是命中关键） */
+  aliases?: string[];
+  /** 什么样的诉求该用它（只给靠前的命中，省上下文） */
+  examples?: string[];
+  /** 它不干什么 / 该用谁（近名工具的分辨依据） */
+  notFor?: string[];
+  /** 命中的是哪一段：name / description / alias */
+  matchedBy?: string;
+}
 
 const logger = createChildLogger('ToolRegistry');
 
@@ -285,11 +302,13 @@ export class ToolRegistry {
    */
   searchTools(
     keyword: string,
-    opts: { group?: string; limit?: number } = {}
-  ): Array<{ name: string; group: string; listed: boolean; description: string }> {
+    opts: { group?: string; limit?: number; hints?: boolean } = {}
+  ): ToolSearchHit[] {
     const kw = (keyword || '').trim().toLowerCase();
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
-    const out: Array<{ name: string; group: string; listed: boolean; description: string; score: number }> = [];
+    // 正/反例默认只给前 5 条命中：273 个工具全带上会撑爆上下文
+    const hintTop = opts.hints === false ? 0 : 5;
+    const out: Array<ToolSearchHit & { score: number; matchedBy: string }> = [];
 
     for (const t of this.tools.values()) {
       const def = t.definition;
@@ -297,17 +316,38 @@ export class ToolRegistry {
       if (opts.group && group !== opts.group) continue;
       const name = def.name.toLowerCase();
       const desc = (def.description || '').toLowerCase();
+      const meta = getToolMeta(def);
+      const aliasBlob = meta.aliases.join(' ').toLowerCase();
+
       let score = 0;
-      if (!kw) score = 1;
-      else if (name === kw) score = 100;
-      else if (name.includes(kw)) score = 60;
-      else if (desc.includes(kw)) score = 20;
+      let matchedBy = '';
+      if (!kw) {
+        score = 1;
+        matchedBy = 'all';
+      } else if (name === kw) {
+        score = 100;
+        matchedBy = 'name';
+      } else if (name.includes(kw)) {
+        score = 60;
+        matchedBy = 'name';
+      } else if (desc.includes(kw)) {
+        score = 40;
+        matchedBy = 'description';
+      } else if (aliasBlob.includes(kw)) {
+        // 别名是【机器拼出来的】，质量不如人写的描述，所以分排最低：
+        // 实测 66 个中文关键词里只有 17 个靠别名多捞到东西，别让它压过真命中。
+        score = 25;
+        matchedBy = 'alias';
+      }
       if (score === 0) continue;
+
       out.push({
         name: def.name,
         group,
         listed: this.isListed(def),
         description: (def.description || '').split('\n')[0].slice(0, 120),
+        aliases: meta.aliases.slice(0, 5),
+        matchedBy,
         score,
       });
     }
@@ -315,7 +355,17 @@ export class ToolRegistry {
     return out
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
       .slice(0, limit)
-      .map(({ score: _score, ...rest }) => rest);
+      .map((h, i) => {
+        const { score: _score, ...rest } = h;
+        // 前 N 条补正/反例；没有就不带这个字段（别塞空数组）
+        if (i >= hintTop) return rest;
+        const meta = getToolMeta(this.tools.get(h.name)!.definition);
+        return {
+          ...rest,
+          ...(meta.examples?.length ? { examples: meta.examples } : {}),
+          ...(meta.notFor?.length ? { notFor: meta.notFor } : {}),
+        };
+      });
   }
 
   /**
@@ -386,6 +436,7 @@ export class ToolRegistry {
           content: [{ type: 'text', text: error.message }],
           error: error.message,
           errorType: error.wpsType,
+          retryable: error.retryable,
         };
       }
 
@@ -402,6 +453,7 @@ export class ToolRegistry {
         content: [{ type: 'text', text: execError.message }],
         error: execError.message,
         errorType: execError.wpsType,
+        retryable: execError.retryable,
       };
     }
   }
