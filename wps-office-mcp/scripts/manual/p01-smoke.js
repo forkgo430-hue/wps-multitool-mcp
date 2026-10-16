@@ -43,15 +43,20 @@ async function main() {
     `  word: running=${wordState.running} 文档=${wordState.count ?? 0}` +
       ` 不健康=${badDocs.length} 无名=${(wordState.documents ?? []).filter((d) => !d.name).length}`
   );
-  if (wordState.running && (badDocs.length > 0 || wordState.activeHealthy === false)) {
+  // ⚠️ 必须带 count > 0：0 个文档时 activeHealthy 也是 false（没有活动文档可检查），
+  // 不加这个条件会把"干净状态"误判成"有空壳文档"，直接拦住正常测试。
+  // 这比漏报更麻烦 —— 漏报只是多跑几步，误报是根本跑不了。
+  if (wordState.running && (wordState.count ?? 0) > 0 && (badDocs.length > 0 || wordState.activeHealthy === false)) {
     console.log('\n⚠️ WPS 里有不健康的空壳文档，COM 调用会被拒（这正是 wps_common_repair 要诊断的问题）。');
     console.log('   实测：这种状态下 repair 也关不掉它们（同样是 RPC_E_CALL_REJECTED）。');
     console.log('   需要【手动重启 WPS】再跑本测试 —— 不是代码问题，继续跑只会刷一屏红灯。\n');
     process.exitCode = 2;
     return;
   }
-  if (badDocs.length === 0 && (wordState.count ?? 0) === 0) {
-    console.log('  干净，继续。\n');
+  if ((wordState.count ?? 0) === 0) {
+    console.log('  WPS 干净（无文档），直接建测试文档。\n');
+  } else if (badDocs.length === 0) {
+    console.log(`  现有 ${wordState.count} 个文档且全部健康，继续。\n`);
   }
 
   console.log('用 createDocument 建真 .docx（与 __probeCaps 的探测环境对齐 ——\n' +

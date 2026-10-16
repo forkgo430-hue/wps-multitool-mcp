@@ -574,6 +574,70 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ message = "pong"; timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() } }
     }
     # 【临时诊断】列出挡路的对话框。用来验 C 项：Get-WpsModalDialogs 能不能真找到窗口。
+    "__probeStyleAdd" {
+        # 最小对比实验：探测里 styles.add 报 supported，实现里却 E_FAIL。
+        # 逐项排除差异（字面量 vs 变量 / 参数类型 / 名字字符），找出到底是哪一处。
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $r = @{}
+
+        # A: 与探测完全一致 —— 纯字面量
+        try {
+            $sA = $doc.Styles.Add("__probe_literal__", 1)
+            $r["A_literal"] = if ($null -eq $sA) { "null" } else { "ok: " + [string]$sA.NameLocal }
+            try { $doc.Styles.Item("__probe_literal__").Delete() } catch {}
+        } catch { $r["A_literal"] = "FAIL: " + $_.Exception.Message }
+
+        # B: 第一个参数走变量（与实现一致），第二个仍是字面量
+        try {
+            $nm = "__probe_var__"
+            $sB = $doc.Styles.Add($nm, 1)
+            $r["B_varName"] = if ($null -eq $sB) { "null" } else { "ok: " + [string]$sB.NameLocal }
+            try { $doc.Styles.Item("__probe_var__").Delete() } catch {}
+        } catch { $r["B_varName"] = "FAIL: " + $_.Exception.Message }
+
+        # C: 两个参数都走变量（与实现完全一致）
+        try {
+            $nm2 = "__probe_bothvar__"
+            $st = 1
+            $sC = $doc.Styles.Add($nm2, $st)
+            $r["C_bothVar"] = if ($null -eq $sC) { "null" } else { "ok: " + [string]$sC.NameLocal }
+            try { $doc.Styles.Item("__probe_bothvar__").Delete() } catch {}
+        } catch { $r["C_bothVar"] = "FAIL: " + $_.Exception.Message }
+
+        # D: 中文样式名（实现里传的是中文名，探测用的是英文名）
+        try {
+            $sD = $doc.Styles.Add("__p01测试样式__", 1)
+            $r["D_chineseName"] = if ($null -eq $sD) { "null" } else { "ok: " + [string]$sD.NameLocal }
+            try { $doc.Styles.Item("__p01测试样式__").Delete() } catch {}
+        } catch { $r["D_chineseName"] = "FAIL: " + $_.Exception.Message }
+
+        # E: 从 PSCustomObject 取参数（实现是 $p.name 这种）
+        try {
+            $pE = @{ name = "__probe_pobj__"; styleType = $null }
+            $nmE = [string]$pE.name
+            $stE = 1
+            if ($pE.styleType -eq "character") { $stE = 2 }
+            $sE = $doc.Styles.Add($nmE, $stE)
+            $r["E_pobjName"] = if ($null -eq $sE) { "null" } else { "ok: " + [string]$sE.NameLocal }
+            try { $doc.Styles.Item("__probe_pobj__").Delete() } catch {}
+        } catch { $r["E_pobjName"] = "FAIL: " + $_.Exception.Message }
+
+        # F: 同一个文档上连续 Add 两次（看是不是第一次就污染了状态）
+        try {
+            $sF = $doc.Styles.Add("__probe_twice__", 1)
+            $first = if ($null -eq $sF) { "null" } else { "ok" }
+            try { $sF2 = $doc.Styles.Add("__probe_twice2__", 1) } catch { }
+            $r["F_twice"] = $first + " / 第二次: " + $(if ($null -eq $sF2) { "null" } else { "ok" })
+            try { $doc.Styles.Item("__probe_twice__").Delete() } catch {}
+            try { $doc.Styles.Item("__probe_twice2__").Delete() } catch {}
+        } catch { $r["F_twice"] = "FAIL: " + $_.Exception.Message }
+
+        Output-Json @{ success = $true; data = $r }
+    }
+
     "__probeDialogs" {
         $dlgs = @(Get-WpsModalDialogs)
         Output-Json @{ success = $true; data = @{ dialogs = $dlgs; count = $dlgs.Count; hint = (Get-ModalBlockHint) } }

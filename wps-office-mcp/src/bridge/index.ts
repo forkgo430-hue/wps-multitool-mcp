@@ -112,6 +112,114 @@ function childStats(): unknown[] {
   return out;
 }
 
+// ==================== 改动日志（供任务窗格「最近改动」用）====================
+// 桥在管道上看得见【每一个】请求，所以由它来记最省事 —— 不需要 MCP server
+// 额外上报，也不会漏。只记摘要，不记全文（避免把文档内容泄到日志里）。
+interface LogEntry {
+  t: number;        // 时间戳 ms
+  app: string;
+  action: string;
+  ok: boolean;
+  summary: string;  // 一行摘要，如 "insertText(46 字)"
+}
+
+const LOG: LogEntry[] = [];
+const LOG_MAX = 200;
+
+/** 从参数里抽一行人话摘要。刻意只取少量关键字段，避免把文档内容整个记下来。 */
+function summarize(action: string, params: Record<string, unknown>): string {
+  const pick = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = params[k];
+      if (v === undefined || v === null) continue;
+      if (typeof v === 'string') {
+        const s = v.replace(/\s+/g, ' ').trim();
+        if (s) return s.length > 24 ? s.slice(0, 24) + '…' : s;
+      } else if (typeof v === 'number' || typeof v === 'boolean') {
+        return String(v);
+      }
+    }
+    return '';
+  };
+  const detail = pick('text', 'name', 'path', 'label', 'entry', 'mode', 'range', 'sheet', 'slide', 'level');
+  const doc = pick('documentName', 'workbookName', 'presentationName');
+  const parts = [action];
+  if (detail) parts.push(detail);
+  if (doc) parts.push(`@${doc}`);
+  return parts.join(' ');
+}
+
+function recordLog(app: string, action: string, params: Record<string, unknown>, ok: boolean): void {
+  LOG.push({ t: Date.now(), app, action, ok, summary: summarize(action, params) });
+  if (LOG.length > LOG_MAX) LOG.splice(0, LOG.length - LOG_MAX);
+}
+
+// ==================== HTTP 状态端点（供任务窗格轮询）====================
+// 为什么需要 HTTP：任务窗格跑在内嵌浏览器里，碰不到命名管道（那是内核对象，
+// 只有本进程能连）。而任务面板要显示"桥进程/队列/工具组/最近改动"，
+// 所以给桥开一个只读的 localhost HTTP 端点，面板轮询它。
+//
+// 安全边界：
+//   - 只绑 127.0.0.1，不对局域网/公网暴露
+//   - 只读（GET），没有写操作
+//   - 返回内容不含文档正文（摘要已截断到 24 字）
+const HTTP_PORT = parseInt(process.env.WPS_BRIDGE_HTTP_PORT || '27731', 10);
+
+function bridgeStatusPayload(): Record<string, unknown> {
+  const childrenList = childStats() as Array<Record<string, unknown>>;
+  const inFlight = childrenList.reduce((a, c) => a + Number(c.pending ?? 0), 0);
+  const queued = childrenList.reduce((a, c) => a + Number(c.queued ?? 0), 0);
+  const running = childrenList.filter((c) => c.ready).map((c) => String(c.app));
+  return {
+    bridgePid: process.pid,
+    pipe: PIPE_NAME,
+    httpPort: HTTP_PORT,
+    startedAt,
+    uptimeMs: Date.now() - startedAt,
+    clients: activeConns,
+    inFlight,
+    queued,
+    queueMax: queueMax(),
+    queueTimeoutMs: queueTimeoutMs(),
+    appsRunning: running,
+    children: childrenList,
+    recent: LOG.slice(-50).reverse(),
+  };
+}
+
+function startHttpEndpoint(): void {
+  const http = require('http') as typeof import('http');
+  const server = http.createServer((req, res) => {
+    const url = (req.url || '/').split('?')[0];
+    if (url === '/status' || url === '/') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        // 任务窗格会频繁轮询，禁缓存
+        'Cache-Control': 'no-store',
+        // 面板是同源 file:// 页面，需要允许跨域读取
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(JSON.stringify(bridgeStatusPayload()));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
+  });
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    // 端口被占就安静退开 —— HTTP 端点只是给面板用的，不该拦住桥本身
+    if (err.code === 'EADDRINUSE') {
+      try {
+        require('../utils/logger') as { log: { warn: (m: string) => void } };
+      } catch {
+        /* 日志失败不影响 */
+      }
+    }
+  });
+  server.listen(HTTP_PORT, '127.0.0.1', () => {
+    // 不往 stdout 打印（桥的 stdio 是 ignore 的）
+  });
+}
+
 async function handleRequest(
   sock: net.Socket,
   req: Record<string, unknown>
@@ -150,6 +258,7 @@ async function handleRequest(
   const app = normalizeApp(req.app);
   try {
     const msg = await getChild(app).call(action, params);
+    recordLog(app, action, params, msg.success !== false);
     writeLine(sock, {
       id,
       success: msg.success !== false,
@@ -157,7 +266,8 @@ async function handleRequest(
       error: msg.error,
     });
   } catch (err) {
-    // 基础设施问题（起不来/超时/退出）：如实回错误，不假装成功
+    // 基础设施问题（起不来/超时/退出/队列满）：如实回错误，不假装成功
+    recordLog(app, action, params, false);
     writeLine(sock, {
       id,
       success: false,
@@ -223,6 +333,9 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 server.listen(PIPE_NAME, () => {
   // 管道已就绪。注意：不要往 stdout 打印，桥的 stdio 是 ignore 的。
 });
+
+// HTTP 状态端点（任务窗格轮询用）。放在 listen 之后，确保桥本身先就绪。
+startHttpEndpoint();
 
 // 空闲回收：没人连、且久无消息 → 收掉子进程后退出，不留孤儿
 const idleTimer = setInterval(() => {

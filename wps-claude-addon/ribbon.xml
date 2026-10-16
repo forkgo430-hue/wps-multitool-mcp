@@ -2,16 +2,41 @@
 <!-- Input: 功能区 UI 定义 -->
 <!-- Output: WPS 功能区按钮布局 -->
 <!-- Pos: Windows 加载项功能区配置。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。 -->
-<!-- 注意：WPS 对 customUI 属性支持有限，仅使用已验证的 imageMso（Info），不添加 size/screentip/supertip 等 Office 专有属性。 -->
+<!--
+  多面手 MCP 功能区（v2.0）
+  11 个按钮分 4 组：
+    窗口：置于前台 / 面板
+    快照：保存快照 / 还原快照 / 撤销改动
+    输出：导出 PDF / 导出本页 / 另存副本
+    维护：刷新状态 / 解除卡死 / 关于
+
+  ⚠️ WPS 对 customUI 属性支持有限，仅使用已验证的 imageMso（Info），
+     不添加 size/screentip/supertip 等 Office 专有属性（加了不报错但也不生效）。
+  ⚠️ 「面板」做不到真任务面板：WPS JS 加载项没有侧边栏 API，
+     它是"用对话框展示完整状态"。README 已如实说明这一点。
+-->
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
     <ribbon startFromScratch="false">
         <tabs>
-            <tab id="tabMcp" label="MCP工具">
-                <group id="grpMcp" label="MCP">
-                    <button id="btnStatus" onAction="ribbonCheckStatus" label="连接状态" imageMso="Info"/>
-                    <button id="btnShowWindow" onAction="ribbonShowWindow" label="显示窗口" imageMso="Info"/>
-                    <button id="btnDocInfo" onAction="ribbonDocInfo" label="文档概览" imageMso="Info"/>
-                    <button id="btnAbout" onAction="ribbonHelp" label="使用说明" imageMso="Info"/>
+            <tab id="tabMcp" label="多面手 MCP">
+                <group id="grpWindow" label="窗口">
+                    <button id="btnShowWindow" onAction="ribbonShowWindow" label="置于前台" imageMso="Info"/>
+                    <button id="btnPanel" onAction="ribbonPanel" label="面板" imageMso="Info"/>
+                </group>
+                <group id="grpSnapshot" label="快照">
+                    <button id="btnSnapSave" onAction="ribbonSnapshotSave" label="保存快照" imageMso="Info"/>
+                    <button id="btnSnapRestore" onAction="ribbonSnapshotRestore" label="还原快照" imageMso="Info"/>
+                    <button id="btnUndo" onAction="ribbonUndo" label="撤销改动" imageMso="Info"/>
+                </group>
+                <group id="grpOutput" label="输出">
+                    <button id="btnExportPdf" onAction="ribbonExportPdf" label="导出 PDF" imageMso="Info"/>
+                    <button id="btnExportPage" onAction="ribbonExportPage" label="导出本页" imageMso="Info"/>
+                    <button id="btnSaveCopy" onAction="ribbonSaveCopy" label="另存副本" imageMso="Info"/>
+                </group>
+                <group id="grpMaintain" label="维护">
+                    <button id="btnRefresh" onAction="ribbonRefresh" label="刷新状态" imageMso="Info"/>
+                    <button id="btnUnstick" onAction="ribbonUnstick" label="解除卡死" imageMso="Info"/>
+                    <button id="btnAbout" onAction="ribbonAbout" label="关于" imageMso="Info"/>
                 </group>
             </tab>
         </tabs>
