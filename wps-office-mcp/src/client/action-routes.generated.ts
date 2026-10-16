@@ -3,12 +3,14 @@
  * 源：scripts/wps-com.ps1 的 switch ($Action) 分支。
  * 重新生成：node scripts/gen-action-routes.js
  *
- * 统计：common=21  word=45  ppt=107  excel=92  合计 269
+ * 统计：common=22  word=46  ppt=107  excel=92  合计 271
  */
 
 import type { AppKey } from './action-routes';
 
 export const ACTION_ROUTES: Record<string, AppKey> = {
+  "__probeDoc": 'word',
+  "__probeParams": 'common',
   "addAnimation": 'ppt',
   "addAnimationPreset": 'ppt',
   "addArrow": 'ppt',
