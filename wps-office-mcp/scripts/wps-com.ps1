@@ -5806,6 +5806,149 @@ switch ($Action) {
         Output-Json @{ success = $true; data = $info }
     }
 
+    # ==================== 能力探测（阶段 6 的第一步）====================
+    # 为什么先探测再实现
+    # ------------------
+    # 前面已经在本机 WPS 12.1 上踩了三次接口不支持（InsertCaption、CaptionLabels、
+    # ListTemplates.Add）。如果按"Word 官方 API 应该都有"直接写，实现完才发现
+    # 一半跑不通，返工成本很高。
+    # 所以先把候选接口在【真机】上各试一次，输出一张"支持 / 不支持"的表，
+    # 再据此定实现清单 —— 这一步能省掉大量返工。
+    #
+    # ⚠️ 探针绝大多数是只读的；两处例外（styles.modifyFont / table.merge / table.addRow）
+    #    会短暂改动后复原或依赖文档现状，所以【必须在副本上跑】。
+    "__probeCaps" {
+        $word = Get-ActiveWpsApp 'Kwps.Application'
+        $doc = if ($word) { Resolve-Doc $word $p } else { $null }
+        if (-not $doc) {
+            Output-Json @{ success = $false; error = "没有可用的文稿（能力探测需要打开一个文档）" }
+            return
+        }
+        $caps = [ordered]@{}
+
+        # ---- P1：样式 CUD ----
+        $caps["styles.list"]          = { $null = $doc.Styles.Count; $null = $doc.Styles.Item("正文") }
+        $caps["styles.add"]           = { $s = $doc.Styles.Add("__probe_style__", 1); if ($null -eq $s) { throw "Styles.Add 返回 null" }
+                                          $back = $doc.Styles.Item("__probe_style__"); if ($null -eq $back) { throw "样式建了但取不回来" }
+                                          try { $back.Delete() } catch {} }
+        $caps["styles.delete"]        = { $s = $doc.Styles.Add("__probe_del__", 1); $s.Delete() }
+        $caps["styles.modifyFont"]    = { $s = $doc.Styles.Item("正文"); $old = $s.Font.NameFarEast
+                                          try { $s.Font.NameFarEast = "__probe__" } finally { $s.Font.NameFarEast = $old } }
+        $caps["styles.modifyParagraph"] = { $s = $doc.Styles.Item("正文"); $old = $s.ParagraphFormat.SpaceAfter
+                                          try { $s.ParagraphFormat.SpaceAfter = 99 } finally { $s.ParagraphFormat.SpaceAfter = $old } }
+        $caps["styles.byIndex"]       = { $null = $doc.Styles.Item(-1) }   # wdStyleHeading1
+
+        # ---- P1：交叉引用 ----
+        $caps["crossRef.items"]       = { $null = $doc.GetCrossReferenceItems(1) }   # wdRefTypeHeading
+        $caps["crossRef.fieldAdd"]    = { $rng = $doc.Range(0, [Math]::Min(1, $doc.Content.End))
+                                          $f = $doc.Fields.Add($rng, -1, "STYLEREF 1", $false)
+                                          if ($null -eq $f) { throw "Fields.Add 返回 null" }
+                                          $t = ""; try { $t = [string]$f.Code.Text } catch {}
+                                          if ($t -notmatch "STYLEREF") { throw "域已插入但代码不是 STYLEREF（实际=$t）" }
+                                          try { $f.Delete() } catch {} }
+
+        # ---- P1：索引 ----
+        $caps["indexes.count"]        = { $null = $doc.Indexes.Count }
+        $caps["indexes.markEntry"]    = { $r = $doc.Indexes.MarkEntry($doc.Range(0,1)); if ($null -eq $r) { throw "MarkEntry 返回 null" } }
+        $caps["indexes.add"]          = { $ix = $doc.Indexes.Add($doc.Range(0, [Math]::Min(1, $doc.Content.End))); if ($null -eq $ix) { throw "Indexes.Add 返回 null" }; try { $ix.Delete() } catch {} }
+
+        # ---- P0：修订接受/拒绝 ----
+        $caps["revisions.count"]      = { $null = $doc.Revisions.Count }
+        $caps["revisions.item"]       = { if ($doc.Revisions.Count -gt 0) { $null = $doc.Revisions.Item(1).Range.Text } }
+        $caps["revisions.acceptAll"]  = { $doc.Revisions.AcceptAll() }
+        $caps["revisions.rejectAll"]  = { $doc.Revisions.RejectAll() }
+
+        # ---- P0：表格单元格级 ----
+        $caps["table.cell"]           = { if ($doc.Tables.Count -gt 0) { $null = $doc.Tables.Item(1).Cell(1,1).Range.Text } }
+        $caps["table.rowsAdd"]        = { if ($doc.Tables.Count -le 0) { throw "文档里没有表格，跳过" }
+                                          $t = $doc.Tables.Item(1); $n0 = $t.Rows.Count; $null = $t.Rows.Add()
+                                          if ($t.Rows.Count -ne $n0 + 1) { throw "Rows.Add 返回了但行数没变（$n0→$($t.Rows.Count)）" } }
+        $caps["table.colsAdd"]        = { if ($doc.Tables.Count -le 0) { throw "文档里没有表格，跳过" }
+                                          $t = $doc.Tables.Item(1); $n0 = $t.Columns.Count; $null = $t.Columns.Add()
+                                          if ($t.Columns.Count -ne $n0 + 1) { throw "Columns.Add 返回了但列数没变（$n0→$($t.Columns.Count)）" } }
+        $caps["table.cellMerge"]      = { if ($doc.Tables.Count -gt 0) { $t=$doc.Tables.Item(1); $t.Cell(1,1).Merge($t.Cell(1, [Math]::Max(2,[Math]::Min(2,$t.Columns.Count)))) } }
+        $caps["table.cellSplit"]      = { if ($doc.Tables.Count -gt 0) { $null = $doc.Tables.Item(1).Cell(1,1).Split(1,2) } }
+        $caps["table.cellBorders"]    = { if ($doc.Tables.Count -gt 0) { $null = $doc.Tables.Item(1).Cell(1,1).Borders } }
+        $caps["table.style"]          = { if ($doc.Tables.Count -gt 0) { $doc.Tables.Item(1).Style = "网格型" } }
+        $caps["table.rowsDelete"]     = { if ($doc.Tables.Count -gt 0) { $null = $doc.Tables.Item(1).Rows.Count } }
+
+        # ---- P1：页码/奇偶页/首页不同 ----
+        $caps["pageNumbers.add"]      = { $f = $doc.Sections.Item(1).Footers.Item(1); $n0 = $f.PageNumbers.Count
+                                          $null = $f.PageNumbers.Add(4, $true)
+                                          if ($f.PageNumbers.Count -le $n0) { throw "PageNumbers.Add 后页码数没增加（$n0→$($f.PageNumbers.Count)）" } }
+        $caps["pageSetup.differentFirst"] = { $v = $doc.PageSetup.DifferentFirstPageHeaderFooter; $doc.PageSetup.DifferentFirstPageHeaderFooter = $v }
+        $caps["pageSetup.oddEven"]    = { $v = $doc.PageSetup.OddAndEvenPagesHeaderFooter; $doc.PageSetup.OddAndEvenPagesHeaderFooter = $v }
+
+        # ---- P2：水印/内容控件/形状/保护/查找/批注/比较/邮件合并 ----
+        $caps["watermark"]            = { $null = $doc.Sections.Item(1).Headers.Item(1).Shapes }
+        $caps["contentControl"]       = { $null = $doc.ContentControls.Count }
+        $caps["shape.addTextbox"]     = { $null = $doc.Shapes.AddTextbox(1, 0, 0, 100, 50) }
+        $caps["docProtect"]           = { $null = $doc.ProtectionType }
+        $caps["find.wildcards"]       = { $f = $doc.Content.Find; $f.MatchWildcards = $true; $f.ClearFormatting(); $null = $f.Execute("__probe__") }
+        $caps["comments.count"]       = { $null = $doc.Comments.Count }
+        $caps["comments.add"]         = { $c = $doc.Comments.Add($doc.Range(0,1), "__probe__"); try { $c.Delete() } catch {} }
+        $caps["docCompare"]           = { $null = $doc.Compare }
+        $caps["mailMerge"]            = { $null = $doc.MailMerge.State }
+        $caps["exportPdf"]            = { $null = $doc.ExportAsFixedFormat }
+
+        # ---- 对照锚点：这三个是我【曾经】判定为"不支持"的接口。
+        #      放进同一张表是为了让探针自己回答"当初的归因对不对"。
+        #
+        #      ⚠️ 重要教训（第二轮探测才暴露的）：判据不能只看"有没有抛异常"。
+        #      第一轮这三个里有两个报了 supported，说明"接口不可用"的结论下早了 ——
+        #      真实原因是【调用方式】不对（参数/返回值），不是接口缺失。
+        #      所以这里的探针都带"有效性断言"：能调用 ≠ 能用。
+        $caps["anchor.insertCaption"] = {
+            $null = $doc.CaptionLabels.Count
+            $c = $word.Selection.Range.InsertCaption("图", "probe", 1, $false)
+            if ($null -eq $c -or [string]::IsNullOrWhiteSpace([string]$c.Text)) {
+                throw "InsertCaption 可调用但没产生题注（返回空）"
+            }
+        }
+        $caps["anchor.captionLabels"] = {
+            $n = $doc.CaptionLabels.Count
+            if ($n -le 0) { throw "CaptionLabels 接口可用，但当前文档没有任何题注标签（Count=$n）" }
+        }
+        $caps["anchor.listTemplatesAdd"] = {
+            $lt = $doc.ListTemplates.Add($true)
+            if ($null -eq $lt) { throw "ListTemplates.Add 返回 null —— 接口可调用但没有产出列表模板" }
+        }
+
+        foreach ($k in @($caps.Keys)) {
+            $status = "unknown"; $err = $null
+            try {
+                & $caps[$k] | Out-Null
+                $status = "supported"
+            } catch {
+                $status = "unsupported"
+                $err = [string]$_.Exception.Message
+                if ($err.Length -gt 160) { $err = $err.Substring(0, 160) }
+            }
+            $caps[$k] = @{ status = $status; error = $err }
+        }
+
+        # 对照组自检：三个锚点必须【都】不是 supported —— 否则说明探针判据太松
+        # （比如只 catch 异常、把"返回空"当成成功）。
+        $anchorNames = @($caps.Keys | Where-Object { $_ -like "anchor.*" })
+        $anchorLeaked = @($anchorNames | Where-Object { $caps[$_].status -eq "supported" })
+
+        $keys = @($caps.Keys)
+        Output-Json @{ success = $true; data = @{
+            docName = [string]$doc.Name
+            total = $keys.Count
+            supported = @($keys | Where-Object { $caps[$_].status -eq "supported" })
+            unsupported = @($keys | Where-Object { $caps[$_].status -ne "supported" })
+            caps = $caps
+            anchorSelfCheck = @{
+                total = $anchorNames.Count
+                leaked = $anchorLeaked
+                passed = ($anchorLeaked.Count -eq 0)
+                note = "锚点全部报 unsupported 才算探针有效；有 leaked 说明判据太松，不能拿这张表做决策。"
+            }
+            note = "探针多数只读；styles.modify* 会改完改回，table.rowsAdd/colsAdd 会真的加行加列 —— 请在【副本】上跑。表格类探针需要文档里已有表格，否则会因为 Count=0 静默跳过而误报 supported。"
+        } }
+    }
+
     default {
         Output-Json @{ success = $false; error = "Unknown action: $Action" }
     }
