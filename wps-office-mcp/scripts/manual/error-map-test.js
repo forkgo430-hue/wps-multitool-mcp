@@ -39,6 +39,17 @@ const cases = [
   { input: '不能对 Null 值表达式调用方法', expect: 'com_error' },
   { input: '插入题注失败: 对象引用未设置到对象的实例。', expect: 'com_error' },
   { input: 'Missing required parameter: text', expect: 'invalid_params' },
+  // —— 阶段 3 新增：并发控制的 busy。两条文案都含"超时"，必须判成 busy 而不是 timeout ——
+  {
+    input:
+      'WPS common 队列已满（4 个在等，动作=ping）。该应用同一时刻只能跑一个动作（COM 是 STA），请稍后重试或先降低并发。',
+    expect: 'busy',
+  },
+  {
+    input:
+      'WPS word 排队超时（10000ms，动作=insertText）。前面还有动作在跑；这个请求从未送出，可以安全重试。',
+    expect: 'busy',
+  },
   { input: '', expect: 'unknown' },
   { input: 'Something totally unrelated', expect: 'unknown' },
 ];

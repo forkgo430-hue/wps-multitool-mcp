@@ -29,8 +29,9 @@ import { v4 as uuidv4 } from 'uuid';
 /** 常驻分发脚本（随包分发，见 .npmignore） */
 const PS_SCRIPT = path.join(__dirname, '../../scripts/wps-comd.ps1');
 
-/** 起进程 + 握手就绪的上限。冷启动实测约 5 秒，给足余量。 */
+/** 起进程 + 握手就绪的上限。冷启动实测约 5 秒，给足余量 */
 const READY_TIMEOUT_MS = 30000;
+
 /**
  * 单次动作上限。COM 动作可能很慢（大文档导出、首次插图表要拉起 Excel），默认 120 秒。
  * 每次调用时重读环境变量，便于按场景临时收紧/放宽，不用重启桥。
@@ -38,6 +39,56 @@ const READY_TIMEOUT_MS = 30000;
 function callTimeoutMs(): number {
   const v = parseInt(process.env.WPS_DAEMON_TIMEOUT || '120000', 10);
   return Number.isFinite(v) && v > 0 ? v : 120000;
+}
+
+/**
+ * 每应用的排队上限。超了立刻回 busy —— 把"无声地等几分钟"换成"明确被拒"。
+ * 注意：这不等于并发度（COM 是 STA，在途恒为 1），它限的是"等待位"的数量。
+ */
+export function queueMax(): number {
+  const v = parseInt(process.env.WPS_QUEUE_MAX || '4', 10);
+  return Number.isFinite(v) && v > 0 ? v : 4;
+}
+
+/** 排队上限。排太久不如早拒 —— 与动作超时是两个独立维度。 */
+export function queueTimeoutMs(): number {
+  const v = parseInt(process.env.WPS_QUEUE_TIMEOUT || '10000', 10);
+  return Number.isFinite(v) && v > 0 ? v : 10000;
+}
+
+/**
+ * 需要「插队」的动作：会开/关/另存文档、切目标、退出 WPS，或弹出对话框。
+ * 这些是用户主动发起的，等待位里已经排了一堆读操作时，让它们先走。
+ * 饥饿风险可控 —— 这类动作很稀疏，且跳过后队列恢复 FIFO。
+ * 可用 WPS_EXCLUSIVE_ACTIONS="a,b,c" 覆盖。
+ */
+const DEFAULT_EXCLUSIVE_ACTIONS = [
+  'openFile',
+  'openDocument',
+  'openWorkbook',
+  'openPresentation',
+  'closeDocument',
+  'closeWorkbook',
+  'closePresentation',
+  'switchDocument',
+  'switchWorkbook',
+  'switchPresentation',
+  'createDocument',
+  'createWorkbook',
+  'createPresentation',
+  'save',
+  'saveAs',
+  'convertToPDF',
+  'convertFormat',
+  'quitWps',
+];
+
+export function exclusiveSet(): Set<string> {
+  const override = process.env.WPS_EXCLUSIVE_ACTIONS;
+  const list = override
+    ? override.split(',').map((s) => s.trim()).filter(Boolean)
+    : DEFAULT_EXCLUSIVE_ACTIONS;
+  return new Set(list);
 }
 
 /** 子进程压根没起来（请求从未送达）时抛这个，调用方可以安全重建。 */
@@ -48,10 +99,30 @@ export class ChildUnavailableError extends Error {
   }
 }
 
+/** 队列满 / 排队超时：请求【从未送达】PowerShell，属于可安全重试的基础设施问题。 */
+export class QueueBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'QueueBusyError';
+  }
+}
+
 interface PendingCall {
   resolve: (value: Record<string, unknown>) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+/** 队列里等位的一个请求 */
+interface QueuedTask {
+  action: string;
+  params: Record<string, unknown>;
+  exclusive: boolean;
+  enqueuedAt: number;
+  resolve: (value: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
+  /** 排队超时定时器 */
+  timer?: NodeJS.Timeout;
 }
 
 export interface ChildStats {
@@ -60,18 +131,43 @@ export interface ChildStats {
   pid: number | null;
   uptimeMs: number;
   restarts: number;
+  /** 在途（已送出、等 WPS 回话） */
   pending: number;
+  /** 队列里等位的数量 */
+  queued: number;
+  /** 是否已有一个动作在途（STA：恒为 0 或 1） */
+  inFlight: boolean;
+  /** 队列上限 */
+  queueMax: number;
+  /** 排队时长上限 */
+  queueTimeoutMs: number;
+  /** 最近一次排队等待的毫秒数（无则 0） */
+  lastQueueWaitMs: number;
+  /** 累计因队列满/排队超时被拒的次数 */
+  rejected: number;
 }
 
 export class PsChildDaemon {
   private proc: ChildProcess | null = null;
   private stdoutBuf = '';
   private pending = new Map<string, PendingCall>();
+  private queue: QueuedTask[] = [];
   private starting: Promise<void> | null = null;
   private ready = false;
   private disposed = false;
   private startedAt: number | null = null;
   private restarts = 0;
+  private lastQueueWaitMs = 0;
+  private rejected = 0;
+  /**
+   * 是否已有一个动作被 drain 送出、还没回话。
+   *
+   * 不能用 pending.size 判断：pending 是【送出之后】才登记的，
+   * 而 ensureStarted() 是异步的 —— 冷启动那几秒里 pending 一直是 0，
+   * 结果一串并发请求会全部"穿过"队列被同时写进子进程（既破了并发上限，
+   * 也让 STA 约束失效）。所以这里用一个同步置位的标志位。
+   */
+  private inFlight = false;
 
   constructor(private readonly appKey: string) {}
 
@@ -87,47 +183,137 @@ export class PsChildDaemon {
       uptimeMs: this.startedAt === null ? 0 : Date.now() - this.startedAt,
       restarts: this.restarts,
       pending: this.pending.size,
+      queued: this.queue.length,
+      inFlight: this.inFlight,
+      queueMax: queueMax(),
+      queueTimeoutMs: queueTimeoutMs(),
+      lastQueueWaitMs: this.lastQueueWaitMs,
+      rejected: this.rejected,
     };
   }
 
   /**
    * 调用一个动作。业务成功/失败都以响应对象 resolve；
-   * 只有【基础设施问题】（起不来、超时、进程退出）才 reject。
+   * 只有【基础设施问题】（起不来、超时、进程退出、队列满）才 reject。
+   *
+   * 并发语义（重要）
+   * ----------------
+   * COM 是 STA：一个应用同一时刻【只能有一个动作在跑】。所以这里不是"提高并发度"，
+   * 而是把"无声排队"变成"有界的、看得见的等待"：
+   *   - 队列上限 queueMax（默认 4），超了立刻回 QueueBusyError，不让调用方干等；
+   *   - 排队超时 queueTimeoutMs（默认 10s），与动作超时独立；
+   *   - 排他的动作（open/save/quit 等）插队，避免用户主动操作被一堆读操作压住。
    */
   async call(action: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if (this.disposed) {
       throw new ChildUnavailableError(`[${this.appKey}] 子进程已关闭`);
     }
-    await this.ensureStarted();
 
-    const id = uuidv4();
-    const line = JSON.stringify({ id, action, params });
-    const timeoutMs = callTimeoutMs();
+    const max = queueMax();
+    if (this.queue.length >= max) {
+      this.rejected += 1;
+      throw new QueueBusyError(
+        `WPS ${this.appKey} 队列已满（${max} 个在等，动作=${action}）。` +
+          '该应用同一时刻只能跑一个动作（COM 是 STA），请稍后重试或先降低并发。'
+      );
+    }
+
+    const exclusive = exclusiveSet().has(action);
 
     return new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        // 卡死就是这一路死了：只丢弃重建【本应用】的进程，其它应用不受影响
-        this.kill(`动作超时（${action}）`);
+      const task: QueuedTask = {
+        action,
+        params,
+        exclusive,
+        enqueuedAt: Date.now(),
+        resolve,
+        reject,
+      };
+      const qTimeout = queueTimeoutMs();
+      task.timer = setTimeout(() => {
+        const i = this.queue.indexOf(task);
+        if (i >= 0) this.queue.splice(i, 1);
+        this.rejected += 1;
         reject(
-          new Error(
-            `WPS 动作超时（${timeoutMs}ms）: ${action}（应用=${this.appKey}）。` +
-              '该应用的常驻进程已重建；因原请求可能执行了一半，这里不自动重放。'
+          new QueueBusyError(
+            `WPS ${this.appKey} 排队超时（${qTimeout}ms，动作=${action}）。` +
+              '前面还有动作在跑；这个请求从未送出，可以安全重试。'
           )
         );
-      }, timeoutMs);
+      }, qTimeout);
 
-      this.pending.set(id, { resolve, reject, timer });
-      try {
-        if (!this.proc?.stdin || this.proc.stdin.destroyed) {
-          throw new Error('stdin 不可写');
-        }
-        this.proc.stdin.write(line + '\n');
-      } catch (err) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(new Error(`写入常驻进程失败: ${(err as Error).message}`));
-      }
+      if (exclusive) this.queue.unshift(task);
+      else this.queue.push(task);
+
+      void this.drain();
+    });
+  }
+
+  /**
+   * 队列泵：把队首送进子进程，回话后继续送下一个。
+   * 在途只允许 1 个 —— 这是 STA 的硬约束，不是策略选择。
+   */
+  private async drain(): Promise<void> {
+    if (this.disposed || this.inFlight) return;
+    const task = this.queue.shift();
+    if (!task) return;
+    if (task.timer) {
+      clearTimeout(task.timer);
+      task.timer = undefined;
+    }
+    this.inFlight = true;
+    this.lastQueueWaitMs = Date.now() - task.enqueuedAt;
+
+    try {
+      const msg = await this.dispatch(task.action, task.params);
+      task.resolve(msg);
+    } catch (err) {
+      task.reject(err as Error);
+    } finally {
+      this.inFlight = false;
+      // 无论成败都继续放下一个，否则一次失败会把整个队列堵死
+      void this.drain();
+    }
+  }
+
+  /** 真正把一行 JSON 写进子进程并等它的响应 */
+  private dispatch(
+    action: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      // 冷启动放在真正送出时才做：排队中的请求不必陪着等握手
+      this.ensureStarted()
+        .then(() => {
+          const id = uuidv4();
+          const line = JSON.stringify({ id, action, params });
+          const timeoutMs = callTimeoutMs();
+
+          const timer = setTimeout(() => {
+            this.pending.delete(id);
+            // 卡死就是这一路死了：只丢弃重建【本应用】的进程，其它应用不受影响
+            this.kill(`动作超时（${action}）`);
+            reject(
+              new Error(
+                `WPS 动作超时（${timeoutMs}ms）: ${action}（应用=${this.appKey}）。` +
+                  '该应用的常驻进程已重建；因原请求可能执行了一半，这里不自动重放。'
+              )
+            );
+          }, timeoutMs);
+
+          this.pending.set(id, { resolve, reject, timer });
+          try {
+            if (!this.proc?.stdin || this.proc.stdin.destroyed) {
+              throw new Error('stdin 不可写');
+            }
+            this.proc.stdin.write(line + '\n');
+          } catch (err) {
+            clearTimeout(timer);
+            this.pending.delete(id);
+            reject(new Error(`写入常驻进程失败: ${(err as Error).message}`));
+          }
+        })
+        .catch((err: unknown) => reject(err as Error));
     });
   }
 
@@ -153,6 +339,7 @@ export class PsChildDaemon {
 
   dispose(): void {
     this.disposed = true;
+    this.failQueued(new QueueBusyError(`[${this.appKey}] 桥正在关闭，队列中的请求已取消`));
     this.kill('dispose');
   }
 
@@ -162,6 +349,16 @@ export class PsChildDaemon {
       p.reject(err);
     }
     this.pending.clear();
+  }
+
+  /** 子进程没了，队列里等位的也没意义了 —— 立刻拒掉，不要让它们干等到排队超时 */
+  private failQueued(err: Error): void {
+    const tasks = this.queue.splice(0, this.queue.length);
+    for (const t of tasks) {
+      if (t.timer) clearTimeout(t.timer);
+      this.rejected += 1;
+      t.reject(err);
+    }
   }
 
   private ensureStarted(): Promise<void> {

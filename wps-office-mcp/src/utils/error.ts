@@ -55,6 +55,8 @@ export enum WpsErrorType {
   UNSUPPORTED_OPERATION = 'unsupported_operation',
   /** 入参不合法 / 缺必填参数 */
   INVALID_PARAMS = 'invalid_params',
+  /** 队列已满 / 排队超时 —— 请求从未送出，可安全重试 */
+  BUSY = 'busy',
   /** 其余 COM 错误（含 RPC_E_CALL_REJECTED 等） */
   COM_ERROR = 'com_error',
   /** 输出不是合法 JSON / PowerShell 异常退出码 */
@@ -88,12 +90,23 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.APP_NOT_RUNNING;
   }
 
-  // 3) 超时：WPS 动作超时 / timed out
+  // 3) 队列满 / 排队超时 —— 必须排在"超时"前面：排队超时的文案里也含"超时"，
+  //    但语义完全不同（请求从未送出、可安全重试），不能混进 TIMEOUT。
+  if (
+    msg.includes('队列已满') ||
+    msg.includes('排队超时') ||
+    lower.includes('queue is full') ||
+    lower.includes('queue busy')
+  ) {
+    return WpsErrorType.BUSY;
+  }
+
+  // 4) 超时：WPS 动作超时 / timed out
   if (msg.includes('超时') || lower.includes('timed out') || lower.includes('timeout')) {
     return WpsErrorType.TIMEOUT;
   }
 
-  // 4) 桥起不来：桥进程未就绪 / 管道连不上
+  // 5) 桥起不来：桥进程未就绪 / 管道连不上
   if (
     msg.includes('未就绪') ||
     msg.includes('桥进程') ||
@@ -104,7 +117,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.BRIDGE_UNAVAILABLE;
   }
 
-  // 5) 守护进程 / 桥已关闭
+  // 6) 守护进程 / 桥已关闭
   if (
     msg.includes('守护进程已关闭') ||
     msg.includes('守护进程已退出') ||
@@ -115,7 +128,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.DAEMON_UNAVAILABLE;
   }
 
-  // 6) WPS 没开
+  // 7) WPS 没开
   if (
     msg.includes('not running') ||
     msg.includes('未运行') ||
@@ -125,7 +138,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.APP_NOT_RUNNING;
   }
 
-  // 7) 没有活动文档 / 目标块不存在
+  // 8) 没有活动文档 / 目标块不存在
   if (
     msg.includes('No active document') ||
     msg.includes('没有活动文档') ||
@@ -138,7 +151,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.DOCUMENT_NOT_FOUND;
   }
 
-  // 8) WPS 不支持该接口 / 未知动作 / 取值超范围
+  // 9) WPS 不支持该接口 / 未知动作 / 取值超范围
   if (
     msg.includes('Unknown action') ||
     msg.includes('值不在预期的范围内') ||
@@ -150,7 +163,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.UNSUPPORTED_OPERATION;
   }
 
-  // 9) 入参问题
+  // 10) 入参问题
   if (
     msg.includes('Missing required parameter') ||
     msg.includes('参数错误') ||
@@ -161,7 +174,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.INVALID_PARAMS;
   }
 
-  // 10) 协议层：输出不是合法 JSON / PowerShell 异常退出码
+  // 11) 协议层：输出不是合法 JSON / PowerShell 异常退出码
   if (
     msg.includes('输出解析失败') ||
     msg.includes('非有效JSON') ||
@@ -185,7 +198,7 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.INVALID_PARAMS;
   }
 
-  // 11) 其余 COM 错误：HRESULT / 异常来自 / 中文兜底（带中文前缀的错误不应崩）
+  // 12) 其余 COM 错误：HRESULT / 异常来自 / 中文兜底（带中文前缀的错误不应崩）
   if (
     msg.includes('HRESULT') ||
     msg.includes('异常来自') ||
@@ -203,6 +216,23 @@ export function classifyWpsError(message: string): WpsErrorType {
 /**
  * 自定义错误基类 - 所有错误的祖宗
  */
+/**
+ * 这类错误可以【安全重试】—— 请求从未真正送进 WPS（或只做了只读探测），
+ * 重试不会造成"执行两次"。
+ * 刻意【不含】 TIMEOUT：动作超时意味着请求很可能已经执行了一半，自动重放会重复执行。
+ */
+const RETRYABLE_TYPES = new Set<WpsErrorType>([
+  WpsErrorType.BUSY,
+  WpsErrorType.BRIDGE_UNAVAILABLE,
+  WpsErrorType.DAEMON_UNAVAILABLE,
+  WpsErrorType.APP_NOT_RUNNING,
+]);
+
+/** 该错误类型能否安全重试（请求未执行，重试不会重复生效） */
+export function isRetryableWpsError(type: WpsErrorType): boolean {
+  return RETRYABLE_TYPES.has(type);
+}
+
 export class McpError extends Error {
   public readonly code: ErrorCode;
   public readonly details?: Record<string, unknown>;
@@ -227,6 +257,11 @@ export class McpError extends Error {
     Object.setPrototypeOf(this, McpError.prototype);
   }
 
+  /** 能否安全重试。调用方据此决定是退避重试还是直接放弃。 */
+  get retryable(): boolean {
+    return isRetryableWpsError(this.wpsType);
+  }
+
   /**
    * 转换为JSON格式 - 方便传输
    */
@@ -236,6 +271,7 @@ export class McpError extends Error {
       message: this.message,
       code: this.code,
       wpsType: this.wpsType,
+      retryable: this.retryable,
       details: this.details,
       timestamp: this.timestamp.toISOString(),
       stack: this.stack,

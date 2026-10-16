@@ -12,7 +12,13 @@
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
 
-const { classifyWpsError, WpsErrorType, errorUtils } = require(path.join(ROOT, 'dist', 'utils', 'error.js'));
+const {
+  classifyWpsError,
+  WpsErrorType,
+  errorUtils,
+  isRetryableWpsError,
+  McpError,
+} = require(path.join(ROOT, 'dist', 'utils', 'error.js'));
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
 const { ToolCategory } = require(path.join(ROOT, 'dist', 'types', 'tools.js'));
 
@@ -82,6 +88,16 @@ toolRegistry.register(
   const r2 = await toolRegistry.callTool({ id: 't2', name: 'wps_test_failing_mcperror', arguments: {} });
   console.log(`  McpError 路径: success=${r2.success} errorType=${r2.errorType}`);
   eq('McpError 路径分类为 document_not_found', r2.errorType, T.DOCUMENT_NOT_FOUND);
+
+  // —— retryable：调用方靠它决定"退避重试"还是"别试了"（阶段 3 新增）——
+  console.log('\n=== retryable 语义 ===');
+  eq('busy 可安全重试（请求从未送出）', isRetryableWpsError(T.BUSY), true);
+  eq('动作超时【不可】重试（可能已执行一半）', isRetryableWpsError(T.TIMEOUT), false);
+  eq('com_error 不可重试', isRetryableWpsError(T.COM_ERROR), false);
+  eq('桥不可用可重试', isRetryableWpsError(T.BRIDGE_UNAVAILABLE), true);
+  const m = new McpError('WPS common 队列已满（4 个在等）');
+  eq('McpError.retryable 对 busy 为 true', m.retryable, true);
+  eq('McpError.toJSON 带上 retryable', m.toJSON().retryable, true);
 
   console.log(`\n汇总：${pass} 通过 / ${fail} 失败`);
   process.exit(fail === 0 ? 0 : 1);

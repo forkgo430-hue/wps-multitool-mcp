@@ -38,7 +38,7 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import { PsChildDaemon } from './ps-child';
+import { PsChildDaemon, queueMax, queueTimeoutMs, exclusiveSet } from './ps-child';
 
 /** 默认管道名：按用户区分，避免多用户/多会话互相串 */
 function defaultPipeName(): string {
@@ -131,6 +131,11 @@ async function handleRequest(
         uptimeMs: Date.now() - startedAt,
         clients: activeConns,
         idleMs: Date.now() - lastActivity,
+        queue: {
+          max: queueMax(),
+          timeoutMs: queueTimeoutMs(),
+          exclusiveActions: [...exclusiveSet()],
+        },
         children: childStats(),
       },
     });
