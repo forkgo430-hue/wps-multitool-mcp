@@ -17,6 +17,7 @@ const {
   WpsErrorType,
   errorUtils,
   isRetryableWpsError,
+  formatWpsErrorTag,
   McpError,
 } = require(path.join(ROOT, 'dist', 'utils', 'error.js'));
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
@@ -98,6 +99,20 @@ toolRegistry.register(
   const m = new McpError('WPS common 队列已满（4 个在等）');
   eq('McpError.retryable 对 busy 为 true', m.retryable, true);
   eq('McpError.toJSON 带上 retryable', m.toJSON().retryable, true);
+
+  // —— 错误标签：模型实际看到的那串前缀（P0 新增）——
+  console.log('\n=== formatWpsErrorTag 渲染 ===');
+  eq('busy 标签', formatWpsErrorTag(T.BUSY), '[busy|可重试·稍后退避]');
+  eq('timeout 标签', formatWpsErrorTag(T.TIMEOUT), '[timeout|勿重试·可能已执行一半]');
+  eq('com_error 标签', formatWpsErrorTag(T.COM_ERROR), '[com_error|勿重试·可能已执行一半]');
+  eq('app_not_running 标签', formatWpsErrorTag(T.APP_NOT_RUNNING), '[app_not_running|可重试·先启动WPS]');
+  eq('invalid_params 标签', formatWpsErrorTag(T.INVALID_PARAMS), '[invalid_params|勿重试·先改参数]');
+  eq('unknown 标签（无提示后缀）', formatWpsErrorTag(T.UNKNOWN), '[unknown|勿重试]');
+  eq('显式 retryable 覆盖', formatWpsErrorTag(T.TIMEOUT, true), '[timeout|可重试·可能已执行一半]');
+
+  // —— ToolCallResult 是否带上 retryable（前缀要用它）——
+  eq('ToolCallResult.retryable（timeout 路径）', r1.retryable, false);
+  eq('ToolCallResult.retryable（document_not_found 路径）', r2.retryable, false);
 
   console.log(`\n汇总：${pass} 通过 / ${fail} 失败`);
   process.exit(fail === 0 ? 0 : 1);

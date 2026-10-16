@@ -61,6 +61,8 @@ export enum WpsErrorType {
   COM_ERROR = 'com_error',
   /** 输出不是合法 JSON / PowerShell 异常退出码 */
   PROTOCOL_ERROR = 'protocol_error',
+  /** 调用方主动取消（排队中出队，或只读动作放弃等待）—— 不是 WPS 出错 */
+  CANCELLED = 'cancelled',
   /** 无法归类 */
   UNKNOWN = 'unknown',
 }
@@ -75,6 +77,11 @@ export function classifyWpsError(message: string): WpsErrorType {
     return WpsErrorType.UNKNOWN;
   }
   const lower = msg.toLowerCase();
+
+  // 0) 取消必须排第一：CancelError 的文案里含"取消"也可能撞上别的规则
+  if (msg.includes('被取消') || msg.includes('放弃等待') || lower.includes('cancelled by client')) {
+    return WpsErrorType.CANCELLED;
+  }
 
   // 1) RPC_E_CALL_REJECTED / 0x80010001 —— COM 调用被拒，明确不是超时，别被 "call" 误导
   if (
@@ -231,6 +238,39 @@ const RETRYABLE_TYPES = new Set<WpsErrorType>([
 /** 该错误类型能否安全重试（请求未执行，重试不会重复生效） */
 export function isRetryableWpsError(type: WpsErrorType): boolean {
   return RETRYABLE_TYPES.has(type);
+}
+
+/**
+ * 每种错误类型的下一步提示 —— 光说"勿重试"模型不知道该干什么，
+ * 这里补一句人话（为什么不能重放 / 要先做什么）。
+ */
+const RETRY_HINT: Partial<Record<WpsErrorType, string>> = {
+  [WpsErrorType.TIMEOUT]: '可能已执行一半',
+  [WpsErrorType.COM_ERROR]: '可能已执行一半',
+  [WpsErrorType.INVALID_PARAMS]: '先改参数',
+  [WpsErrorType.DOCUMENT_NOT_FOUND]: '先打开文档',
+  [WpsErrorType.APP_NOT_RUNNING]: '先启动WPS',
+  [WpsErrorType.BRIDGE_UNAVAILABLE]: '先拉起桥',
+  [WpsErrorType.DAEMON_UNAVAILABLE]: '先拉起桥',
+  [WpsErrorType.BUSY]: '稍后退避',
+  [WpsErrorType.UNSUPPORTED_OPERATION]: '本机不支持该接口',
+  [WpsErrorType.CANCELLED]: '调用方主动取消，未执行',
+};
+
+/**
+ * 把错误类型渲染成给模型看的短标签，如 `[busy|可重试·稍后退避]`。
+ * 前半段是"重放安全吗"，后半段是"下一步先做什么"。
+ * 只做展示，不改 isError 语义。
+ */
+export function formatWpsErrorTag(
+  type: WpsErrorType | string,
+  retryable?: boolean
+): string {
+  const t = String(type ?? WpsErrorType.UNKNOWN);
+  const canRetry =
+    typeof retryable === 'boolean' ? retryable : isRetryableWpsError(t as WpsErrorType);
+  const hint = RETRY_HINT[t as WpsErrorType];
+  return `[${t}|${canRetry ? '可重试' : '勿重试'}${hint ? `·${hint}` : ''}]`;
 }
 
 export class McpError extends Error {

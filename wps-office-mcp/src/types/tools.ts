@@ -117,6 +117,8 @@ export interface ToolCallResult {
   error?: string;
   /** 稳定的错误类型标识（失败时），取值见 WpsErrorType */
   errorType?: string;
+  /** 该错误能否安全重试（失败时）——重放不会造成"执行两次" */
+  retryable?: boolean;
 }
 
 /**
