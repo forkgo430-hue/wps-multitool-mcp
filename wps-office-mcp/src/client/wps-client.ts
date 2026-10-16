@@ -2,17 +2,17 @@
  * Input: 平台信息与WPS调用参数
  * Output: WPS API 调用结果
  * Pos: 跨平台 WPS 客户端。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
- * WPS通信客户端 - 老王的跨平台版
- * Windows: 通过PowerShell调用WPS COM接口
- * Mac: 通过反向轮询服务器（MCP Server当服务端，WPS加载项来轮询）
+ * WPS通信客户端 - 仅 Windows
+ * 通过 PowerShell 调用 WPS 的 COM 接口；优先走常驻桥，桥起不来退回直跑。
  *
- * 丢，为了兼容Mac老王可是费了老大劲了
- * WPS Mac加载项在沙箱里启动不了HTTP服务器，只能反过来搞！
+ * 历史：曾经有一条 macOS/Linux 的"反向轮询"路线（WPS Mac 加载项在沙箱里
+ * 起不了 HTTP server，只能让 MCP 当服务端、加载项来轮询）。该路线**已移除** ——
+ * 只有代码没有配套加载项，实际跑不起来，留着只会让人误以为支持。
+ * 相关代码（mac-poll-server.ts）与加载项（wps-claude-assistant/）已删除。
  */
 
 import { spawn } from 'child_process';
 import * as path from 'path';
-import * as os from 'os';
 import {
   WpsEndpointConfig,
   WpsApiRequest,
@@ -25,51 +25,18 @@ import {
 } from '../types/wps';
 import { log, logRequest, logResponse } from '../utils/logger';
 import { errorUtils } from '../utils/error';
-import { macPollServer } from './mac-poll-server';
 import { psDaemon, DaemonUnavailableError } from './ps-daemon';
 import { AppKey, resolveAppKey } from './action-routes';
 
-// 平台判断
-const PLATFORM = os.platform();
-const IS_MAC = PLATFORM === 'darwin';
-const IS_LINUX = PLATFORM === 'linux';
-// Mac 和 Linux 均通过反向轮询（wps-claude-assistant 加载项 HTTP 轮询模式），仅 Windows 走 PowerShell COM
-const USE_POLL = IS_MAC || IS_LINUX;
-
-// Windows 优先走常驻守护进程（省掉每次 spawn powershell + 解析 5000 行脚本）。
+// 仅 Windows：优先走常驻桥（省掉每次 spawn powershell + 解析 5000 行脚本）。
 // 设 WPS_USE_DAEMON=0 可强制退回直跑模式。
-const USE_DAEMON = !USE_POLL && process.env.WPS_USE_DAEMON !== '0';
+const USE_DAEMON = process.env.WPS_USE_DAEMON !== '0';
 // 守护进程一旦起不来就本次全程直跑，不再每次调用都白等 20 秒握手
 let daemonBroken = false;
 
 // PowerShell脚本路径 (Windows)
 const PS_SCRIPT_PATH = path.join(__dirname, '../../scripts/wps-com.ps1');
 
-// Mac轮询服务器端口（支持环境变量 WPS_MCP_PORT 配置）
-const MAC_POLL_PORT = parseInt(process.env.WPS_MCP_PORT || '58891', 10);
-
-/**
- * 执行Mac轮询调用
- * 通过轮询服务器发送命令，等待WPS加载项取走并返回结果
- */
-async function execMacPoll(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
-  log.debug('Executing Mac Poll', { action, params });
-
-  try {
-    // 确保轮询服务器已启动
-    if (!macPollServer.isRunning) {
-      log.info('[Mac] Starting poll server...');
-      await macPollServer.start(MAC_POLL_PORT);
-    }
-
-    // 通过轮询服务器执行命令
-    const result = await macPollServer.executeCommand(action, params);
-    return result;
-  } catch (error) {
-    log.error('Mac Poll call failed', { action, error });
-    throw error;
-  }
-}
 
 // PowerShell 默认超时（毫秒）
 const PS_TIMEOUT = 30000;
@@ -164,19 +131,14 @@ async function execPowerShell(action: string, params: Record<string, unknown> = 
 }
 
 /**
- * 统一执行接口 - 根据平台选择调用方式
- * Mac/Linux: 反向轮询模式（MCP Server是服务端，WPS加载项来取命令）
- * Windows:   常驻守护进程优先，起不来则退回一调用一进程的直跑方式
+ * 统一执行接口（仅 Windows）
+ *   常驻桥优先；桥起不来则退回"一调用一进程"的直跑方式
  */
 async function execWpsAction(
   action: string,
   params: Record<string, unknown> = {},
   app: AppKey = 'common'
 ): Promise<unknown> {
-  if (USE_POLL) {
-    return execMacPoll(action, params);
-  }
-
   if (USE_DAEMON && !daemonBroken) {
     try {
       return await psDaemon.call(action, params, app);
@@ -196,17 +158,15 @@ async function execWpsAction(
 }
 
 /**
- * WPS客户端类 - 跨平台通信
- * Windows: PowerShell COM桥接
- * Mac: HTTP调用WPS加载项
+ * WPS客户端类
+ * 仅 Windows：PowerShell + COM 桥接
  */
 export class WpsClient {
   private status: WpsClientStatus;
 
   constructor(_config?: Partial<WpsEndpointConfig>) {
     this.status = { connected: false };
-    const method = USE_POLL ? `HTTP Poll (${PLATFORM})` : 'PowerShell COM';
-    log.info('WPS Client initialized', { method, platform: PLATFORM });
+    log.info('WPS Client initialized', { method: 'COM bridge (Windows only)' });
   }
 
   /**
@@ -236,7 +196,7 @@ export class WpsClient {
       const duration = Date.now() - startTime;
       logResponse(action, false, duration);
       this.status.connected = false;
-      throw errorUtils.wrap(error, `WPS 调用失败（${IS_MAC ? 'macOS轮询' : 'PowerShell COM'}）: ${action}`);
+      throw errorUtils.wrap(error, `WPS 调用失败（COM 桥）: ${action}`);
     }
   }
 
