@@ -12,7 +12,11 @@
 export interface ToolParameterSchema {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   description?: string;
-  enum?: string[];
+  /**
+   * 枚举可选值。声明成只读数组，是为了允许直接复用 `as const` 的 schema 常量
+   * （否则 TS 会因为 readonly 数组不能赋给可变数组而报错 —— 抽常量复用时必踩）。
+   */
+  enum?: readonly string[];
   items?: ToolParameterSchema;
   properties?: Record<string, ToolParameterSchema>;
   required?: string[];

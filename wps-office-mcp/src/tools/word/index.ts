@@ -12,6 +12,7 @@ import { contentTools } from './content';
 import { documentTools } from './document';
 import { proofreadTools } from './proofread';
 import { academicTools } from './academic';
+import { p01Tools } from './professional';
 
 /**
  * 所有Word相关的Tools
@@ -20,9 +21,9 @@ import { academicTools } from './academic';
  * - 内容Tools: insert_text, find_replace, insert_table, set_paragraph, get_active_document, insert_image, set_font_style
  * - 文档管理Tools: get_open_documents, switch_document, open_document, get_document_text, insert_header, insert_footer, generate_doc_toc
  * - 校对Tools: enable_track_changes, get_track_changes_status, replace_range, proofread_basic
- * - 长文档/学术排版Tools: add_heading, get_outline, insert_paragraph, delete_paragraph,
- *   add_caption, add_footnote, insert_table_of_figures, update_fields,
- *   set_columns, set_default_font, set_heading_numbering, add_list, format_table
+ * - 长文档Tools（academic）: add_heading, get_outline, insert_paragraph, delete_paragraph, add_caption, add_footnote, insert_table_of_figures, update_fields, set_columns, set_default_font, set_heading_numbering, add_list, format_table
+ * - 专业Tools（professional）: revisions, get_cell_text, merge_cells, split_cell, table_row_col,
+ *   set_cell_borders, list_styles, add_style, modify_style, delete_style, cross_reference, index, page_number
  */
 export const wordTools: RegisteredTool[] = [
   ...formatTools,
@@ -30,8 +31,8 @@ export const wordTools: RegisteredTool[] = [
   ...documentTools,
   ...proofreadTools,
   ...academicTools,
+  ...p01Tools,
 ];
-
 // 分别导出，方便按需使用
 export { formatTools } from './format';
 export { contentTools } from './content';

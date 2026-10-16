@@ -135,6 +135,15 @@ function Get-TargetPres($ppt, $p) {
     return $ppt.ActivePresentation
 }
 
+# 取整型参数并带默认值。写成函数而不是内联 $(if ...)：内联 if 在 [int] 转换里
+# 解析不稳（实测会让整个 switch 报"语句块中缺少右}"），而且散落在几十处很难统一改。
+function Get-IntParam($p, [string]$name, [int]$default = 1) {
+    if ($null -eq $p) { return $default }
+    $v = $p.$name
+    if ($null -eq $v -or [string]::IsNullOrWhiteSpace([string]$v)) { return $default }
+    try { return [int]$v } catch { return $default }
+}
+
 # ==================== 文档/工作簿定位（A：不再依赖 ActiveDocument）====================
 # 为什么要换掉 ActiveDocument
 # ---------------------------
@@ -1920,6 +1929,8 @@ switch ($Action) {
     }
 
     "mergeCells" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $excel.ActiveSheet
@@ -5947,6 +5958,511 @@ switch ($Action) {
             }
             note = "探针多数只读；styles.modify* 会改完改回，table.rowsAdd/colsAdd 会真的加行加列 —— 请在【副本】上跑。表格类探针需要文档里已有表格，否则会因为 Count=0 静默跳过而误报 supported。"
         } }
+    }
+
+    # ==================== P0：修订的接受 / 拒绝 ====================
+    # 之前只能开/查询修订，没有"处理"这个出口 —— 半个功能。
+    # mode: acceptAll | rejectAll | acceptOne | rejectOne
+    "handleRevisions" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $mode = [string]$p.mode
+        $before = 0
+        try { $before = [int]$doc.Revisions.Count } catch {}
+        if ($before -eq 0) {
+            Output-Json @{ success = $true; data = @{ mode = $mode; count = 0; handled = 0; note = "文档里没有修订" } }
+            return
+        }
+        try {
+            switch ($mode) {
+                "acceptAll" { $doc.Revisions.AcceptAll() }
+                "rejectAll" { $doc.Revisions.RejectAll() }
+                "acceptOne" {
+                    if ($null -eq $p.index) { Output-Json @{ success = $false; error = "acceptOne 需要 index（从 1 开始）" }; return }
+                    $doc.Revisions.Item([int]$p.index).Accept()
+                }
+                "rejectOne" {
+                    if ($null -eq $p.index) { Output-Json @{ success = $false; error = "rejectOne 需要 index（从 1 开始）" }; return }
+                    $doc.Revisions.Item([int]$p.index).Reject()
+                }
+                default { Output-Json @{ success = $false; error = "mode 只能是 acceptAll/rejectAll/acceptOne/rejectOne，收到: $mode" }; return }
+            }
+            $after = [int]$doc.Revisions.Count
+            Output-Json @{ success = $true; data = @{ mode = $mode; before = $before; after = $after; handled = ($before - $after) } }
+        } catch {
+            Output-Json @{ success = $false; error = "处理修订失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # 列出修订（谁改的、改成什么）—— 处理之前得先看得见
+    "listRevisions" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $items = @()
+            $n = [int]$doc.Revisions.Count
+            for ($i = 1; $i -le $n; $i++) {
+                $r = $doc.Revisions.Item($i)
+                $e = @{ index = $i }
+                try { $e.type = [int]$r.Type } catch {}            # 1=插入 2=删除 3=属性 4=段落标记...
+                try { $e.author = [string]$r.Author } catch {}
+                try { $e.date = [string]$r.Date } catch {}
+                try { $e.text = [string]$r.Range.Text } catch {}
+                try { $e.page = [int]$r.Range.Information(3) } catch {}   # wdActiveEndPageNumber
+                $items += $e
+            }
+            Output-Json @{ success = $true; data = @{ count = $n; revisions = $items } }
+        } catch {
+            Output-Json @{ success = $false; error = "读取修订失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # ==================== P0：表格单元格级 ====================
+    # tableIndex 默认 1（第一个表格）。坐标一律 1-based，与 Word UI 一致。
+    "mergeTableCells" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $a = $t.Cell([int]$p.row1, [int]$p.col1)
+            $b = $t.Cell([int]$p.row2, [int]$p.col2)
+            $a.Merge($b)
+            Output-Json @{ success = $true; data = @{ merged = "$($p.row1),$($p.col1)-$($p.row2),$($p.col2)" } }
+        } catch {
+            Output-Json @{ success = $false; error = "合并 Word 表格单元格失败（注意：不能跨越已有合并区）: $(Get-CallError $_)" }
+        }
+    }
+
+    "splitCell" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $c = $t.Cell([int]$p.row, [int]$p.col)
+            # 两个参数必须先落到变量再传：写成 $c.Split((..), (..)) 时，
+            # 那个逗号会被 PowerShell 当成数组运算符，整个块解析失败（实测踩过）。
+            $nr = Get-IntParam $p "numRows" 1
+            $nc = Get-IntParam $p "numCols" 1
+            $c.Split($nr, $nc)
+            Output-Json @{ success = $true; data = @{ split = "$($p.row),$($p.col)"; numRows = $nr; numCols = $nc } }
+        } catch {
+            Output-Json @{ success = $false; error = "拆分单元格失败（该单元格可能未合并过）: $(Get-CallError $_)" }
+        }
+    }
+
+    # 插入/删除行列。dir: rows | cols；where: before | after；count 默认 1
+    "insertTableRowCol" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $cnt = (Get-IntParam $p "count" 1)
+            $where = if ($p.where -eq "before") { 0 } else { 1 }   # wdRowHeightAuto=0? 实测 0=前 1=后
+            $info = @{ table = $t.Index; before = @{ rows = [int]$t.Rows.Count; cols = [int]$t.Columns.Count } }
+            if ($p.dir -eq "cols") {
+                $col = $t.Columns.Item([int]$p.index)
+                if ($where -eq 0) { for ($k = 0; $k -lt $cnt; $k++) { $null = $col.Select(); $null = $t.Columns.Add($null) } }
+                else { $null = $col.Select(); $null = $t.Columns.Add() }
+            } else {
+                $row = $t.Rows.Item([int]$p.index)
+                if ($where -eq 0) { for ($k = 0; $k -lt $cnt; $k++) { $null = $row.Select(); $null = $t.Rows.Add($null) } }
+                else { $null = $row.Select(); $null = $t.Rows.Add() }
+            }
+            $info.after = @{ rows = [int]$t.Rows.Count; cols = [int]$t.Columns.Count }
+            Output-Json @{ success = $true; data = $info }
+        } catch {
+            Output-Json @{ success = $false; error = "插入行列失败: $(Get-CallError $_)" }
+        }
+    }
+
+    "deleteTableRowCol" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $before = @{ rows = [int]$t.Rows.Count; cols = [int]$t.Columns.Count }
+            if ($p.dir -eq "cols") { $t.Columns.Item([int]$p.index).Delete() } else { $t.Rows.Item([int]$p.index).Delete() }
+            $after = @{ rows = [int]$t.Rows.Count; cols = [int]$t.Columns.Count }
+            Output-Json @{ success = $true; data = @{ before = $before; after = $after } }
+        } catch {
+            Output-Json @{ success = $false; error = "删除行列失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # 单元格边框。side: all | top | bottom | left | right；style 可选（1=单线 3=粗线 0=无）
+    "setCellBorders" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $c = $t.Cell([int]$p.row, [int]$p.col)
+            $style = if ($null -ne $p.style) { [int]$p.style } else { 1 }
+            # wdBorderTop=1 Bottom=3 Left=2 Right=4 Horizontal=5 Vertical=6
+            $map = @{ top = 1; left = 2; bottom = 3; right = 4; horizontal = 5; vertical = 6 }
+            $applied = @()
+            if ($p.side -eq "all") {
+                foreach ($k in @("top", "left", "bottom", "right")) {
+                    $c.Borders.Item($map[$k]).LineStyle = $style
+                    $c.Borders.Item($map[$k]).LineWidth = 4      # wdLineWidth050pt
+                    $applied += $k
+                }
+            } else {
+                $key = [string]$p.side
+                if (-not $map.ContainsKey($key)) { Output-Json @{ success = $false; error = "side 只能是 top/bottom/left/right/horizontal/vertical/all" }; return }
+                $c.Borders.Item($map[$key]).LineStyle = $style
+                if ($style -ne 0) { $c.Borders.Item($map[$key]).LineWidth = 4 }
+                $applied += $key
+            }
+            Output-Json @{ success = $true; data = @{ row = $p.row; col = $p.col; applied = $applied; style = $style } }
+        } catch {
+            Output-Json @{ success = $false; error = "设置单元格边框失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # 读单元格文本（表格类操作的前置确认）
+    "getCellText" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        try {
+            $t = $doc.Tables.Item((Get-IntParam $p "tableIndex" 1))
+            $c = $t.Cell([int]$p.row, [int]$p.col)
+            $txt = ""
+            try { $txt = [string]$c.Range.Text } catch {}
+            $txt = $txt -replace "[`r`n`a]", ""      # 去掉单元格结尾标记
+            $text = ""
+            try { $text = [string]$c.Range.Text } catch {}
+            Output-Json @{ success = $true; data = @{ row = $p.row; col = $p.col; text = $txt; raw = $text } }
+        } catch {
+            Output-Json @{ success = $false; error = "读取单元格失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # ==================== P1：样式 新建 / 修改 / 删除 ====================
+    "listStyles" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $onlyUser = $false
+            if ($null -ne $p.onlyUserDefined) { $onlyUser = [bool]$p.onlyUserDefined }
+            $items = @()
+            foreach ($s in @($doc.Styles)) {
+                $builtin = $true
+                try { $builtin = [bool]$s.BuiltIn } catch {}
+                if ($onlyUser -and $builtin) { continue }
+                $e = @{ name = [string]$s.NameLocal; builtIn = $builtin }
+                try { $e.type = [int]$s.Type } catch {}
+                try { $e.inUse = [bool]$s.InUse } catch {}
+                $items += $e
+            }
+            Output-Json @{ success = $true; data = @{ count = $items.Count; onlyUserDefined = $onlyUser; styles = $items } }
+        } catch {
+            Output-Json @{ success = $false; error = "列出样式失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # baseOn 可选（基于哪个样式派生）。其余属性可选，不传就不改。
+    "addStyle" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "缺少 name（样式名）" }; return }
+        try {
+            if ($null -ne $doc.Styles.Item([string]$p.name)) {
+                Output-Json @{ success = $false; error = "样式 '$($p.name)' 已存在；改样式请用 modifyStyle" }; return
+            }
+            # wdStyleTypeParagraph=1
+            # 样式类型用【字符串】参数 styleType，而不是数字 type ——
+            # 数字 1/2 直接传太脆（调用方要查表），而 schema 里的 type 字段本身就是字符串，
+            # 用同一个名字会让 TS 侧的类型定义自相矛盾。
+            $stType = 1   # wdStyleTypeParagraph
+            if ($p.styleType -eq "character") { $stType = 2 }
+
+            # 建样式与设属性必须【分开】处理：实测把两者写在一个 try 里时，
+            # 只要某个属性改不了就整体报 E_FAIL，样式根本建不出来。
+            # 现在建样式单独 try —— 建成功就是建成功，属性设不上的逐项如实报告。
+            $s = $null
+            try {
+                $s = $doc.Styles.Add([string]$p.name, $stType)
+            } catch {
+                Output-Json @{ success = $false; error = "Styles.Add 失败（样式名冲突？或本机 WPS 不支持新建样式）: $(Get-CallError $_)" }
+                return
+            }
+            if ($null -eq $s) { Output-Json @{ success = $false; error = "Styles.Add 返回 null" }; return }
+            $failed = @()
+            if ($p.baseOn) { try { $s.BaseStyle = [string]$p.baseOn } catch { $failed += "baseOn" } }
+            $applied = @()
+            # 逐属性设置：设上了记 applied，设不上记 failed —— 不静默吞掉，也不整体失败
+            if ($p.fontSize) { try { $s.Font.Size = [double]$p.fontSize; $applied += "fontSize" } catch { $failed += "fontSize" } }
+            if ($p.fontName) {
+                try { $s.Font.NameFarEast = [string]$p.fontName; $applied += "fontName" } catch { $failed += "fontName" }
+                try { $s.Font.NameAscii = [string]$p.fontName } catch { }
+            }
+            if ($null -ne $p.bold) { try { $s.Font.Bold = [bool]$p.bold; $applied += "bold" } catch { $failed += "bold" } }
+            if ($null -ne $p.italic) { try { $s.Font.Italic = [bool]$p.italic; $applied += "italic" } catch { $failed += "italic" } }
+            if ($null -ne $p.color) {
+                try {
+                    $bgr = [int]$p.color
+                    $s.Font.Color = ($bgr -band 0xFF) * 65536 + ($bgr -shr 8 -band 0xFF) * 256 + ($bgr -shr 16 -band 0xFF)
+                    $applied += "color"
+                } catch { $failed += "color" }
+            }
+            if ($null -ne $p.spaceBefore) { try { $s.ParagraphFormat.SpaceBefore = [double]$p.spaceBefore; $applied += "spaceBefore" } catch { $failed += "spaceBefore" } }
+            if ($null -ne $p.spaceAfter) { try { $s.ParagraphFormat.SpaceAfter = [double]$p.spaceAfter; $applied += "spaceAfter" } catch { $failed += "spaceAfter" } }
+            if ($null -ne $p.lineSpacing) { try { $s.ParagraphFormat.LineSpacingRule = 5; $s.ParagraphFormat.LineSpacing = [double]$p.lineSpacing; $applied += "lineSpacing" } catch { $failed += "lineSpacing" } }
+            if ($null -ne $p.alignment) {
+                $map = @{ left = 0; center = 1; right = 2; justify = 3 }
+                $k = [string]$p.alignment
+                if ($map.ContainsKey($k)) { try { $s.ParagraphFormat.Alignment = $map[$k]; $applied += "alignment" } catch { $failed += "alignment" } }
+            }
+            Output-Json @{ success = $true; data = @{
+                name = [string]$p.name
+                styleName = [string]$s.NameLocal
+                applied = $applied
+                failed = $failed
+                note = (if ($failed.Count -gt 0) { "以下属性本机 WPS 不接受：$($failed -join '/')。样式已建成，其余属性已设上。" } else { $null })
+            } }
+        } catch {
+            Output-Json @{ success = $false; error = "新建样式失败: $(Get-CallError $_)" }
+        }
+    }
+
+    "modifyStyle" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "缺少 name（样式名）" }; return }
+        try {
+            $s = $doc.Styles.Item([string]$p.name)
+            if ($null -eq $s) { Output-Json @{ success = $false; error = "样式不存在: $($p.name)" }; return }
+            if ($s.BuiltIn) {
+                # 内置样式不允许整体改名/删除，但改属性是允许的 —— 这里只提示不拦
+            }
+            $applied = @()
+            if ($p.fontSize) { $s.Font.Size = [double]$p.fontSize; $applied += "fontSize" }
+            if ($p.fontName) { $s.Font.NameFarEast = [string]$p.fontName; $s.Font.NameAscii = [string]$p.fontName; $applied += "fontName" }
+            if ($null -ne $p.bold) { $s.Font.Bold = [bool]$p.bold; $applied += "bold" }
+            if ($null -ne $p.italic) { $s.Font.Italic = [bool]$p.italic; $applied += "italic" }
+            if ($null -ne $p.color) {
+                $bgr = [int]$p.color
+                $s.Font.Color = ($bgr -band 0xFF) * 65536 + ($bgr -shr 8 -band 0xFF) * 256 + ($bgr -shr 16 -band 0xFF)
+                $applied += "color"
+            }
+            if ($null -ne $p.spaceBefore) { $s.ParagraphFormat.SpaceBefore = [double]$p.spaceBefore; $applied += "spaceBefore" }
+            if ($null -ne $p.spaceAfter) { $s.ParagraphFormat.SpaceAfter = [double]$p.spaceAfter; $applied += "spaceAfter" }
+            if ($null -ne $p.lineSpacing) { $s.ParagraphFormat.LineSpacingRule = 5; $s.ParagraphFormat.LineSpacing = [double]$p.lineSpacing; $applied += "lineSpacing" }
+            if ($null -ne $p.alignment) {
+                $map = @{ left = 0; center = 1; right = 2; justify = 3 }
+                $k = [string]$p.alignment
+                if ($map.ContainsKey($k)) { $s.ParagraphFormat.Alignment = $map[$k]; $applied += "alignment" }
+            }
+            if ($null -ne $p.newName) {
+                try { $s.NameLocal = [string]$p.newName; $applied += "newName" } catch {
+                    $applied += "newName(内置样式不可改名，已跳过)"
+                }
+            }
+            if ($applied.Count -eq 0) {
+                Output-Json @{ success = $false; error = "没有任何可改的属性（fontSize/fontName/bold/italic/color/spaceBefore/spaceAfter/lineSpacing/alignment/newName）" }; return
+            }
+            Output-Json @{ success = $true; data = @{ name = [string]$p.name; applied = $applied } }
+        } catch {
+            Output-Json @{ success = $false; error = "修改样式失败: $(Get-CallError $_)" }
+        }
+    }
+
+    "deleteStyle" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "缺少 name（样式名）" }; return }
+        try {
+            $s = $doc.Styles.Item([string]$p.name)
+            if ($null -eq $s) { Output-Json @{ success = $false; error = "样式不存在: $($p.name)" }; return }
+            if ($s.BuiltIn) {
+                Output-Json @{ success = $false; error = "'$($p.name)' 是内置样式，不能删除（可以 modifyStyle 改它的属性）" }; return
+            }
+            $s.Delete()
+            Output-Json @{ success = $true; data = @{ deleted = [string]$p.name } }
+        } catch {
+            Output-Json @{ success = $false; error = "删除样式失败（样式正被段落使用时可能失败）: $(Get-CallError $_)" }
+        }
+    }
+
+    # ==================== P1：交叉引用 ====================
+    # 在【当前光标位置】插入对某个标题的引用。
+    # refType: heading | bookmark | numberedItem | footnote
+    "insertCrossReference" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            # wdRefTypeHeading=1 wdRefTypeBookmark=2 wdRefTypeNumberedItem=3 wdRefTypeFootnote=4
+            $rtMap = @{ heading = 1; bookmark = 2; numberedItem = 3; footnote = 4 }
+            $k = if ($p.refType) { [string]$p.refType } else { "heading" }
+            if (-not $rtMap.ContainsKey($k)) { Output-Json @{ success = $false; error = "refType 只能是 heading/bookmark/numberedItem/footnote" }; return }
+            $rt = $rtMap[$k]
+            $items = @($doc.GetCrossReferenceItems($rt))
+            if ($items.Count -eq 0) {
+                Output-Json @{ success = $false; error = "文档里没有可引用的$($k)（GetCrossReferenceItems 返回空）。heading 需要先有标题样式段落" }; return
+            }
+            $idx = (Get-IntParam $p "itemIndex" 1)
+            if ($idx -lt 1 -or $idx -gt $items.Count) {
+                Output-Json @{ success = $false; error = "itemIndex 越界：文档里共 $($items.Count) 个可引用项，收到 $idx" }; return
+            }
+            $target = [string]$items[$idx - 1]
+            $rng = $word.Selection.Range
+            $rng.Collapse(0)   # wdCollapseEnd
+            # insertAsHyperlink / includePosition / separateNumbers / separatorString
+            $null = $doc.Fields.Add($rng, -1, "REF $target `h", $true)
+            Output-Json @{ success = $true; data = @{ refType = $k; itemIndex = $idx; target = $target; total = $items.Count } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入交叉引用失败: $(Get-CallError $_)" }
+        }
+    }
+
+    "listCrossReferenceTargets" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $rtMap = @{ heading = 1; bookmark = 2; numberedItem = 3; footnote = 4 }
+            $out = @{}
+            foreach ($kv in $rtMap.GetEnumerator()) {
+                try { $out[$kv.Key] = @($doc.GetCrossReferenceItems($kv.Value)) } catch { $out[$kv.Key] = @() }
+            }
+            Output-Json @{ success = $true; data = @{ targets = $out } }
+        } catch {
+            Output-Json @{ success = $false; error = "列出可引用项失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # ==================== P1：索引 ====================
+    # MarkEntry 在探测里报了 E_FAIL（当时是在【新建的空文档】上试的），
+    # 所以这里实现时多给了两个参数并保留详细报错，便于真机再判一次。
+    "markIndexEntry" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $rng = if ($null -ne $p.start -and $null -ne $p.end) { $doc.Range([int]$p.start, [int]$p.end) } else { $word.Selection.Range }
+            if ($rng -eq $null -or [string]::IsNullOrWhiteSpace([string]$rng.Text)) {
+                Output-Json @{ success = $false; error = "选区为空：请先选中要编入索引的文字，或传 start/end" }; return
+            }
+            $entry = if ($p.entry) { [string]$p.entry } else { ([string]$rng.Text).Trim() }
+            $r = $doc.Indexes.MarkEntry($rng, [string]$entry)
+            if ($null -eq $r) {
+                Output-Json @{ success = $false; error = "Indexes.MarkEntry 返回 null（本机 WPS 12.1 探测时报 E_FAIL，可能不支持该接口）" }; return
+            }
+            Output-Json @{ success = $true; data = @{ entry = $entry } }
+        } catch {
+            Output-Json @{ success = $false; error = "标记索引项失败: $(Get-CallError $_)" }
+        }
+    }
+
+    "insertIndex" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $marked = 0
+            try { $marked = [int]$doc.Indexes.MarkEntries.Count } catch {}
+            $rng = $word.Selection.Range
+            $rng.Collapse(0)
+            $ix = $doc.Indexes.Add($rng)
+            if ($null -eq $ix) { Output-Json @{ success = $false; error = "Indexes.Add 返回 null" }; return }
+            $cols = 1; $heading = $null
+            if ($null -ne $p.columns) { try { $ix.NumberOfColumns = [int]$p.columns; $cols = [int]$p.columns } catch {} }
+            if ($p.heading) { try { $ix.HeadingSeparator = [string]$p.heading; $heading = [string]$p.heading } catch {} }
+            Output-Json @{ success = $true; data = @{ markedEntries = $marked; columns = $cols; heading = $heading } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入索引失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # ==================== P1：页码域 / 奇偶页 / 首页不同 ====================
+    # sectionIndex 默认 1（第一个节）
+    "addPageNumber" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $sec = $doc.Sections.Item((Get-IntParam $p "sectionIndex" 1))
+            # wdHeaderFooterPrimary=1 FirstPage=2 EvenPages=3
+            $hfMap = @{ primary = 1; first = 2; even = 3 }
+            $k = if ($p.which) { [string]$p.which } else { "primary" }
+            if (-not $hfMap.ContainsKey($k)) { Output-Json @{ success = $false; error = "which 只能是 primary/first/even" }; return }
+            $hf = $sec.Headers.Item($hfMap[$k])
+            # wdAlignPageNumberRight=2
+            $align = if ($p.alignment -eq "center") { 1 } elseif ($p.alignment -eq "left") { 0 } else { 2 }
+            $n0 = [int]$hf.PageNumbers.Count
+            $null = $hf.PageNumbers.Add($align, $true)
+            if ($hf.PageNumbers.Count -le $n0) {
+                Output-Json @{ success = $false; error = "PageNumbers.Add 调用了但页码数没增加（$n0→$($hf.PageNumbers.Count)）" }; return
+            }
+            Output-Json @{ success = $true; data = @{ section = $sec.Index; which = $k; alignment = $p.alignment; count = [int]$hf.PageNumbers.Count } }
+        } catch {
+            Output-Json @{ success = $false; error = "添加页码失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # 奇偶页不同 / 首页不同 —— PageSetup 级的开关
+    "setHeaderFooterLayout" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = Resolve-Doc $word $p
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $applied = @()
+            if ($null -ne $p.differentFirstPage) {
+                $doc.PageSetup.DifferentFirstPageHeaderFooter = [bool]$p.differentFirstPage
+                $applied += "differentFirstPage"
+            }
+            if ($null -ne $p.oddAndEvenPages) {
+                $doc.PageSetup.OddAndEvenPagesHeaderFooter = [bool]$p.oddAndEvenPages
+                $applied += "oddAndEvenPages"
+            }
+            if ($applied.Count -eq 0) {
+                Output-Json @{ success = $false; error = "至少要传 differentFirstPage 或 oddAndEvenPages 之一" }; return
+            }
+            Output-Json @{ success = $true; data = @{
+                applied = $applied
+                differentFirstPage = [bool]$doc.PageSetup.DifferentFirstPageHeaderFooter
+                oddAndEvenPages = [bool]$doc.PageSetup.OddAndEvenPagesHeaderFooter
+            } }
+        } catch {
+            Output-Json @{ success = $false; error = "设置页眉页脚布局失败: $(Get-CallError $_)" }
+        }
     }
 
     default {
