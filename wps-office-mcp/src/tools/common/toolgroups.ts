@@ -49,10 +49,12 @@ function text(result: unknown): ToolCallResult {
 
 export const listToolGroupsDefinition: ToolDefinition = {
   name: 'wps_list_tool_groups',
-  description: `列出所有工具组及当前是否已加载。
+  description: `列出所有工具组及当前是否已在列。
 
-工具组是为了省上下文：默认只列出 core / common / word / excel，ppt（115 个）默认不列出。
-组没加载时里面的工具仍可调用，只是不出现在工具列表里。
+默认是【基础档】：只列 40 个最常用的（工具组管理 4 + 常用三件套读写 36），
+其余 200 多个靠 wps_search_tools 搜、wps_load_tool_group 拉。
+加载某个组 = 该组全部工具开始列出；卸载 = 回到基础档。
+（WPS_TOOL_TIER=full 可关掉基础档过滤，改回"按组切"。）
 
 使用场景：
 - "有哪些工具组"、"PPT 工具怎么没了"
@@ -67,12 +69,16 @@ export const listToolGroupsHandler: ToolHandler = async () => {
   const listed = toolRegistry.listTools().tools.length;
   const total = toolRegistry.listAllTools().length;
   return text({
+    tier: toolRegistry.tier,
     groups,
     summary: {
       loadedGroups: toolRegistry.getLoadedGroups(),
       listedTools: listed,
       totalTools: total,
-      note: '未加载组里的工具不出现在 tools/list，但直接调用仍可用；也可用 wps_search_tools 搜到再加载。',
+      note:
+        toolRegistry.tier === 'essential'
+          ? '基础档：列出的 = 基础 40 ∪ 已完整加载的组。未列出的工具仍可直接调用，也可以用 wps_search_tools 搜到再加载。'
+          : '全量档：列出的 = 所有已加载组的工具。',
     },
   });
 };
@@ -119,9 +125,10 @@ export const loadToolGroupHandler: ToolHandler = async (args) => {
     alreadyLoaded: !r.changed,
     groupToolCount: r.toolCount,
     listedTools: listed,
+    tier: toolRegistry.tier,
     message: r.changed
-      ? `已加载 "${group}" 组（${r.toolCount} 个工具），工具列表已刷新，当前共 ${listed} 个`
-      : `"${group}" 组本来就已经加载（${r.toolCount} 个工具），当前共 ${listed} 个`,
+      ? `已加载 "${group}" 组（${r.toolCount} 个工具），工具列表已刷新，当前共列出 ${listed} 个`
+      : `"${group}" 组本来就已经完整加载（${r.toolCount} 个工具），当前共列出 ${listed} 个`,
   });
 };
 
@@ -159,9 +166,10 @@ export const unloadToolGroupHandler: ToolHandler = async (args) => {
     alreadyUnloaded: !r.changed,
     groupToolCount: r.toolCount,
     listedTools: listed,
+    tier: toolRegistry.tier,
     message: r.changed
-      ? `已卸载 "${group}" 组（${r.toolCount} 个工具不再列出），当前列出 ${listed} 个`
-      : `"${group}" 组本来就没加载，当前列出 ${listed} 个`,
+      ? `已卸载 "${group}" 组（${r.toolCount} 个工具不再列出，基础档里的仍会列出），当前列出 ${listed} 个`
+      : `"${group}" 组本来就没完整加载，当前列出 ${listed} 个`,
   });
 };
 
@@ -203,7 +211,7 @@ export const searchToolsHandler: ToolHandler = async (args) => {
     results: hits,
     ...(unloaded.length
       ? {
-          nextStep: `其中 ${unloaded.length} 个属于未加载组，调用前先 wps_load_tool_group（组名见各自 group 字段）`,
+          nextStep: `其中 ${unloaded.length} 个当前未列出，调用前先 wps_load_tool_group（组名见各自 group 字段）`,
         }
       : {}),
   });

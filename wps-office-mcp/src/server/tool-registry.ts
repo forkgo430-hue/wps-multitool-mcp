@@ -22,6 +22,7 @@ import {
 } from '../types/tools';
 import { createChildLogger } from '../utils/logger';
 import { emitToolGroupsChanged } from './tool-group-events';
+import { ESSENTIAL_TOOL_NAMES, isEssentialTier } from './tool-tiers';
 import {
   ToolNotFoundError,
   ToolExecutionError,
@@ -40,6 +41,10 @@ export class ToolRegistry {
   private readonly categories: Map<ToolCategory, Set<string>>;
   /** 当前已加载的工具组。未加载的组不出现在 tools/list（省上下文） */
   private readonly loadedGroups: Set<string>;
+  /** 基础档模式下，被【完整加载】的组（该组全部工具都列出，而不是只列基础档里的那几个） */
+  private readonly fullyLoadedGroups: Set<string>;
+  /** 是否处于基础档模式（默认是；WPS_TOOL_TIER=full 关闭） */
+  private readonly essentialOnly: boolean;
 
   private constructor() {
     this.tools = new Map();
@@ -58,8 +63,15 @@ export class ToolRegistry {
     this.loadedGroups = new Set(fromEnv.length ? fromEnv : DEFAULT_LOADED_GROUPS);
     // core 永远加载
     this.loadedGroups.add(ALWAYS_LOADED_GROUP);
+    // 基础档默认开启：默认只列 40 个（core 4 + 基础档 36），其余靠 search + load 拉
+    this.essentialOnly = isEssentialTier();
+    this.fullyLoadedGroups = new Set();
 
-    logger.info('ToolRegistry initialized', { loadedGroups: [...this.loadedGroups] });
+    logger.info('ToolRegistry initialized', {
+      loadedGroups: [...this.loadedGroups],
+      tier: this.essentialOnly ? 'essential' : 'full',
+      essentialCount: ESSENTIAL_TOOL_NAMES.size,
+    });
   }
 
   /**
@@ -154,9 +166,24 @@ export class ToolRegistry {
     return Array.from(this.tools.values()).map((t) => t.definition);
   }
 
-  /** 该工具当前是否会被列出（所属组已加载） */
+  /**
+   * 该工具当前是否会被列出。
+   *   基础档模式：core 组 ∪ 基础档白名单 ∪ 已完整加载的组
+   *   全量模式：所属组已加载
+   */
   isListed(def: ToolDefinition): boolean {
-    return this.loadedGroups.has(groupOfTool(def));
+    const group = groupOfTool(def);
+    if (!this.essentialOnly) {
+      return this.loadedGroups.has(group);
+    }
+    if (group === ALWAYS_LOADED_GROUP) return true;
+    if (ESSENTIAL_TOOL_NAMES.has(def.name)) return true;
+    return this.fullyLoadedGroups.has(group);
+  }
+
+  /** 当前档位：'essential'（默认，只列基础档）| 'full' */
+  get tier(): 'essential' | 'full' {
+    return this.essentialOnly ? 'essential' : 'full';
   }
 
   /** 按分类获取Tools */
@@ -173,18 +200,32 @@ export class ToolRegistry {
 
   // ==================== 工具组 ====================
 
-  /** 各组概况：loaded=是否已加载，total=工具数，listed=已加载组里实际会列出的数量 */
-  getGroups(): Array<{ group: string; loaded: boolean; total: number }> {
+  /**
+   * 各组概况：
+   *   total       组里一共多少工具
+   *   listed      其中当前会出现在 tools/list 里的数量
+   *   loaded      该组是否已加载
+   *   fullyLoaded 基础档模式下，是否被"完整加载"（整组列出）
+   */
+  getGroups(): Array<{ group: string; loaded: boolean; fullyLoaded: boolean; total: number; listed: number }> {
     const counts = new Map<string, number>();
+    const listedCounts = new Map<string, number>();
     for (const t of this.tools.values()) {
       const g = groupOfTool(t.definition);
       counts.set(g, (counts.get(g) ?? 0) + 1);
+      if (this.isListed(t.definition)) listedCounts.set(g, (listedCounts.get(g) ?? 0) + 1);
     }
     // core 组一定存在（哪怕暂时没有工具）
     if (!counts.has(ALWAYS_LOADED_GROUP)) counts.set(ALWAYS_LOADED_GROUP, 0);
 
     return Array.from(counts.entries())
-      .map(([group, total]) => ({ group, loaded: this.loadedGroups.has(group), total }))
+      .map(([group, total]) => ({
+        group,
+        loaded: this.loadedGroups.has(group),
+        fullyLoaded: this.fullyLoadedGroups.has(group),
+        total,
+        listed: listedCounts.get(group) ?? 0,
+      }))
       .sort((a, b) => a.group.localeCompare(b.group));
   }
 
@@ -198,11 +239,14 @@ export class ToolRegistry {
     if (!exists) {
       return { ok: false, changed: false, toolCount: 0, error: `没有名为 "${name}" 的工具组` };
     }
-    const changed = !this.loadedGroups.has(name);
+    const changed = this.essentialOnly
+      ? !this.fullyLoadedGroups.has(name)
+      : !this.loadedGroups.has(name);
     this.loadedGroups.add(name);
+    if (this.essentialOnly) this.fullyLoadedGroups.add(name);
     const toolCount = this.getGroups().find((g) => g.group === name)?.total ?? 0;
     if (changed) {
-      logger.info(`Tool group loaded: ${name}`, { toolCount });
+      logger.info(`Tool group loaded: ${name}`, { toolCount, tier: this.tier });
       emitToolGroupsChanged();
     }
     return { ok: true, changed, toolCount };
@@ -222,11 +266,14 @@ export class ToolRegistry {
     if (!exists) {
       return { ok: false, changed: false, toolCount: 0, error: `没有名为 "${name}" 的工具组` };
     }
-    const changed = this.loadedGroups.has(name);
+    const changed = this.essentialOnly
+      ? this.fullyLoadedGroups.has(name)
+      : this.loadedGroups.has(name);
     this.loadedGroups.delete(name);
+    this.fullyLoadedGroups.delete(name);
     const toolCount = this.getGroups().find((g) => g.group === name)?.total ?? 0;
     if (changed) {
-      logger.info(`Tool group unloaded: ${name}`, { toolCount });
+      logger.info(`Tool group unloaded: ${name}`, { toolCount, tier: this.tier });
       emitToolGroupsChanged();
     }
     return { ok: true, changed, toolCount };

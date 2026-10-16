@@ -14,6 +14,7 @@ import { convertTools } from './convert';
 import { generalTools } from './general';
 import { statusTools } from './status';
 import { toolGroupTools } from './toolgroups';
+import { intentTools } from './intent';
 
 /**
  * 所有通用的Tools
@@ -22,24 +23,28 @@ import { toolGroupTools } from './toolgroups';
  * - 通用Tools: save, save_as, ping, wire_check, get_app_info, get_selected_text, set_selected_text
  * - 状态Tools: status（桥 + 三件套运行状态，只读、无副作用）
  * - 工具组管理（core 组，永远列出）: list_tool_groups, load_tool_group, unload_tool_group, search_tools
- *   —— 工具总数已 260+，默认只列出 core/common/word/excel，ppt（115 个）用到再 load
+ * - 意图识别（core 组）: route_intent —— 一句话判断该开哪个组
  *
- * 后续可继续添加更多通用功能，如：
- * - 文档比较
- * - 批量处理
- * - 云端同步
+ * 默认只列 40 个基础工具（WPS_TOOL_TIER=full 可关闭），其余靠 search + load 按需拉
  */
 export const commonTools: RegisteredTool[] = [
   ...convertTools,
   ...generalTools,
   ...statusTools,
   ...toolGroupTools,
+  ...intentTools,
 ];
 
 // 分别导出，方便按需使用
 export { convertTools } from './convert';
 export { generalTools } from './general';
 export { statusTools, statusDefinition, statusHandler } from './status';
+export {
+  intentTools,
+  routeIntentDefinition,
+  routeIntentHandler,
+  classifyIntent,
+} from './intent';
 export {
   toolGroupTools,
   onToolGroupsChanged,
