@@ -201,6 +201,10 @@ export const addCaptionDefinition: ToolDefinition = {
   name: 'wps_word_add_caption',
   description: `在当前位置插入题注（自动编号，如"图 1""表 2"）。
 
+实现说明：优先用 WPS 原生题注接口（生成活编号域，图表目录能自动收集）；
+实测部分 WPS 版本（如本机 12.1）原生接口不可用，此时自动退化为【手工题注】——
+按已有同标签题注数自增序号插入纯文本，序号不是域，图表目录收集不到，返回值里会明确标注。
+
 使用场景：
 - "给这张图加题注：系统架构图"
 - "表格下面加个题注"
@@ -226,7 +230,14 @@ export const addCaptionDefinition: ToolDefinition = {
 
 export const addCaptionHandler: ToolHandler = async (args) => {
   try {
-    const r = await wpsClient.executeMethod<{ label: string; text: string; caption: string }>(
+    const r = await wpsClient.executeMethod<{
+      label: string;
+      text: string;
+      mode?: string;
+      caption?: string;
+      note?: string;
+      nativeError?: string;
+    }>(
       'addCaption',
       {
         text: String(args.text ?? ''),
@@ -237,7 +248,14 @@ export const addCaptionHandler: ToolHandler = async (args) => {
       WpsAppType.WRITER
     );
     if (!r.success) return toResult(false, `插入题注失败：${r.error}`, r.error);
-    return toResult(true, `已插入题注：${r.data?.caption ?? r.data?.text}`);
+    const d = r.data!;
+    const shown = d.caption ?? d.text ?? '';
+    return toResult(
+      true,
+      d.mode === 'manual'
+        ? `已插入题注（手工模式）：${shown}\n注意：${d.note ?? '原生题注接口不可用，已退化为文本'}`
+        : `已插入题注：${shown}`
+    );
   } catch (e) {
     const m = errText(null, e);
     return toResult(false, `插入题注异常：${m}`, m);
@@ -432,7 +450,7 @@ export const setHeadingNumberingDefinition: ToolDefinition = {
 
 export const setHeadingNumberingHandler: ToolHandler = async (args) => {
   try {
-    const r = await wpsClient.executeMethod<{ levels: number; note: string }>(
+    const r = await wpsClient.executeMethod<{ levels: number; mode?: string }>(
       'setHeadingNumbering',
       { levels: args.levels ?? 3 },
       WpsAppType.WRITER
@@ -440,7 +458,8 @@ export const setHeadingNumberingHandler: ToolHandler = async (args) => {
     if (!r.success) return toResult(false, `设置章节编号失败：${r.error}`, r.error);
     return toResult(
       true,
-      `已给 1-${r.data?.levels} 级标题挂上自动编号。${r.data?.note ?? ''}`
+      `已给 1-${r.data?.levels} 级标题挂上自动编号（用大纲编号库现成模板，方式：${r.data?.mode ?? 'unknown'}）。` +
+        '若编号样式不合意，可在 WPS 里用「开始 → 多级列表」手动挑一个。'
     );
   } catch (e) {
     const m = errText(null, e);

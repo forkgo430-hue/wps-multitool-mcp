@@ -1448,8 +1448,18 @@ switch ($Action) {
         # JPEG 在 Excel COM 中按 JPG 滤镜处理
         $filterName = if ($rawFormat -eq "JPEG") { "JPG" } else { $rawFormat }
         $chartObj = $sheet.ChartObjects($chartName)
+        # 先删掉同名旧文件：否则下面"文件存在"的校验会被上一次的产物骗过
+        if (Test-Path $outputPath) { try { Remove-Item -LiteralPath $outputPath -Force } catch {} }
         $chartObj.Chart.Export($outputPath, $filterName)
-        Output-Json @{ success = $true; data = @{ chartName = $chartName; outputPath = $outputPath; format = $filterName } }
+        # 关键校验：Chart.Export 会【静默写出 0 字节文件且不报错】（office-mcp 的 GOTCHAS 记过同一个坑）
+        if (-not (Test-Path $outputPath)) {
+            Output-Json @{ success = $false; error = "Chart.Export 未抛错但文件未生成: $outputPath" }; return
+        }
+        $bytes = (Get-Item $outputPath).Length
+        if ($bytes -le 0) {
+            Output-Json @{ success = $false; error = "Chart.Export 生成了 0 字节文件: $outputPath（filter/路径可能不被 WPS 接受）" }; return
+        }
+        Output-Json @{ success = $true; data = @{ chartName = $chartName; outputPath = $outputPath; format = $filterName; bytes = $bytes } }
     }
 
     "exportRangeAsImage" {
@@ -1465,6 +1475,8 @@ switch ($Action) {
         # xlScreen=1 (Appearance), xlBitmap=2 (Format)
         $tempChart = $null
         try {
+            # 先删同名旧文件，避免"文件存在"的校验被上一次产物骗过
+            if (Test-Path $outputPath) { try { Remove-Item -LiteralPath $outputPath -Force } catch {} }
             $range.CopyPicture(1, 2)
             $tempChart = $sheet.ChartObjects().Add(0, 0, $range.Width, $range.Height)
             $tempChart.Activate()
@@ -1472,7 +1484,15 @@ switch ($Action) {
             $tempChart.Chart.Export($outputPath, $filterName)
             $tempChart.Delete()
             $tempChart = $null
-            Output-Json @{ success = $true; data = @{ range = $p.range; outputPath = $outputPath; format = $filterName } }
+            # 关键校验：Chart.Export 会【静默写出 0 字节文件且不报错】，不查就等于假成功
+            if (-not (Test-Path $outputPath)) {
+                Output-Json @{ success = $false; error = "Chart.Export 未抛错但文件未生成: $outputPath" }; return
+            }
+            $bytes = (Get-Item $outputPath).Length
+            if ($bytes -le 0) {
+                Output-Json @{ success = $false; error = "Chart.Export 生成了 0 字节文件: $outputPath（filter/路径可能不被 WPS 接受）" }; return
+            }
+            Output-Json @{ success = $true; data = @{ range = $p.range; outputPath = $outputPath; format = $filterName; bytes = $bytes } }
         } catch {
             # 异常清理：剪贴板冲突时回滚临时图表
             if ($null -ne $tempChart) { try { $tempChart.Delete() } catch {} }
@@ -5246,17 +5266,51 @@ switch ($Action) {
         # wdCaptionPositionAbove = 0, wdCaptionPositionBelow = 1
         $pos = if ($p.position -eq "above") { 0 } else { 1 }
         $title = [string]$p.text
+        $mode = $null
+        $captionText = $null
+        $nativeErr = $null
+
+        # ① 先试原生题注：它会插入可见编号域，之后"图表目录"能自动收集到
         try {
-            $rng = $word.Selection.Range
-            $rng.Collapse(0)   # wdCollapseEnd
-            $cap = $rng.InsertCaption($label, $title, $pos, $false)
-            if ($p.newParagraph) {
-                try { $word.Selection.TypeParagraph() } catch {}
-            }
-            Output-Json @{ success = $true; data = @{ label = $label; text = $title; caption = [string]$cap.Text } }
+            $sel = $word.Selection
+            $sel.Collapse(0)     # wdCollapseEnd
+            $sel.InsertCaption($label, $title, $pos, $false) | Out-Null
+            $mode = "field"
         } catch {
-            Output-Json @{ success = $false; error = "插入题注失败: $($_.Exception.Message)" }
+            $nativeErr = $_.Exception.Message
         }
+
+        # ② 原生不支持就手工兜底：纯文本题注 + 自增序号。
+        #    实测本机 WPS 12.1 的 Range/Selection.InsertCaption 都会抛"值不在预期的范围内"
+        #    （CaptionLabels 集合也不可用），所以必须有这条兜底，否则这个功能直接废掉。
+        #    代价：序号是写死的文本，不是活编号域 —— 图表目录收集不到，已在返回值里如实标注。
+        if ($null -eq $mode) {
+            try {
+                $n = 0
+                foreach ($para in $doc.Paragraphs) {
+                    $t = [string]$para.Range.Text
+                    if ($t -match ("^\s*" + [regex]::Escape($label) + "\s+\d+")) { $n++ }
+                }
+                $n = $n + 1
+                $captionText = "$label $n $title"
+                $rng = $word.Selection.Range
+                $rng.Collapse(0)
+                $rng.InsertAfter($captionText + "`r")
+                $mode = "manual"
+            } catch {
+                Output-Json @{ success = $false; error = "插入题注失败：原生接口报「$nativeErr」；手工兜底也失败：$($_.Exception.Message)" }
+                return
+            }
+        }
+
+        Output-Json @{ success = $true; data = @{
+            label = $label
+            text = $title
+            mode = $mode
+            caption = $captionText
+            note = if ($mode -eq "manual") { "原生题注接口在本机 WPS 不可用，已按标签自增序号手工插入；序号是文本不是域，图表目录无法自动收集" } else { $null }
+            nativeError = $nativeErr
+        } }
     }
 
     # 脚注：在当前选区（或文末）插入一条脚注
@@ -5342,21 +5396,17 @@ switch ($Action) {
         if ($maxLevel -lt 1) { $maxLevel = 1 }
         if ($maxLevel -gt 9) { $maxLevel = 9 }
         try {
-            $lt = $doc.ListTemplates.Add($true, $true)
+            # 实测：`ListTemplates.Add(...)` 在本机 WPS 12.1 返回 null（"不能对 Null 值表达式调用方法"），
+            # 所以不用"新建列表模板"，改成直接借用【大纲编号库】里现成的模板来挂 Heading 样式 ——
+            # 这是 Word 里的经典做法，兼容性明显更好。
+            # wdOutlineNumberGallery = 2
+            $tpl = $word.ListGalleries.Item(2).ListTemplates.Item(1)
             for ($i = 1; $i -le $maxLevel; $i++) {
-                $lvl = $lt.Levels.Item($i)
-                $fmt = ""
-                for ($j = 1; $j -le $i; $j++) { $fmt += "%$j." }
-                $lvl.NumberFormat = $fmt
-                $lvl.NumberStyle = 0            # wdListNumberStyleArabic
-                $lvl.TrailingCharacter = 0      # wdTrailingTab
-                $lvl.NumberPosition = [double]($i - 1) * 21
-                $lvl.TextPosition = [double]$i * 21
-                $doc.Styles.Item(-1 - $i).LinkToListTemplate($lt, $i)
+                $doc.Styles.Item(-1 - $i).LinkToListTemplate($tpl, $i)
             }
-            Output-Json @{ success = $true; data = @{ levels = $maxLevel; note = "近似实现，WPS 版本差异可能导致效果不同" } }
+            Output-Json @{ success = $true; data = @{ levels = $maxLevel; mode = "outline-gallery" } }
         } catch {
-            Output-Json @{ success = $false; error = "设置章节编号失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "设置章节编号失败（本机 WPS 可能不支持该接口；可在 WPS 里用「开始 → 多级列表」手动设置）: $($_.Exception.Message)" }
         }
     }
 
