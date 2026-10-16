@@ -12,7 +12,7 @@ import {
   ToolCategory,
   RegisteredTool,
 } from '../../types/tools';
-import { wpsClient } from '../../client/wps-client';
+import { wpsClient, setExcelTarget } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
 
 /**
@@ -132,7 +132,10 @@ export const switchWorkbookHandler: ToolHandler = async (
     if (!response.success) {
       return { id: uuidv4(), success: false, content: [{ type: 'text', text: `切换工作簿失败: ${response.error}` }], error: response.error };
     }
-    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `已切换到工作簿: ${name}` }] };
+    // 锁定目标：之后所有 excel 调用都会自动带上 workbookName，
+    // 避免 ActiveWorkbook 在多工作簿场景下漂移/返回空壳。
+    setExcelTarget(name);
+    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `已切换到工作簿: ${name}（后续 excel 操作将锁定此工作簿）` }] };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: `切换工作簿出错: ${errMsg}` }], error: errMsg };

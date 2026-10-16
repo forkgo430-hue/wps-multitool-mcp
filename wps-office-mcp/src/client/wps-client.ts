@@ -41,15 +41,41 @@ const PS_SCRIPT_PATH = path.join(__dirname, '../../scripts/wps-com.ps1');
 // PowerShell 默认超时（毫秒）
 const PS_TIMEOUT = 30000;
 
-// ==================== PPT 目标文稿锁定（避免多文稿打开时 ActivePresentation 漂移）====================
-// 通过 wps_ppt_set_active_target 设置后，所有 PRESENTATION 类调用（executeMethod 带 WpsAppType.PRESENTATION）
-// 自动注入 presentationName，由 wps-com.ps1 的 Get-TargetPres 精确定位目标文稿；单次调用显式传 presentationName 可覆盖。
+// ==================== 目标文稿锁定（避免多文档打开时 Active* 漂移）====================
+// 通过各 app 的 set*Target 设置后，所有该 app 的调用自动注入目标名，
+// 由 wps-com.ps1 的 Resolve-Doc / Resolve-Book / Get-TargetPres 精确定位；
+// 单次调用显式传 documentName / workbookName / presentationName 可覆盖。
+//
+// 为什么三个都要有：ActiveDocument 是【弱引用】，实测会在 Documents.Count > 0 时
+// 返回一个取不到内容的空壳（见 wps_common_repair 的诊断）。锁定目标名是唯一
+// 不依赖 UI 焦点、也不受空壳影响的定位方式。
+//
+// 用法：
+//   wps_word_switch_document / wps_excel_switch_workbook 已经在做这件事（它们会调 set*Target）
+//   这里只是让"锁定"这件事对所有工具生效，而不只是切换类工具。
 let pptTargetName: string | undefined;
+let wordTargetName: string | undefined;
+let excelTargetName: string | undefined;
+
 export function setPptTarget(name?: string): void {
   pptTargetName = name && name.trim() ? name.trim() : undefined;
 }
 export function getPptTarget(): string | undefined {
   return pptTargetName;
+}
+
+export function setWordTarget(name?: string): void {
+  wordTargetName = name && name.trim() ? name.trim() : undefined;
+}
+export function getWordTarget(): string | undefined {
+  return wordTargetName;
+}
+
+export function setExcelTarget(name?: string): void {
+  excelTargetName = name && name.trim() ? name.trim() : undefined;
+}
+export function getExcelTarget(): string | undefined {
+  return excelTargetName;
 }
 
 /**
@@ -334,9 +360,17 @@ export class WpsClient {
     appType?: WpsAppType
   ): Promise<WpsApiResponse<T>> {
     let finalParams: Record<string, unknown> = params || {};
-    // 锁定目标文稿后，为演示类调用自动注入 presentationName（已显式传入则不覆盖）
+    // 锁定目标文稿后自动注入目标名（已显式传入则不覆盖）。
+    // 三个 app 各有自己的参数名：presentationName / documentName / workbookName ——
+    // 名字与 wps-com.ps1 里 Resolve-Doc / Resolve-Book / Get-TargetPres 的读取一致。
     if (appType === WpsAppType.PRESENTATION && pptTargetName && finalParams.presentationName === undefined) {
       finalParams = { ...finalParams, presentationName: pptTargetName };
+    }
+    if (appType === WpsAppType.WRITER && wordTargetName && finalParams.documentName === undefined) {
+      finalParams = { ...finalParams, documentName: wordTargetName };
+    }
+    if (appType === WpsAppType.SPREADSHEET && excelTargetName && finalParams.workbookName === undefined) {
+      finalParams = { ...finalParams, workbookName: excelTargetName };
     }
     return this.invokeAction<T>(method, finalParams, resolveAppKey(method, appType));
   }

@@ -15,6 +15,7 @@ import { generalTools } from './general';
 import { statusTools } from './status';
 import { toolGroupTools } from './toolgroups';
 import { intentTools } from './intent';
+import { repairTools } from './repair';
 
 /**
  * 所有通用的Tools
@@ -22,6 +23,7 @@ import { intentTools } from './intent';
  * - 转换Tools: convert_to_pdf, convert_format
  * - 通用Tools: save, save_as, ping, wire_check, get_app_info, get_selected_text, set_selected_text
  * - 状态Tools: status（桥 + 三件套运行状态，只读、无副作用）
+ * - 修复Tools: repair（诊断文档健康度 / 挡路对话框 / 清理无名残留文档）
  * - 工具组管理（core 组，永远列出）: list_tool_groups, load_tool_group, unload_tool_group, search_tools
  * - 意图识别（core 组）: route_intent —— 一句话判断该开哪个组
  *
@@ -31,6 +33,7 @@ export const commonTools: RegisteredTool[] = [
   ...convertTools,
   ...generalTools,
   ...statusTools,
+  ...repairTools,
   ...toolGroupTools,
   ...intentTools,
 ];
@@ -39,6 +42,7 @@ export const commonTools: RegisteredTool[] = [
 export { convertTools } from './convert';
 export { generalTools } from './general';
 export { statusTools, statusDefinition, statusHandler } from './status';
+export { repairTools, repairDefinition, repairHandler } from './repair';
 export {
   intentTools,
   routeIntentDefinition,

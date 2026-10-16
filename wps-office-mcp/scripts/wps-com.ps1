@@ -135,6 +135,250 @@ function Get-TargetPres($ppt, $p) {
     return $ppt.ActivePresentation
 }
 
+# ==================== 文档/工作簿定位（A：不再依赖 ActiveDocument）====================
+# 为什么要换掉 ActiveDocument
+# ---------------------------
+# ActiveDocument 是【弱引用】：它在这些情况下会返回一个"非空但空壳"的对象 ——
+#   .Name 为空、.Content/.Styles/.PageSetup 全为 null、.Paragraphs.Count = 0
+# 而 Documents.Count 明明 > 0。实测踩过：Documents.Count=2 但 ActiveDocument 取不到内容，
+# 后续调用要么诡异地失败，要么直接 RPC_E_CALL_REJECTED。
+# 根因是"活动文档"这个概念本身依赖 UI 焦点，而 WPS 的焦点状态在自动化场景下不可靠。
+#
+# 现在的策略（三层，逐层兜底）
+#   1) 显式指定 documentName / workbookName —— 最可靠，直接按名字/路径取
+#   2) ActiveDocument/ActiveWorkbook，但必须【通过健康检查】
+#   3) 都不行就遍历集合，找第一个健康的
+# 找不到就返回 $null，由各动作原有的判空分支报 "No active document"（不新造错误文案）。
+
+# 文档健康检查：Name 非空 且 Content 可取到。
+# 为什么要探 Content：空壳对象的 Name 可能是空串，也可能非空但内容取不到（实测见过）。
+function Test-DocHealthy($doc) {
+    if ($null -eq $doc) { return $false }
+    try {
+        $n = [string]$doc.Name
+        if ([string]::IsNullOrWhiteSpace($n)) { return $false }
+    } catch { return $false }
+    try { $null = $doc.Content } catch { return $false }
+    return $true
+}
+
+# 工作簿健康检查：Name 非空 且 Worksheets（或 Sheets）能取到
+function Test-BookHealthy($book) {
+    if ($null -eq $book) { return $false }
+    try {
+        $n = [string]$book.Name
+        if ([string]::IsNullOrWhiteSpace($n)) { return $false }
+    } catch { return $false }
+    try { $null = $book.Worksheets } catch { return $false }
+    return $true
+}
+
+# 按名字在集合里找文档：先按 FullName 全等，再按 Name 全等，最后按"文件名（无扩展名）"全等。
+function Find-DocByName($app, [string]$want) {
+    if ($null -eq $app -or [string]::IsNullOrWhiteSpace($want)) { return $null }
+    $items = @()
+    try { $items = @($app.Documents) } catch { return $null }
+    $leaf = $want
+    if ($leaf.Contains('\')) { $leaf = $leaf.Substring($leaf.LastIndexOf('\') + 1) }
+    $stem = $leaf
+    if ($stem.Contains('.')) { $stem = $stem.Substring(0, $stem.LastIndexOf('.')) }
+
+    $byLeaf = $null; $byStem = $null
+    foreach ($d in $items) {
+        if ($null -eq $d) { continue }
+        $full = ''; $nm = ''
+        try { $full = [string]$d.FullName } catch {}
+        try { $nm = [string]$d.Name } catch {}
+        if ($full -and $full.Equals($want, [StringComparison]::OrdinalIgnoreCase)) { return $d }
+        if ($nm -and $nm.Equals($leaf, [StringComparison]::OrdinalIgnoreCase)) { $byLeaf = $d }
+        if ($nm -and $stem -and $nm.Equals($stem + [IO.Path]::GetExtension($nm), [StringComparison]::OrdinalIgnoreCase)) { $byStem = $d }
+    }
+    if ($byLeaf) { return $byLeaf }
+    return $byStem
+}
+
+function Find-BookByName($app, [string]$want) {
+    if ($null -eq $app -or [string]::IsNullOrWhiteSpace($want)) { return $null }
+    $items = @()
+    try { $items = @($app.Workbooks) } catch { return $null }
+    $leaf = $want
+    if ($leaf.Contains('\')) { $leaf = $leaf.Substring($leaf.LastIndexOf('\') + 1) }
+    foreach ($b in $items) {
+        if ($null -eq $b) { continue }
+        $full = ''; $nm = ''
+        try { $full = [string]$b.FullName } catch {}
+        try { $nm = [string]$b.Name } catch {}
+        if ($full -and $full.Equals($want, [StringComparison]::OrdinalIgnoreCase)) { return $b }
+        if ($nm -and $nm.Equals($leaf, [StringComparison]::OrdinalIgnoreCase)) { return $b }
+    }
+    return $null
+}
+
+# 目标文稿（Word）。所有文档类动作都应走它，而不是直接读 $word.ActiveDocument。
+#
+# 注意：本函数在同一动作里可能被调用两次（先判空、再使用），每次都会重新解析。
+# 这是有意的 —— 引入跨动作的缓存会带来"用户刚关掉文档，我们还拿着旧对象"的新问题，
+# 而重复解析只是几次 COM 属性访问，代价可忽略。
+function Resolve-Doc($app, $p) {
+    if ($null -eq $app) { return $null }
+    if ($p -and $p.documentName) {
+        $d = Find-DocByName $app ([string]$p.documentName)
+        if ($d) { return $d }
+        # 显式指定却找不到：明确返回 $null，不要静默回退到"活动文档" ——
+        # 否则用户以为在改 A，结果改的是 B。
+        return $null
+    }
+    try { $act = $app.ActiveDocument } catch { $act = $null }
+    if (Test-DocHealthy $act) { return $act }
+    # 空壳 → 遍历找一个健康的
+    try {
+        foreach ($d in @($app.Documents)) {
+            if (Test-DocHealthy $d) { return $d }
+        }
+    } catch {}
+    return $null
+}
+
+# 目标工作簿（Excel）
+function Resolve-Book($app, $p) {
+    if ($null -eq $app) { return $null }
+    if ($p -and $p.workbookName) {
+        $b = Find-BookByName $app ([string]$p.workbookName)
+        if ($b) { return $b }
+        return $null
+    }
+    try { $act = $app.ActiveWorkbook } catch { $act = $null }
+    if (Test-BookHealthy $act) { return $act }
+    try {
+        foreach ($b in @($app.Workbooks)) {
+            if (Test-BookHealthy $b) { return $b }
+        }
+    } catch {}
+    return $null
+}
+
+# ==================== 模态对话框探测（C）====================
+# 为什么需要
+# ----------
+# COM 报 RPC_E_CALL_REJECTED(0x80010001) 的最常见原因不是"忙"，而是
+# WPS 弹了模态对话框（另存为的确认框、字体替换提示、文档恢复提示…）在等用户点。
+# 这时任何 COM 调用都会被拒，而且【干等不会好】—— 用户不点就永远不通。
+# 与其让调用方等到超时（120s）才发现，不如立刻告诉他"有个对话框挡着，请先关掉"。
+#
+# 判据（第一版踩过坑）：我用"可见 + 有标题 + 不占满屏"当对话框特征，
+# 结果把 WPS 的【主窗口】也认成了对话框（类名 OpusApp，标题形如 "xxx.docx - WPS Office"）——
+# 那意味着每次 COM 被拒都会附一句错误指令"请关闭这个窗口"，比不提示更糟。
+#
+# 现在的判据：只认【类名】。标准对话框是 #32770，WPS 自绘的一般带 Dialog 字样。
+# 宁可漏报（少一句提示，无害），不可误报（给出错误指令，有害）。
+if (-not ('WpsModalProbe' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public class WpsModalProbe {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr p);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);
+    delegate bool EnumWindowsProc(IntPtr h, IntPtr p);
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+
+    public static string[] Find(int[] pids) {
+        var set = new HashSet<int>(pids);
+        var res = new List<string>();
+        EnumWindows(delegate(IntPtr h, IntPtr p) {
+            uint wp;
+            GetWindowThreadProcessId(h, out wp);
+            if (!set.Contains((int)wp)) return true;
+            if (!IsWindowVisible(h)) return true;
+
+            var cn = new StringBuilder(256);
+            GetClassNameW(h, cn, 256);
+            var cls = cn.ToString();
+            // 只认对话框类名。主窗口类是 OpusApp / _WwG / bosa_sdm_* 等，一律不算。
+            bool isDialog = string.Equals(cls, "#32770", StringComparison.OrdinalIgnoreCase)
+                         || cls.IndexOf("Dialog", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!isDialog) return true;
+
+            var sb = new StringBuilder(512);
+            GetWindowTextW(h, sb, 512);
+            var title = sb.ToString();
+            if (string.IsNullOrWhiteSpace(title)) title = "(无标题)";
+            res.Add(title + " [" + cls + "]");
+            return true;
+        }, IntPtr.Zero);
+        return res.ToArray();
+    }
+}
+'@ -ErrorAction SilentlyContinue
+}
+
+function Get-WpsModalDialogs {
+    $pids = @()
+    try { $pids = @(Get-Process -Name wps, et, wpp -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id) } catch {}
+    if ($pids.Count -eq 0) { return @() }
+    try { return [WpsModalProbe]::Find([int[]]$pids) } catch { return @() }
+}
+
+# 返回被模态对话框挡住的提示语（没有则返回 $null）
+function Get-ModalBlockHint {
+    $dlgs = @(Get-WpsModalDialogs)
+    if ($dlgs.Count -eq 0) { return $null }
+    $t = (@($dlgs | Select-Object -First 3) -join '；')
+    return "WPS 有对话框挡着（COM 调用被拒 RPC_E_CALL_REJECTED）。请先关掉这些窗口再试：$t"
+}
+
+# 统一的 COM 错误文案（C）：若是对话框挡路，把"该关哪个窗口"一并带出去。
+#
+# 为什么值得单独做：RPC_E_CALL_REJECTED 本身完全无法自解释 —— 看到它只知道
+# "调用被拒"，不知道是被谁拒的。而实测里它的绝大多数来源就是模态对话框。
+# 加一句"请先关闭 X 窗口"，调用方就不用去猜，也不用等 120s 超时。
+# 非对话框类错误原样返回，不加任何噪音。
+function Get-CallError($err) {
+    $m = [string]$err.Exception.Message
+    if (($m -match '0x80010001') -or ($m -match 'RPC_E_CALL_REJECTED') -or ($m -match 'Call was rejected by callee')) {
+        $hint = Get-ModalBlockHint
+        if ($hint) { return "$m —— $hint" }
+    }
+    return $m
+}
+
+# 只读动作的有限重试（C）
+# ----------------------
+# 规则：
+#   - 只对【只读】动作重试（get*/list*/find* 开头，或在白名单里）。写动作一律不重试 ——
+#     请求可能已执行一半，重放会变成执行两次。
+#   - 有限次 + 退避（250/500/1000ms），最多 3 次。
+#   - 每次失败先看有没有模态对话框：有就直接放弃并把提示带上（干等无意义）。
+function Test-ReadOnlyAction([string]$action) {
+    if ([string]::IsNullOrWhiteSpace($action)) { return $false }
+    if ($action -match '^(get|list|find|read|query|count|search|ping|wpsStatus|__probe)') { return $true }
+    return $action -in @('getAppInfo', 'showWps', 'wireCheck')
+}
+
+function Invoke-WithReadOnlyRetry($app, [string]$action, $p) {
+    $max = 3
+    for ($i = 1; $i -le $max; $i++) {
+        try {
+            return Invoke-WpsAction -Action $action -p $p
+        } catch {
+            $m = [string]$_.Exception.Message
+            $isRejected = ($m -match '0x80010001') -or ($m -match 'RPC_E_CALL_REJECTED')
+            if (-not $isRejected) { throw }
+            # 有对话框就别耗着了：用户不点，永远不会通
+            $hint = Get-ModalBlockHint
+            if ($hint) { throw $hint }
+            if ($i -ge $max) { throw }
+            Start-Sleep -Milliseconds (250 * [math]::Pow(2, $i - 1))
+        }
+    }
+    return $null
+}
+
 # 在一个 TextFrame 内查找替换：先精确匹配(保留原换行)；多行 find 未命中时，把 \r\n/\r/\v 与 \n 规范化后再匹配并写回。返回是否发生替换。
 function Replace-FrameText($frame, [string]$findText, [string]$replaceText) {
     try {
@@ -319,6 +563,70 @@ switch ($Action) {
     # ==================== Common ====================
     "ping" {
         Output-Json @{ success = $true; data = @{ message = "pong"; timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() } }
+    }
+    # 【临时诊断】列出挡路的对话框。用来验 C 项：Get-WpsModalDialogs 能不能真找到窗口。
+    "__probeDialogs" {
+        $dlgs = @(Get-WpsModalDialogs)
+        Output-Json @{ success = $true; data = @{ dialogs = $dlgs; count = $dlgs.Count; hint = (Get-ModalBlockHint) } }
+    }
+    # ==================== 诊断与修复（D）====================
+    "wpsRepair" {
+        # 出问题时的"一键诊断+修复"。做两件事：
+        #   1) 诊断：三个应用各自的实例、文档数、每个文档的健康度、挡路的对话框
+        #   2) 修复：关掉【无名文档】（没路径没标题的，通常是脚本遗留的空壳）
+        #      —— 只关无名文档，不动用户自己的文件；已命名的文档一律保留。
+        $report = @{ apps = @{}; dialogs = @(); closed = @() }
+        try { $report.dialogs = @(Get-WpsModalDialogs) } catch {}
+
+        foreach ($a in @(
+            @{ key = "excel"; progId = "Ket.Application";  coll = "Workbooks";     app = $null },
+            @{ key = "word";  progId = "Kwps.Application"; coll = "Documents";     app = $null },
+            @{ key = "ppt";   progId = "Kwpp.Application"; coll = "Presentations"; app = $null }
+        )) {
+            $inst = Get-ActiveWpsApp $a.progId
+            $entry = @{ running = ($null -ne $inst); documents = @() }
+            if ($null -ne $inst) {
+                try { $entry.name = [string]$inst.Name } catch {}
+                try { $entry.path = [string]$inst.Path } catch {}
+                $docs = @()
+                try { $docs = @($inst.($a.coll)) } catch {}
+                $entry.count = $docs.Count
+                foreach ($d in $docs) {
+                    if ($null -eq $d) { continue }
+                    $nm = ''; $full = ''; $healthy = $false
+                    try { $nm = [string]$d.Name } catch {}
+                    try { $full = [string]$d.FullName } catch {}
+                    if ($a.key -eq "word") { $healthy = Test-DocHealthy $d }
+                    else { $healthy = Test-BookHealthy $d }
+                    $entry.documents += @{
+                        name = $nm
+                        saved = (-not [string]::IsNullOrWhiteSpace($full))
+                        healthy = $healthy
+                    }
+                    # 只关"无名"文档：没有标题也没有路径 —— 那是自动化残留的空壳
+                    if ([string]::IsNullOrWhiteSpace($nm) -and [string]::IsNullOrWhiteSpace($full)) {
+                        try { $d.Close(0); $report.closed += "$($a.key):<无名文档>" } catch {
+                            $report.closed += "$($a.key):<无名文档> 关闭失败: $(Get-CallError $_)"
+                        }
+                    }
+                }
+                # 活动文档健康度单独报一份，便于判断"是不是 ActiveDocument 空壳"
+                try {
+                    $act = $null
+                    if ($a.key -eq "word") { $act = $inst.ActiveDocument }
+                    else { $act = $inst.ActiveWorkbook }
+                    $entry.activeHealthy = if ($a.key -eq "word") { Test-DocHealthy $act } else { Test-BookHealthy $act }
+                } catch { $entry.activeHealthy = $false }
+            }
+            $report.apps[$a.key] = $entry
+        }
+
+        $hint = $null
+        if (@($report.dialogs).Count -gt 0) {
+            $hint = "检测到挡路对话框，请先关闭：" + ((@($report.dialogs | Select-Object -First 3)) -join '；')
+        }
+        $report.hint = $hint
+        Output-Json @{ success = $true; data = $report }
     }
 
     # 只读状态探针：报告三件套分别有没有已附着的实例。
@@ -564,14 +872,14 @@ switch ($Action) {
 
     "save" {
         $excel = Get-WpsExcel
-        if ($null -ne $excel -and $null -ne $excel.ActiveWorkbook) {
-            $excel.ActiveWorkbook.Save()
+        if ($null -ne $excel -and $null -ne $(Resolve-Book $excel $p)) {
+            $(Resolve-Book $excel $p).Save()
             Output-Json @{ success = $true; app = "excel" }
             return
         }
         $word = Get-WpsWord
-        if ($null -ne $word -and $null -ne $word.ActiveDocument) {
-            $word.ActiveDocument.Save()
+        if ($null -ne $word -and $null -ne $(Resolve-Doc $word $p)) {
+            $(Resolve-Doc $word $p).Save()
             Output-Json @{ success = $true; app = "word" }
             return
         }
@@ -590,19 +898,19 @@ switch ($Action) {
         $appType = if ($p.appType) { $p.appType } else { Get-AppTypeByExtension $path }
         if ($appType -eq 'excel') {
             $excel = Get-WpsExcel
-            if ($null -eq $excel -or $null -eq $excel.ActiveWorkbook) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+            if ($null -eq $excel -or $null -eq $(Resolve-Book $excel $p)) { Output-Json @{ success = $false; error = "No active workbook" }; return }
             $format = Get-ExcelFileFormat $p.format
-            if ($null -ne $format) { $excel.ActiveWorkbook.SaveAs($path, $format) }
-            else { $excel.ActiveWorkbook.SaveAs($path) }
+            if ($null -ne $format) { $(Resolve-Book $excel $p).SaveAs($path, $format) }
+            else { $(Resolve-Book $excel $p).SaveAs($path) }
             Output-Json @{ success = $true; data = @{ path = $path; appType = "excel" } }
             return
         }
         if ($appType -eq 'word') {
             $word = Get-WpsWord
-            if ($null -eq $word -or $null -eq $word.ActiveDocument) { Output-Json @{ success = $false; error = "No active document" }; return }
+            if ($null -eq $word -or $null -eq $(Resolve-Doc $word $p)) { Output-Json @{ success = $false; error = "No active document" }; return }
             $format = Get-WordSaveFormat $p.format
-            if ($null -ne $format) { $word.ActiveDocument.SaveAs($path, $format) }
-            else { $word.ActiveDocument.SaveAs($path) }
+            if ($null -ne $format) { $(Resolve-Doc $word $p).SaveAs($path, $format) }
+            else { $(Resolve-Doc $word $p).SaveAs($path) }
             Output-Json @{ success = $true; data = @{ path = $path; appType = "word" } }
             return
         }
@@ -662,8 +970,8 @@ switch ($Action) {
 
     "convertToPDF" {
         $excel = Get-WpsExcel
-        if ($null -ne $excel -and $null -ne $excel.ActiveWorkbook) {
-            $wb = $excel.ActiveWorkbook
+        if ($null -ne $excel -and $null -ne $(Resolve-Book $excel $p)) {
+            $wb = $(Resolve-Book $excel $p)
             $sourcePath = $wb.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $wb.ExportAsFixedFormat(0, $outputPath)
@@ -671,8 +979,8 @@ switch ($Action) {
             return
         }
         $word = Get-WpsWord
-        if ($null -ne $word -and $null -ne $word.ActiveDocument) {
-            $doc = $word.ActiveDocument
+        if ($null -ne $word -and $null -ne $(Resolve-Doc $word $p)) {
+            $doc = $(Resolve-Doc $word $p)
             $sourcePath = $doc.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $doc.ExportAsFixedFormat($outputPath, 17)
@@ -695,8 +1003,8 @@ switch ($Action) {
         $targetFormat = $p.targetFormat
         if (-not $targetFormat) { Output-Json @{ success = $false; error = "targetFormat required" }; return }
         $excel = Get-WpsExcel
-        if ($null -ne $excel -and $null -ne $excel.ActiveWorkbook) {
-            $wb = $excel.ActiveWorkbook
+        if ($null -ne $excel -and $null -ne $(Resolve-Book $excel $p)) {
+            $wb = $(Resolve-Book $excel $p)
             $sourcePath = $wb.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, $targetFormat) }
             $format = Get-ExcelFileFormat $targetFormat
@@ -705,8 +1013,8 @@ switch ($Action) {
             return
         }
         $word = Get-WpsWord
-        if ($null -ne $word -and $null -ne $word.ActiveDocument) {
-            $doc = $word.ActiveDocument
+        if ($null -ne $word -and $null -ne $(Resolve-Doc $word $p)) {
+            $doc = $(Resolve-Doc $word $p)
             $sourcePath = $doc.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, $targetFormat) }
             $format = Get-WordSaveFormat $targetFormat
@@ -731,7 +1039,7 @@ switch ($Action) {
     "getActiveWorkbook" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheets = @()
         for ($i = 1; $i -le $wb.Sheets.Count; $i++) { $sheets += $wb.Sheets.Item($i).Name }
@@ -741,7 +1049,7 @@ switch ($Action) {
     "getCellValue" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $cell = $sheet.Cells.Item($p.row, $p.col)
@@ -751,7 +1059,7 @@ switch ($Action) {
     "setCellValue" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $sheet.Cells.Item($p.row, $p.col).Value2 = $p.value
         Output-Json @{ success = $true }
@@ -760,7 +1068,7 @@ switch ($Action) {
     "getRangeData" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
         $data = @()
@@ -775,7 +1083,7 @@ switch ($Action) {
     "setRangeData" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
         for ($r = 0; $r -lt $p.data.Count; $r++) {
@@ -787,7 +1095,7 @@ switch ($Action) {
     "diagnoseFormula" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $cell = $sheet.Range($p.cell)
@@ -822,7 +1130,7 @@ switch ($Action) {
     "cleanData" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = $sheet.Range($p.range)
@@ -874,7 +1182,7 @@ switch ($Action) {
     "createPivotTable" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sourceRange = Get-RangeFromAddress $wb $p.sourceRange
         $destSheet = if ($p.destinationSheet) { $wb.Sheets.Item($p.destinationSheet) } else { $excel.ActiveSheet }
@@ -914,7 +1222,7 @@ switch ($Action) {
     "updatePivotTable" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $table = $null
@@ -995,7 +1303,7 @@ switch ($Action) {
     "setFormula" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
         $range = if ($p.range) { $sheet.Range($p.range) } else { $sheet.Cells.Item($p.row, $p.col) }
         $range.Formula = $p.formula
@@ -1247,7 +1555,7 @@ switch ($Action) {
     "refreshLinks" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $links = $wb.LinkSources(1)
         if ($links) {
@@ -1289,7 +1597,7 @@ switch ($Action) {
     "getExcelContext" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $usedRange = $sheet.UsedRange
@@ -1310,7 +1618,7 @@ switch ($Action) {
     "getContext" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $usedRange = $sheet.UsedRange
@@ -1380,7 +1688,7 @@ switch ($Action) {
     "updateChart" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
+        $sheet = if ($p.sheet) { $(Resolve-Book $excel $p).Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $chartObj = $null
         if ($p.chartName) {
             try { $chartObj = $sheet.ChartObjects($p.chartName) } catch {}
@@ -1439,7 +1747,7 @@ switch ($Action) {
     "exportChartAsImage" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
+        $sheet = if ($p.sheet) { $(Resolve-Book $excel $p).Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $outputPath = if ($p.outputPath) { $p.outputPath } else { $p.path }
         if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; return }
         $chartName = $p.chartName
@@ -1465,7 +1773,7 @@ switch ($Action) {
     "exportRangeAsImage" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
+        $sheet = if ($p.sheet) { $(Resolve-Book $excel $p).Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $outputPath = if ($p.outputPath) { $p.outputPath } else { $p.path }
         if ([string]::IsNullOrEmpty($outputPath)) { Output-Json @{ success = $false; error = "Missing outputPath" }; return }
         if ([string]::IsNullOrEmpty($p.range)) { Output-Json @{ success = $false; error = "Missing range" }; return }
@@ -1496,7 +1804,7 @@ switch ($Action) {
         } catch {
             # 异常清理：剪贴板冲突时回滚临时图表
             if ($null -ne $tempChart) { try { $tempChart.Delete() } catch {} }
-            Output-Json @{ success = $false; error = "导出区域为图片失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "导出区域为图片失败: $(Get-CallError $_)" }
         }
     }
 
@@ -1527,7 +1835,7 @@ switch ($Action) {
     "createSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $wb.Sheets.Add()
         if ($p.name) { $sheet.Name = $p.name }
@@ -1537,7 +1845,7 @@ switch ($Action) {
     "deleteSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $name = $sheet.Name
@@ -1550,7 +1858,7 @@ switch ($Action) {
     "renameSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $oldName = $sheet.Name
@@ -1561,7 +1869,7 @@ switch ($Action) {
     "copySheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         if ($p.before) {
@@ -1577,7 +1885,7 @@ switch ($Action) {
     "getSheetList" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheets = @()
         for ($i = 1; $i -le $wb.Sheets.Count; $i++) {
@@ -1590,7 +1898,7 @@ switch ($Action) {
     "switchSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $wb.Sheets.Item($p.sheet)
         $sheet.Activate()
@@ -1600,7 +1908,7 @@ switch ($Action) {
     "moveSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         if ($p.before) {
@@ -2006,7 +2314,7 @@ switch ($Action) {
     "createNamedRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = $excel.ActiveSheet
         $range = $sheet.Range($p.range)
@@ -2018,7 +2326,7 @@ switch ($Action) {
     "deleteNamedRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $wb.Names.Item($p.name).Delete()
         Output-Json @{ success = $true; data = @{ deletedName = $p.name } }
@@ -2027,7 +2335,7 @@ switch ($Action) {
     "getNamedRanges" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $names = @()
         for ($i = 1; $i -le $wb.Names.Count; $i++) {
@@ -2073,7 +2381,7 @@ switch ($Action) {
     "protectSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
+        $sheet = if ($p.sheet) { $(Resolve-Book $excel $p).Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $password = if ($p.password) { $p.password } else { "" }
         $sheet.Protect($password, $p.drawingObjects, $p.contents, $p.scenarios)
         Output-Json @{ success = $true; data = @{ sheet = $sheet.Name; protected = $true } }
@@ -2082,7 +2390,7 @@ switch ($Action) {
     "unprotectSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = if ($p.sheet) { $excel.ActiveWorkbook.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
+        $sheet = if ($p.sheet) { $(Resolve-Book $excel $p).Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
         $password = if ($p.password) { $p.password } else { "" }
         $sheet.Unprotect($password)
         Output-Json @{ success = $true; data = @{ sheet = $sheet.Name; protected = $false } }
@@ -2091,7 +2399,7 @@ switch ($Action) {
     "protectWorkbook" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $excel.ActiveWorkbook
+        $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $password = if ($p.password) { $p.password } else { "" }
         $structure = if ($null -ne $p.structure) { [bool]$p.structure } else { $true }
@@ -2147,7 +2455,7 @@ switch ($Action) {
         $workbooks = @()
         for ($i = 1; $i -le $excel.Workbooks.Count; $i++) {
             $wb = $excel.Workbooks.Item($i)
-            $workbooks += @{ name = $wb.Name; path = $wb.FullName; sheets = $wb.Sheets.Count; active = ($wb.Name -eq $excel.ActiveWorkbook.Name) }
+            $workbooks += @{ name = $wb.Name; path = $wb.FullName; sheets = $wb.Sheets.Count; active = ($wb.Name -eq $(Resolve-Book $excel $p).Name) }
         }
         Output-Json @{ success = $true; data = @{ workbooks = $workbooks; count = $workbooks.Count } }
     }
@@ -2163,7 +2471,7 @@ switch ($Action) {
     "closeWorkbook" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = if ($p.name) { $excel.Workbooks.Item($p.name) } else { $excel.ActiveWorkbook }
+        $wb = if ($p.name) { $excel.Workbooks.Item($p.name) } else { $(Resolve-Book $excel $p) }
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No workbook" }; return }
         $name = $wb.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
@@ -2183,7 +2491,7 @@ switch ($Action) {
     "getActiveDocument" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         Output-Json @{ success = $true; data = @{
             name = $doc.Name; path = $doc.FullName
@@ -2194,7 +2502,7 @@ switch ($Action) {
     "generateTOC" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $position = if ($p.position) { $p.position } else { "start" }
         $levels = if ($p.levels) { [int]$p.levels } else { 3 }
@@ -2207,7 +2515,7 @@ switch ($Action) {
     "getDocumentText" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $text = $doc.Content.Text
         if ($text.Length -gt 10000) { $text = $text.Substring(0, 10000) + "...(truncated)" }
@@ -2220,7 +2528,7 @@ switch ($Action) {
         $documents = @()
         for ($i = 1; $i -le $word.Documents.Count; $i++) {
             $docItem = $word.Documents.Item($i)
-            $documents += @{ name = $docItem.Name; path = $docItem.FullName; paragraphs = $docItem.Paragraphs.Count; active = ($word.ActiveDocument.Name -eq $docItem.Name) }
+            $documents += @{ name = $docItem.Name; path = $docItem.FullName; paragraphs = $docItem.Paragraphs.Count; active = ($(Resolve-Doc $word $p).Name -eq $docItem.Name) }
         }
         Output-Json @{ success = $true; data = @{ documents = $documents; count = $documents.Count } }
     }
@@ -2244,7 +2552,7 @@ switch ($Action) {
     "closeDocument" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $docItem = if ($p.name) { $word.Documents.Item($p.name) } else { $word.ActiveDocument }
+        $docItem = if ($p.name) { $word.Documents.Item($p.name) } else { $(Resolve-Doc $word $p) }
         if ($null -eq $docItem) { Output-Json @{ success = $false; error = "No document" }; return }
         $name = $docItem.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
@@ -2255,7 +2563,7 @@ switch ($Action) {
     "insertText" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $position = if ($p.position) { $p.position } else { "cursor" }
         switch ($position) {
@@ -2272,7 +2580,7 @@ switch ($Action) {
     "setFont" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $range = if ($p.range -eq "all") { $doc.Content } else { $word.Selection.Range }
         if ($p.fontName) { $range.Font.Name = $p.fontName }
         if ($p.fontSize) { $range.Font.Size = $p.fontSize }
@@ -2291,7 +2599,7 @@ switch ($Action) {
     "findReplace" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $find = $doc.Content.Find
         $find.ClearFormatting()
         $find.Replacement.ClearFormatting()
@@ -2308,7 +2616,7 @@ switch ($Action) {
     "insertTable" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $rows = if ($p.rows) { [int]$p.rows } else { 3 }
         $cols = if ($p.cols) { [int]$p.cols } else { 3 }
         $range = $word.Selection.Range
@@ -2327,7 +2635,7 @@ switch ($Action) {
     "setParagraph" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $range = if ($p.range -eq "all") { $doc.Content } else { $word.Selection.Range }
         $para = $range.ParagraphFormat
@@ -2356,7 +2664,7 @@ switch ($Action) {
     "setPageSetup" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $ps = $doc.PageSetup
         if ($null -ne $p.topMargin) { $ps.TopMargin = [double]$p.topMargin * 28.35 }
@@ -2378,7 +2686,7 @@ switch ($Action) {
     "insertPageBreak" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $breakType = if ($p.type) { $p.type } else { "page" }
         $breakTypeMap = @{ page = 7; column = 8; section = 2; sectionContinuous = 3 }
         $bt = $breakTypeMap[$breakType]
@@ -2390,7 +2698,7 @@ switch ($Action) {
     "insertHeader" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $section = $doc.Sections.Item(1)
         $header = $section.Headers.Item(1)
         $header.Range.Text = if ($p.text) { $p.text } else { "" }
@@ -2404,7 +2712,7 @@ switch ($Action) {
     "insertFooter" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $section = $doc.Sections.Item(1)
         $footer = $section.Footers.Item(1)
         $footer.Range.Text = if ($p.text) { $p.text } else { "" }
@@ -2423,7 +2731,7 @@ switch ($Action) {
     "insertHyperlink" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $range = $word.Selection.Range
         $url = if ($p.url) { $p.url } else { $p.address }
         $text = if ($p.text) { $p.text } elseif ($p.displayText) { $p.displayText } else { $url }
@@ -2439,7 +2747,7 @@ switch ($Action) {
     "insertBookmark" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; return }
         $range = $word.Selection.Range
         $doc.Bookmarks.Add($p.name, $range)
@@ -2449,7 +2757,7 @@ switch ($Action) {
     "getBookmarks" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $bookmarks = @()
         for ($i = 1; $i -le $doc.Bookmarks.Count; $i++) {
             $bm = $doc.Bookmarks.Item($i)
@@ -2461,7 +2769,7 @@ switch ($Action) {
     "getDocumentParagraphs" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $startIdx = if ($null -ne $p.startParagraph) { [int]$p.startParagraph } else { 1 }
         $endIdx = if ($null -ne $p.endParagraph) { [int]$p.endParagraph } else { [Math]::Min($doc.Paragraphs.Count, $startIdx + 49) }
@@ -2482,7 +2790,7 @@ switch ($Action) {
     "findInDocument" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if (-not $p.findText) { Output-Json @{ success = $false; error = "findText required" }; return }
         $matchCase = if ($null -ne $p.matchCase) { [bool]$p.matchCase } else { $false }
@@ -2518,7 +2826,7 @@ switch ($Action) {
     "smartFillField" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if (-not $p.keyword) { Output-Json @{ success = $false; error = "keyword required" }; return }
         if ($null -eq $p.value) { Output-Json @{ success = $false; error = "value required（空字符串将清除该字段内容）" }; return }
@@ -2641,7 +2949,7 @@ switch ($Action) {
     "replaceBookmarkContent" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if (-not $p.name) { Output-Json @{ success = $false; error = "name required" }; return }
         if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; return }
@@ -2655,14 +2963,14 @@ switch ($Action) {
             $doc.Bookmarks.Add($p.name, $newRange) | Out-Null
             Output-Json @{ success = $true; data = @{ name = $p.name; text = $p.text; start = $bmStart; end = $newEnd } }
         } catch {
-            Output-Json @{ success = $false; error = "Bookmark '$($p.name)' not found or failed to replace: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "Bookmark '$($p.name)' not found or failed to replace: $(Get-CallError $_)" }
         }
     }
 
     "addComment" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $text = if ($p.text) { $p.text } else { $p.comment }
         if (-not $text) { Output-Json @{ success = $false; error = "text required" }; return }
         $range = $word.Selection.Range
@@ -2673,7 +2981,7 @@ switch ($Action) {
     "getComments" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $comments = @()
         for ($i = 1; $i -le $doc.Comments.Count; $i++) {
             $c = $doc.Comments.Item($i)
@@ -2685,7 +2993,7 @@ switch ($Action) {
     "getDocumentStats" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $stats = @{ name = $doc.Name; path = $doc.FullName; pages = $doc.ComputeStatistics(2); words = $doc.ComputeStatistics(0); characters = $doc.ComputeStatistics(3); paragraphs = $doc.ComputeStatistics(4); lines = $doc.ComputeStatistics(1) }
         # 长文档常见的"结构规模"指标，顺手一并给出（拿不到就跳过，不报错）
         foreach ($pair in @(@("sections", "Sections"), @("tables", "Tables"), @("inlineShapes", "InlineShapes"), @("footnotes", "Footnotes"), @("toc", "TablesOfContents"), @("tof", "TablesOfFigures"))) {
@@ -2697,7 +3005,7 @@ switch ($Action) {
     "insertImage" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         $path = if ($p.path) { $p.path } else { $p.filePath }
         if (-not $path) { Output-Json @{ success = $false; error = "path required" }; return }
         $range = $word.Selection.Range
@@ -2711,7 +3019,7 @@ switch ($Action) {
     "applyStyle" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if ($p.range -and $null -ne $p.range.start -and $null -ne $p.range.end) {
             $range = $doc.Range([int]$p.range.start, [int]$p.range.end)
@@ -2726,7 +3034,7 @@ switch ($Action) {
     "enableTrackChanges" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $enable = if ($null -ne $p.enable) { [bool]$p.enable } else { $true }
         $doc.TrackRevisions = $enable
@@ -2736,7 +3044,7 @@ switch ($Action) {
     "getTrackChangesStatus" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $revisionCount = 0
         try { $revisionCount = $doc.Revisions.Count } catch {}
@@ -2746,7 +3054,7 @@ switch ($Action) {
     "replaceRange" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         if ($null -eq $p.startPos -or $null -eq $p.endPos) { Output-Json @{ success = $false; error = "startPos and endPos required" }; return }
         if ($null -eq $p.text) { Output-Json @{ success = $false; error = "text required" }; return }
@@ -2757,7 +3065,7 @@ switch ($Action) {
             $actualEndPos = $range.End
             Output-Json @{ success = $true; data = @{ startPos = [int]$p.startPos; originalEndPos = [int]$p.endPos; endPos = $actualEndPos; originalText = $originalText.TrimEnd("`r`n"); newText = $p.text } }
         } catch {
-            Output-Json @{ success = $false; error = "Failed to replace range: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "Failed to replace range: $(Get-CallError $_)" }
         }
     }
 
@@ -3335,7 +3643,7 @@ switch ($Action) {
         try {
             $slide.Export($outputPath, $filterName, $width, $height)
         } catch {
-            Output-Json @{ success = $false; error = "Slide.Export failed: $($_.Exception.Message)" }; return
+            Output-Json @{ success = $false; error = "Slide.Export failed: $(Get-CallError $_)" }; return
         }
         # 关键修复：校验文件是否真生成，避免 Export 静默失败却报成功
         if (Test-Path $outputPath) {
@@ -5157,7 +5465,7 @@ switch ($Action) {
     "addHeading" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $level = if ($p.level) { [int]$p.level } else { 1 }
         if ($level -lt 1) { $level = 1 }
@@ -5169,7 +5477,7 @@ switch ($Action) {
             $word.Selection.TypeParagraph()
             Output-Json @{ success = $true; data = @{ level = $level; text = $text } }
         } catch {
-            Output-Json @{ success = $false; error = "插入标题失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "插入标题失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5177,7 +5485,7 @@ switch ($Action) {
     "insertParagraph" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $text = [string]$p.text
         if ($p.index) {
@@ -5195,7 +5503,7 @@ switch ($Action) {
     "deleteParagraph" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $idx = if ($p.index) { [int]$p.index } else { $doc.Paragraphs.Count }
         $cnt = if ($p.count) { [int]$p.count } else { 1 }
@@ -5212,7 +5520,7 @@ switch ($Action) {
     "getOutline" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $limit = if ($p.limit) { [int]$p.limit } else { 500 }
         $outline = @()
@@ -5238,7 +5546,7 @@ switch ($Action) {
     "setDefaultFont" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         try {
             $normal = $doc.Styles.Item(-1)   # wdStyleNormal
@@ -5252,7 +5560,7 @@ switch ($Action) {
                 size = [double]$normal.Font.Size
             } }
         } catch {
-            Output-Json @{ success = $false; error = "设置默认字体失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "设置默认字体失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5260,7 +5568,7 @@ switch ($Action) {
     "addCaption" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $label = if ($p.label) { [string]$p.label } else { "图" }
         # wdCaptionPositionAbove = 0, wdCaptionPositionBelow = 1
@@ -5298,7 +5606,7 @@ switch ($Action) {
                 $rng.InsertAfter($captionText + "`r")
                 $mode = "manual"
             } catch {
-                Output-Json @{ success = $false; error = "插入题注失败：原生接口报「$nativeErr」；手工兜底也失败：$($_.Exception.Message)" }
+                Output-Json @{ success = $false; error = "插入题注失败：原生接口报「$nativeErr」；手工兜底也失败：$(Get-CallError $_)" }
                 return
             }
         }
@@ -5317,7 +5625,7 @@ switch ($Action) {
     "addFootnote" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $text = [string]$p.text
         try {
@@ -5325,7 +5633,7 @@ switch ($Action) {
             $fn = $doc.Footnotes.Add($rng, $text)
             Output-Json @{ success = $true; data = @{ total = [int]$doc.Footnotes.Count; index = [int]$fn.Index } }
         } catch {
-            Output-Json @{ success = $false; error = "插入脚注失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "插入脚注失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5333,7 +5641,7 @@ switch ($Action) {
     "insertTableOfFigures" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $label = if ($p.label) { [string]$p.label } else { "图" }
         try {
@@ -5343,7 +5651,7 @@ switch ($Action) {
             try { $tof.Update() } catch {}
             Output-Json @{ success = $true; data = @{ label = $label; total = [int]$doc.TablesOfFigures.Count } }
         } catch {
-            Output-Json @{ success = $false; error = "插入图表目录失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "插入图表目录失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5351,12 +5659,12 @@ switch ($Action) {
     "updateFields" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $report = @{ fields = 0; toc = 0; tof = 0; errors = @() }
-        try { $doc.Fields.Update(); $report.fields = [int]$doc.Fields.Count } catch { $report.errors += "fields: $($_.Exception.Message)" }
-        try { foreach ($t in $doc.TablesOfContents) { $t.Update() }; $report.toc = [int]$doc.TablesOfContents.Count } catch { $report.errors += "toc: $($_.Exception.Message)" }
-        try { foreach ($f in $doc.TablesOfFigures) { $f.Update() }; $report.tof = [int]$doc.TablesOfFigures.Count } catch { $report.errors += "tof: $($_.Exception.Message)" }
+        try { $doc.Fields.Update(); $report.fields = [int]$doc.Fields.Count } catch { $report.errors += "fields: $(Get-CallError $_)" }
+        try { foreach ($t in $doc.TablesOfContents) { $t.Update() }; $report.toc = [int]$doc.TablesOfContents.Count } catch { $report.errors += "toc: $(Get-CallError $_)" }
+        try { foreach ($f in $doc.TablesOfFigures) { $f.Update() }; $report.tof = [int]$doc.TablesOfFigures.Count } catch { $report.errors += "tof: $(Get-CallError $_)" }
         Output-Json @{ success = $true; data = $report }
     }
 
@@ -5364,7 +5672,7 @@ switch ($Action) {
     "setColumns" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $count = if ($p.count) { [int]$p.count } else { 2 }
         if ($count -lt 1) { $count = 1 }
@@ -5382,7 +5690,7 @@ switch ($Action) {
             Output-Json @{ success = $true; data = @{ columns = [int]$doc.PageSetup.TextColumns.Count } }
         } catch {
             # 分栏在不同 WPS 版本上接口差异较大 —— 失败就明说，别伪装成功
-            Output-Json @{ success = $false; error = "设置分栏失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "设置分栏失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5390,7 +5698,7 @@ switch ($Action) {
     "setHeadingNumbering" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $maxLevel = if ($p.levels) { [int]$p.levels } else { 3 }
         if ($maxLevel -lt 1) { $maxLevel = 1 }
@@ -5406,7 +5714,7 @@ switch ($Action) {
             }
             Output-Json @{ success = $true; data = @{ levels = $maxLevel; mode = "outline-gallery" } }
         } catch {
-            Output-Json @{ success = $false; error = "设置章节编号失败（本机 WPS 可能不支持该接口；可在 WPS 里用「开始 → 多级列表」手动设置）: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "设置章节编号失败（本机 WPS 可能不支持该接口；可在 WPS 里用「开始 → 多级列表」手动设置）: $(Get-CallError $_)" }
         }
     }
 
@@ -5414,7 +5722,7 @@ switch ($Action) {
     "addList" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $items = @($p.items)
         if ($items.Count -eq 0) { Output-Json @{ success = $false; error = "items 为空" }; return }
@@ -5431,7 +5739,7 @@ switch ($Action) {
             try { $sel.Range.ListFormat.RemoveNumbers() } catch {}
             Output-Json @{ success = $true; data = @{ type = $type; count = $items.Count } }
         } catch {
-            Output-Json @{ success = $false; error = "插入列表失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "插入列表失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5439,7 +5747,7 @@ switch ($Action) {
     "formatTable" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $word.ActiveDocument
+        $doc = $(Resolve-Doc $word $p)
         if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
         $idx = if ($p.tableIndex) { [int]$p.tableIndex } else { 1 }
         if ($idx -lt 1 -or $idx -gt $doc.Tables.Count) {
@@ -5463,7 +5771,7 @@ switch ($Action) {
             }
             Output-Json @{ success = $true; data = @{ tableIndex = $idx; applied = $applied } }
         } catch {
-            Output-Json @{ success = $false; error = "设置表格样式失败: $($_.Exception.Message)" }
+            Output-Json @{ success = $false; error = "设置表格样式失败: $(Get-CallError $_)" }
         }
     }
 
@@ -5484,7 +5792,7 @@ switch ($Action) {
             try { $info.appPath = [string]$word.Path } catch { $info.appPathErr = $_.Exception.Message }
             try { $info.docCount = [int]$word.Documents.Count } catch { $info.docCountErr = $_.Exception.Message }
             try {
-                $d = $word.ActiveDocument
+                $d = $(Resolve-Doc $word $p)
                 $info.activeDocNull = ($null -eq $d)
                 if ($null -ne $d) {
                     try { $info.activeDocName = [string]$d.Name } catch { $info.adnErr = $_.Exception.Message }

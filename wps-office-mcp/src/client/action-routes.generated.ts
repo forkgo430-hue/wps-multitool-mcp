@@ -3,12 +3,13 @@
  * 源：scripts/wps-com.ps1 的 switch ($Action) 分支。
  * 重新生成：node scripts/gen-action-routes.js
  *
- * 统计：common=22  word=46  ppt=107  excel=92  合计 271
+ * 统计：common=24  word=46  ppt=107  excel=92  合计 273
  */
 
 import type { AppKey } from './action-routes';
 
 export const ACTION_ROUTES: Record<string, AppKey> = {
+  "__probeDialogs": 'common',
   "__probeDoc": 'word',
   "__probeParams": 'common',
   "addAnimation": 'ppt',
@@ -274,6 +275,7 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "updateFields": 'word',
   "updatePivotTable": 'excel',
   "wireCheck": 'common',
+  "wpsRepair": 'common',
   "wpsStatus": 'common',
   "wrapText": 'excel',
 };

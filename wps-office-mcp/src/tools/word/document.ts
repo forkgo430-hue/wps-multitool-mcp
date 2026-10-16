@@ -25,7 +25,7 @@ import {
   ToolCategory,
   RegisteredTool,
 } from '../../types/tools';
-import { wpsClient } from '../../client/wps-client';
+import { wpsClient, setWordTarget } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
 
 /**
@@ -152,13 +152,16 @@ export const switchDocumentHandler: ToolHandler = async (
     );
 
     if (response.success) {
+      // 锁定目标：之后所有 word 调用都会自动带上 documentName，
+      // 避免 ActiveDocument 在多文档场景下漂移/返回空壳。
+      setWordTarget(name);
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `已切换到文档: ${name}`,
+            text: `已切换到文档: ${name}（后续 word 操作将锁定此文档）`,
           },
         ],
       };
