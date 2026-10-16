@@ -322,19 +322,36 @@ switch ($Action) {
     # 对照 getAppInfo：那个走 Get-WpsExcel/Word/Ppt，拿不到就 New-Object 起一个，
     # 用它探状态会把 WPS 意外拉起来，而且只报第一个找到的应用。
     "wpsStatus" {
+        # 身份判据说明（别再用 .Name 当权威）：
+        # WPS 为了兼容 Excel/Word 宏，故意自报 Application.Name = "Microsoft Excel" /
+        # "Microsoft Word"，Version 也报成 Office 的兼容版本号（如 12.0）。实测本机
+        # Ket.Application 拿到的对象 Path 指向 WPS 安装目录、且机器上根本没装 EXCEL.EXE
+        # —— 所以它是 WPS 表格本人，不是真 Excel。
+        # 因此身份以【我们请求的 ProgID】+【Application.Path 落在哪个产品目录】为准，
+        # 自报名单独放在 reportedName，只作参考，不作判据。
         $apps = @(
-            @{ key = "excel"; progId = "Ket.Application";  label = "WPS 表格" },
-            @{ key = "word";  progId = "Kwps.Application"; label = "WPS 文字" },
-            @{ key = "ppt";   progId = "Kwpp.Application"; label = "WPS 演示" }
+            @{ key = "excel"; progId = "Ket.Application";  app = "WPS 表格" },
+            @{ key = "word";  progId = "Kwps.Application"; app = "WPS 文字" },
+            @{ key = "ppt";   progId = "Kwpp.Application"; app = "WPS 演示" }
         )
         $states = @{}
         foreach ($a in $apps) {
-            $entry = @{ running = $false }
+            $entry = @{ running = $false; app = $a.app; progId = $a.progId }
             $inst = Get-ActiveWpsApp $a.progId
             if ($null -ne $inst) {
                 $entry.running = $true
-                try { $entry.name = [string]$inst.Name } catch {}
+                try { $entry.reportedName = [string]$inst.Name } catch {}
                 try { $entry.version = [string]$inst.Version } catch {}
+                try {
+                    $ip = [string]$inst.Path
+                    if ($ip) {
+                        $entry.path = $ip
+                        # 由安装目录反推产品，作为身份交叉验证
+                        $entry.product = if ($ip -match 'WPS\s*Office') { 'WPS Office' }
+                                         elseif ($ip -match 'Microsoft\s+Office') { 'Microsoft Office' }
+                                         else { 'unknown' }
+                    }
+                } catch {}
                 # 文档数：三个应用各自的集合名不一样，按顺序试
                 foreach ($coll in @("Workbooks", "Documents", "Presentations")) {
                     try {

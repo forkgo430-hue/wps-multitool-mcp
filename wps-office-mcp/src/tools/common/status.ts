@@ -8,9 +8,10 @@
  * 改造前没有任何地方能回答"现在到底连上没有"。出了问题只能看日志翻，
  * 或者盲猜。对标 office-mcp 的 office_status() 与 ghidra-mcp 的 mcp_health。
  *
- * 报告两层：
- *   1) 桥这一层（本进程内）：守护进程是否就绪、PID、存活时长、重建次数、在途请求数
- *   2) WPS 这一层（PowerShell 侧）：三件套分别有没有【已附着】的实例
+ * 报告三层：
+ *   1) 桥客户端（本进程内）：连接是否就绪、管道名、桥 PID、重连次数、在途请求数
+ *   2) 桥进程内部：桥自己的 PID/存活时长/客户端数，以及【每个应用】的常驻子进程状态
+ *   3) WPS 这一层（PowerShell 侧）：三件套分别有没有【已附着】的实例
  *
  * 要点：本工具【只读】且【不产生副作用】。
  *   PowerShell 侧走 wpsStatus 动作，内部只用 Get-ActiveWpsApp（只取已运行实例），
@@ -31,8 +32,22 @@ import { psDaemon } from '../../client/ps-daemon';
 /** PowerShell 侧 wpsStatus 动作返回的数据形状 */
 interface AppState {
   running: boolean;
-  name?: string;
+  /** 我们请求的 ProgID 对应的应用名（身份权威来源） */
+  app?: string;
+  /** 我们请求的 ProgID，如 Ket.Application */
+  progId?: string;
+  /**
+   * 应用自报的名字（Application.Name）。
+   * 注意：WPS 为兼容 Excel/Word 宏会自报成 "Microsoft Excel"/"Microsoft Word"，
+   * 这是兼容名，【不能】当作身份判据。
+   */
+  reportedName?: string;
+  /** Application.Version，同样是兼容版本号（如 12.0），仅供参考 */
   version?: string;
+  /** Application.Path —— 安装目录，用来交叉验证到底是 WPS 还是 MS Office */
+  path?: string;
+  /** 由安装目录反推的产品名：WPS Office / Microsoft Office / unknown */
+  product?: string;
   documents?: number;
 }
 
@@ -52,6 +67,14 @@ export const statusDefinition: ToolDefinition = {
 - WPS 三件套：表格/文字/演示分别有没有已连接的实例，以及实例名、版本、打开文档数
 - PowerShell 侧进程号与版本
 
+关于"实例名"的一个重要提醒：
+WPS 为了兼容 Excel/Word 宏，会故意把 Application.Name 自报成 "Microsoft Excel" /
+"Microsoft Word"，Version 也报成 Office 的兼容版本号。所以本工具把身份拆成三个字段：
+  app / progId  —— 权威身份（我们请求的就是 WPS 自家的 Ket/Kwps/Kwpp）
+  product       —— 由 Application.Path 反推的产品（WPS Office / Microsoft Office）
+  reportedName  —— 应用自报名，仅供参考，别拿它判断"到底在用谁"
+（实测本机 Ket.Application 的 Path 就在 WPS 安装目录，且没装 EXCEL.EXE。）
+
 使用场景：
 - "WPS 连上了吗"
 - "为什么刚才那个工具没反应"
@@ -67,11 +90,21 @@ export const statusDefinition: ToolDefinition = {
 };
 
 export const statusHandler: ToolHandler = async (): Promise<ToolCallResult> => {
-  // 桥这一层：永远拿得到，本进程内的
-  const bridge = {
-    daemonEnabled: process.env.WPS_USE_DAEMON !== '0',
-    ...psDaemon.stats,
-  };
+  // 桥这一层：本进程内的客户端视图（永远拿得到）
+  const client = { ...psDaemon.stats };
+
+  // 桥进程自己的视图（PID/各应用子进程）—— 拿不到也不影响，如实标注
+  let bridgeInternal: unknown = null;
+  let bridgeInternalError: string | null = null;
+  try {
+    const r = (await psDaemon.bridgeStatus()) as { success?: boolean; data?: unknown; error?: string };
+    if (r?.success) bridgeInternal = r.data ?? null;
+    else bridgeInternalError = String(r?.error ?? '未知');
+  } catch (err) {
+    bridgeInternalError = err instanceof Error ? err.message : String(err);
+  }
+
+  const bridge = { ...client, internal: bridgeInternal, internalError: bridgeInternalError };
 
   // WPS 这一层：拿不到就如实标注，不要把失败伪装成"没运行"
   let wps: WpsStatusData | null = null;
@@ -87,12 +120,29 @@ export const statusHandler: ToolHandler = async (): Promise<ToolCallResult> => {
     wpsError = err instanceof Error ? err.message : String(err);
   }
 
+  // 身份自检：自报名说是 MS Office、但安装目录在 WPS 下 —— 这是 WPS 的兼容名，提示一下
+  const apps: Record<string, AppState> = wps?.apps ?? {};
+  const identityNotes: string[] = [];
+  for (const [key, st] of Object.entries(apps)) {
+    if (!st?.running) continue;
+    const reported = st.reportedName ?? '';
+    const isMsName = /microsoft\s+(excel|word|powerpoint)/i.test(reported);
+    if (isMsName && st.product === 'WPS Office') {
+      identityNotes.push(
+        `${key}: 自报名为 "${reported}"（WPS 的 Office 兼容名），实际产品是 ${st.product}（${st.path ?? '路径未知'}）`
+      );
+    } else if (isMsName && st.product === 'Microsoft Office') {
+      identityNotes.push(`${key}: 自报 "${reported}" 且安装目录为 ${st.path} —— 真的是 Microsoft Office`);
+    }
+  }
+
   const payload = {
     bridge,
     wps: wps
       ? {
-          apps: wps.apps ?? {},
+          apps,
           powershell: { pid: wps.psPid, version: wps.psVersion, daemonMode: wps.daemon },
+          identityNotes,
         }
       : null,
     wpsError,
