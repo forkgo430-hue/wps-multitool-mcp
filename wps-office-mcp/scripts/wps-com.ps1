@@ -308,7 +308,11 @@ function Get-PptSaveFormat([string]$format) {
 function Invoke-WpsAction {
     param([string]$Action, $p)
 
-try { $p = $Params | ConvertFrom-Json } catch { $p = @{} }
+# 注意：这里【绝不能】再写 `$p = $Params | ConvertFrom-Json`。
+# ①A 常驻化时把原来裸 switch 包成函数，那句解析被一起带了进来，于是每次调用都用
+# 脚本级 $Params（守护进程模式下就是默认值 "{}"）把传进来的 $p 覆盖成空对象 ——
+# 表现为"所有带参数的动作都收不到参数"，而且不报错。实测于 ② 补参数化动作时发现。
+# 直跑模式的解析在文件末尾的入口段里做，那里才是它该待的地方。
 
 switch ($Action) {
 
@@ -2322,6 +2326,10 @@ switch ($Action) {
         if ($null -ne $p.firstLineIndent) { $para.FirstLineIndent = [double]$p.firstLineIndent * 28.35 }
         if ($null -ne $p.leftIndent) { $para.LeftIndent = [double]$p.leftIndent * 28.35 }
         if ($null -ne $p.rightIndent) { $para.RightIndent = [double]$p.rightIndent * 28.35 }
+        # 分页控制：论文/报告里"标题不与正文分离""每章另起一页"常用
+        if ($null -ne $p.pageBreakBefore) { $para.PageBreakBefore = [bool]$p.pageBreakBefore }
+        if ($null -ne $p.keepWithNext) { $para.KeepWithNext = [bool]$p.keepWithNext }
+        if ($null -ne $p.keepTogether) { $para.KeepTogether = [bool]$p.keepTogether }
         Output-Json @{ success = $true }
     }
 
@@ -2659,6 +2667,10 @@ switch ($Action) {
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $word.ActiveDocument
         $stats = @{ name = $doc.Name; path = $doc.FullName; pages = $doc.ComputeStatistics(2); words = $doc.ComputeStatistics(0); characters = $doc.ComputeStatistics(3); paragraphs = $doc.ComputeStatistics(4); lines = $doc.ComputeStatistics(1) }
+        # 长文档常见的"结构规模"指标，顺手一并给出（拿不到就跳过，不报错）
+        foreach ($pair in @(@("sections", "Sections"), @("tables", "Tables"), @("inlineShapes", "InlineShapes"), @("footnotes", "Footnotes"), @("toc", "TablesOfContents"), @("tof", "TablesOfFigures"))) {
+            try { $stats[$pair[0]] = [int]$doc.($pair[1]).Count } catch {}
+        }
         Output-Json @{ success = $true; data = $stats }
     }
 
@@ -5114,6 +5126,326 @@ switch ($Action) {
             } catch {}
         }
         Output-Json @{ success = $true; data = @{ style = $p.style; count = $count } }
+    }
+
+    # ==================== Word 长文档 / 学术排版（补 office-mcp 那条缺失链路）====================
+    # 这一组是为了补齐"认真写一篇论文/报告"所需的能力：标题层级、题注、脚注、图表目录、
+    # 章节自动编号、分栏、列表、表格样式、刷新域、大纲抽取。
+    # 口径：每个动作都先拿 $doc，拿不到就如实报错返回，不做半截操作。
+
+    # 按级别插入标题：用 Word 内置 Heading 样式（wdStyleHeadingN = -1-N），保证能进目录
+    "addHeading" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $level = if ($p.level) { [int]$p.level } else { 1 }
+        if ($level -lt 1) { $level = 1 }
+        if ($level -gt 9) { $level = 9 }
+        $text = [string]$p.text
+        try {
+            $word.Selection.Style = $doc.Styles.Item(-1 - $level)
+            $word.Selection.TypeText($text)
+            $word.Selection.TypeParagraph()
+            Output-Json @{ success = $true; data = @{ level = $level; text = $text } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入标题失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 插入段落：给了 index 就在该段之前插，没给就追加到文末
+    "insertParagraph" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $text = [string]$p.text
+        if ($p.index) {
+            $idx = [int]$p.index
+            if ($idx -lt 1) { $idx = 1 }
+            if ($idx -gt $doc.Paragraphs.Count) { $idx = $doc.Paragraphs.Count }
+            $doc.Paragraphs.Item($idx).Range.InsertBefore($text + "`r")
+        } else {
+            $doc.Content.InsertAfter($text + "`r")
+        }
+        Output-Json @{ success = $true; data = @{ paragraphs = $doc.Paragraphs.Count } }
+    }
+
+    # 删除段落：从 index 起删 count 段（1 基，越界自动收敛）
+    "deleteParagraph" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $idx = if ($p.index) { [int]$p.index } else { $doc.Paragraphs.Count }
+        $cnt = if ($p.count) { [int]$p.count } else { 1 }
+        if ($idx -lt 1) { $idx = 1 }
+        $deleted = 0
+        for ($k = 0; $k -lt $cnt; $k++) {
+            if ($idx -gt $doc.Paragraphs.Count) { break }
+            try { $doc.Paragraphs.Item($idx).Range.Delete(); $deleted++ } catch { break }
+        }
+        Output-Json @{ success = $true; data = @{ deleted = $deleted; paragraphs = $doc.Paragraphs.Count } }
+    }
+
+    # 抽取大纲：按段落的 OutlineLevel（1..9 是标题级，10 是正文）列出标题树
+    "getOutline" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $limit = if ($p.limit) { [int]$p.limit } else { 500 }
+        $outline = @()
+        $n = [int]$doc.Paragraphs.Count
+        for ($i = 1; $i -le $n; $i++) {
+            if ($outline.Count -ge $limit) { break }
+            try {
+                $para = $doc.Paragraphs.Item($i)
+                $lvl = [int]$para.OutlineLevel
+                if ($lvl -ge 1 -and $lvl -le 9) {
+                    $t = [string]$para.Range.Text
+                    $t = $t -replace "[`r`n`a]", ""
+                    if ($t.Trim()) {
+                        $outline += @{ index = $i; level = $lvl; text = $t.Trim() }
+                    }
+                }
+            } catch {}
+        }
+        Output-Json @{ success = $true; data = @{ headings = $outline; count = $outline.Count } }
+    }
+
+    # 默认字体：改 Normal 样式的中文字体/西文字体/字号，正文与新建段落都跟着变
+    "setDefaultFont" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        try {
+            $normal = $doc.Styles.Item(-1)   # wdStyleNormal
+            if ($p.eastAsia) { $normal.Font.NameFarEast = [string]$p.eastAsia }
+            if ($p.ascii) { $normal.Font.NameAscii = [string]$p.ascii }
+            if ($p.name) { $normal.Font.Name = [string]$p.name }
+            if ($p.size) { $normal.Font.Size = [double]$p.size }
+            Output-Json @{ success = $true; data = @{
+                name = [string]$normal.Font.Name
+                eastAsia = [string]$normal.Font.NameFarEast
+                size = [double]$normal.Font.Size
+            } }
+        } catch {
+            Output-Json @{ success = $false; error = "设置默认字体失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 题注：给图表/表格加自动编号标签（Word 的 Caption 会自动续号）
+    "addCaption" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $label = if ($p.label) { [string]$p.label } else { "图" }
+        # wdCaptionPositionAbove = 0, wdCaptionPositionBelow = 1
+        $pos = if ($p.position -eq "above") { 0 } else { 1 }
+        $title = [string]$p.text
+        try {
+            $rng = $word.Selection.Range
+            $rng.Collapse(0)   # wdCollapseEnd
+            $cap = $rng.InsertCaption($label, $title, $pos, $false)
+            if ($p.newParagraph) {
+                try { $word.Selection.TypeParagraph() } catch {}
+            }
+            Output-Json @{ success = $true; data = @{ label = $label; text = $title; caption = [string]$cap.Text } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入题注失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 脚注：在当前选区（或文末）插入一条脚注
+    "addFootnote" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $text = [string]$p.text
+        try {
+            $rng = if ($p.atEnd) { $doc.Content } else { $word.Selection.Range }
+            $fn = $doc.Footnotes.Add($rng, $text)
+            Output-Json @{ success = $true; data = @{ total = [int]$doc.Footnotes.Count; index = [int]$fn.Index } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入脚注失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 图表目录：基于题注标签生成（要先把题注加上才有内容）
+    "insertTableOfFigures" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $label = if ($p.label) { [string]$p.label } else { "图" }
+        try {
+            $rng = $doc.Content
+            $rng.Collapse(0)   # wdCollapseEnd → 放文末
+            $tof = $doc.TablesOfFigures.Add($rng, $label)
+            try { $tof.Update() } catch {}
+            Output-Json @{ success = $true; data = @{ label = $label; total = [int]$doc.TablesOfFigures.Count } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入图表目录失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 刷新域：目录、图表目录、交叉引用、页码等一次性更新
+    "updateFields" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $report = @{ fields = 0; toc = 0; tof = 0; errors = @() }
+        try { $doc.Fields.Update(); $report.fields = [int]$doc.Fields.Count } catch { $report.errors += "fields: $($_.Exception.Message)" }
+        try { foreach ($t in $doc.TablesOfContents) { $t.Update() }; $report.toc = [int]$doc.TablesOfContents.Count } catch { $report.errors += "toc: $($_.Exception.Message)" }
+        try { foreach ($f in $doc.TablesOfFigures) { $f.Update() }; $report.tof = [int]$doc.TablesOfFigures.Count } catch { $report.errors += "tof: $($_.Exception.Message)" }
+        Output-Json @{ success = $true; data = $report }
+    }
+
+    # 分栏：整节等宽多栏
+    "setColumns" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $count = if ($p.count) { [int]$p.count } else { 2 }
+        if ($count -lt 1) { $count = 1 }
+        if ($count -gt 6) { $count = 6 }
+        try {
+            $doc.PageSetup.TextColumns.SetCount($count)
+            if ($p.spacing) {
+                for ($i = 1; $i -le $count; $i++) {
+                    try { $doc.PageSetup.TextColumns.Item($i).Spacing = [double]$p.spacing * 28.35 } catch {}
+                }
+            }
+            if ($null -ne $p.lineBetween) {
+                try { $doc.PageSetup.TextColumns.LineBetween = [bool]$p.lineBetween } catch {}
+            }
+            Output-Json @{ success = $true; data = @{ columns = [int]$doc.PageSetup.TextColumns.Count } }
+        } catch {
+            # 分栏在不同 WPS 版本上接口差异较大 —— 失败就明说，别伪装成功
+            Output-Json @{ success = $false; error = "设置分栏失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 章节自动编号：给 Heading1~N 挂多级编号（近似实现，版本差异可能导致效果不同）
+    "setHeadingNumbering" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $maxLevel = if ($p.levels) { [int]$p.levels } else { 3 }
+        if ($maxLevel -lt 1) { $maxLevel = 1 }
+        if ($maxLevel -gt 9) { $maxLevel = 9 }
+        try {
+            $lt = $doc.ListTemplates.Add($true, $true)
+            for ($i = 1; $i -le $maxLevel; $i++) {
+                $lvl = $lt.Levels.Item($i)
+                $fmt = ""
+                for ($j = 1; $j -le $i; $j++) { $fmt += "%$j." }
+                $lvl.NumberFormat = $fmt
+                $lvl.NumberStyle = 0            # wdListNumberStyleArabic
+                $lvl.TrailingCharacter = 0      # wdTrailingTab
+                $lvl.NumberPosition = [double]($i - 1) * 21
+                $lvl.TextPosition = [double]$i * 21
+                $doc.Styles.Item(-1 - $i).LinkToListTemplate($lt, $i)
+            }
+            Output-Json @{ success = $true; data = @{ levels = $maxLevel; note = "近似实现，WPS 版本差异可能导致效果不同" } }
+        } catch {
+            Output-Json @{ success = $false; error = "设置章节编号失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 列表：项目符号或编号，一次写多条
+    "addList" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $items = @($p.items)
+        if ($items.Count -eq 0) { Output-Json @{ success = $false; error = "items 为空" }; return }
+        $type = if ($p.type -eq "number") { "number" } else { "bullet" }
+        try {
+            $sel = $word.Selection
+            if ($type -eq "number") { $sel.Range.ListFormat.ApplyNumberDefault() }
+            else { $sel.Range.ListFormat.ApplyBulletDefault() }
+            foreach ($it in $items) {
+                $sel.TypeText([string]$it)
+                $sel.TypeParagraph()
+            }
+            # 收尾：去掉列表末那个空项目符号，回到正文
+            try { $sel.Range.ListFormat.RemoveNumbers() } catch {}
+            Output-Json @{ success = $true; data = @{ type = $type; count = $items.Count } }
+        } catch {
+            Output-Json @{ success = $false; error = "插入列表失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 表格样式：套用样式名 + 表头加粗 + 边框
+    "formatTable" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $word.ActiveDocument
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $idx = if ($p.tableIndex) { [int]$p.tableIndex } else { 1 }
+        if ($idx -lt 1 -or $idx -gt $doc.Tables.Count) {
+            Output-Json @{ success = $false; error = "表格序号越界（共 $($doc.Tables.Count) 个）" }; return
+        }
+        $applied = @{ style = $false; headerBold = $false; borders = $false }
+        try {
+            $tbl = $doc.Tables.Item($idx)
+            if ($p.style) {
+                try { $tbl.Style = [string]$p.style; $applied.style = $true } catch {}
+            }
+            if ($p.headerBold) {
+                try { $tbl.Rows.Item(1).Range.Font.Bold = $true; $applied.headerBold = $true } catch {}
+            }
+            if ($p.borders) {
+                try {
+                    $tbl.Borders.InsideLineStyle = 1     # wdLineStyleSingle
+                    $tbl.Borders.OutsideLineStyle = 1
+                    $applied.borders = $true
+                } catch {}
+            }
+            Output-Json @{ success = $true; data = @{ tableIndex = $idx; applied = $applied } }
+        } catch {
+            Output-Json @{ success = $false; error = "设置表格样式失败: $($_.Exception.Message)" }
+        }
+    }
+
+    # 【临时诊断】原样回显收到的参数，用来判断"参数到底有没有送到"
+    "__probeParams" {
+        $keys = @()
+        try { $keys = @($p.PSObject.Properties | ForEach-Object { $_.Name }) } catch {}
+        Output-Json @{ success = $true; data = @{ received = $p; keys = $keys; ptype = $p.GetType().FullName } }
+    }
+
+    # 【临时诊断】查 WPS 文字的 COM 状态（进程/文档数/ActiveDocument 是否可用）
+    "__probeDoc" {
+        $info = @{}
+        try { $word = Get-WpsWord } catch { $info.getWordErr = $_.Exception.Message; $word = $null }
+        $info.wordNull = ($null -eq $word)
+        if ($null -ne $word) {
+            try { $info.appName = [string]$word.Name } catch { $info.appNameErr = $_.Exception.Message }
+            try { $info.appPath = [string]$word.Path } catch { $info.appPathErr = $_.Exception.Message }
+            try { $info.docCount = [int]$word.Documents.Count } catch { $info.docCountErr = $_.Exception.Message }
+            try {
+                $d = $word.ActiveDocument
+                $info.activeDocNull = ($null -eq $d)
+                if ($null -ne $d) {
+                    try { $info.activeDocName = [string]$d.Name } catch { $info.adnErr = $_.Exception.Message }
+                    try { $info.contentNull = ($null -eq $d.Content) } catch { $info.contentErr = $_.Exception.Message }
+                    try { $info.paraCount = [int]$d.Paragraphs.Count } catch { $info.paraErr = $_.Exception.Message }
+                    try { $info.stylesNull = ($null -eq $d.Styles) } catch { $info.stylesErr = $_.Exception.Message }
+                    try { $info.pageSetupNull = ($null -eq $d.PageSetup) } catch { $info.psErr = $_.Exception.Message }
+                }
+            } catch { $info.activeDocErr = $_.Exception.Message }
+        }
+        Output-Json @{ success = $true; data = $info }
     }
 
     default {
