@@ -153,7 +153,7 @@ function ribbonPanel(control) {
     try {
         var pane = wps.CreateTaskPane(url, '多面手 MCP');
         pane.ID = 'mcp-panel';
-        pane.Width = 360;
+        pane.Width = 460;
         try { pane.DockPosition = wps.Enum.JSKsoEnum_msoCTPDockPositionRight; } catch (e4) {}
         pane.Visible = true;
         addonStatus.lastAction = '打开面板';
@@ -310,53 +310,8 @@ function ribbonExportPdf(control) {
 }
 
 // 导出本页
-function ribbonExportPage(control) {
-    var lines = [LINE_TOP, '  导出本页', LINE_BOT, ''];
-    var doc = getActiveDocInfo();
-    if (!doc) { lines.push('  ⚠ 没有打开的文档'); alert(lines.join('\n')); return; }
-    var page = '?';
-    try { page = Application.Selection.Information(3); } catch (e1) {}
-    lines.push('  当前页: 第 ' + page + ' 页');
-    lines.push('');
-    lines.push('  ⚠ WPS 12.1 的 JS API 没有"只导当前页"');
-    lines.push('  的接口。这里退化为：导出整个文档为 PDF，');
-    lines.push('  你再从 PDF 里取第 ' + page + ' 页。');
-    lines.push('');
-    lines.push('  要这样做吗？（确定=导出，取消=放弃）');
-    if (!confirm(lines.join('\n'))) { return; }
-    try {
-        var out = doc.fullPath
-            ? doc.fullPath.replace(/\.[^.]+$/, '') + '_p' + page + '_' + stamp() + '.pdf'
-            : 'C:\\导出_p' + page + '_' + stamp() + '.pdf';
-        Application.ActiveDocument.ExportAsFixedFormat(out, 17, false);
-        addonStatus.lastAction = '导出本页(整文档)';
-        alert('  ● 已导出: ' + out);
-    } catch (e) {
-        alert('  ✗ 导出失败: ' + e.message);
-    }
-}
 
 // 另存副本：带时间戳，不动原文件
-function ribbonSaveCopy(control) {
-    var lines = [LINE_TOP, '  另存副本', LINE_BOT, ''];
-    var doc = getActiveDocInfo();
-    if (!doc) { lines.push('  ⚠ 没有打开的文档'); alert(lines.join('\n')); return; }
-    try {
-        var dir = doc.fullPath ? doc.fullPath.substring(0, doc.fullPath.lastIndexOf('\\') + 1) : 'C:\\';
-        var base = (doc.name || '副本').replace(/\.[^.]+$/, '');
-        var ext = (doc.name || '').match(/\.[^.]+$/) || ['.docx'];
-        var out = dir + base + '_副本_' + stamp() + ext[0];
-        Application.ActiveDocument.SaveAs(out);
-        addonStatus.lastAction = '另存副本';
-        lines.push('  ● 已另存为:');
-        lines.push('    ' + out);
-        lines.push('');
-        lines.push('  原文件未被改动。');
-    } catch (e) {
-        lines.push('  ✗ 另存失败: ' + e.message);
-    }
-    alert(lines.join('\n'));
-}
 
 // ---------- 维护组 ----------
 
@@ -406,23 +361,11 @@ function ribbonUnstick(control) {
 
 // 关于
 function ribbonAbout(control) {
-    var lines = [LINE_TOP, '  多面手 MCP', LINE_BOT, ''];
-    lines.push('  版本   : 2.0.0');
-    lines.push('  作者   : 赢容');
-    lines.push('  上游   : wps-skills（钱七 & 老王团队）');
-    lines.push('  许可   : MIT');
-    lines.push('');
-    lines.push('  作用   : 给 AI 操控 WPS 文档提供');
-    lines.push('          人能看到、能接管、能回退的入口');
-    lines.push('');
-    lines.push('  · 270 个 MCP 工具（默认只列 40 个）');
-    lines.push('  · 常驻桥进程，冷启动后 2~3ms/次');
-    lines.push('  · 快照 / 撤销 / 导出 / 诊断');
-    lines.push('');
-    lines.push('  详细状态：MCP 工具 wps_common_status');
-    lines.push('  诊断修复：MCP 工具 wps_common_repair');
-    alert(lines.join('\n'));
+    // 「关于」已搬进任务面板底部（原生 alert 排版被批难看）。
+    // 这里直接打开面板，让用户看到完整信息。
+    ribbonPanel(control);
 }
+
 
 // ==================== WPS 生命周期函数 ====================
 

@@ -1486,7 +1486,7 @@ export const setBackgroundHandler: ToolHandler = async (
   };
 
   try {
-    // 跨平台参数对齐：Windows setSlideBackground 读取 $p.imagePath；同时发送 path/filePath 别名兜底跨实现差异
+    // 参数对齐：setSlideBackground 读取 $p.imagePath；同时发送 path/filePath
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
@@ -1584,7 +1584,7 @@ export const setSlideSizeHandler: ToolHandler = async (
       success: boolean;
       message: string;
     }>(
-      'setSlideSize', // NOTE: macOS未实现，仅Windows支持
+      'setSlideSize', // NOTE: 仅Windows支持
       { width, height },
       WpsAppType.PRESENTATION
     );
@@ -1853,7 +1853,7 @@ export const setShapeFillHandler: ToolHandler = async (
       message: string;
       name?: string;
     }>(
-      'setShapeFill', // NOTE: macOS未实现，仅Windows支持
+      'setShapeFill', // NOTE: 仅Windows支持
       { slideIndex, shapeIndex, color },
       WpsAppType.PRESENTATION
     );

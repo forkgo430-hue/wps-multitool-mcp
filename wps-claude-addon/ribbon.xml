@@ -3,24 +3,16 @@
 <!-- Output: WPS 功能区按钮布局 -->
 <!-- Pos: Windows 加载项功能区配置。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。 -->
 <!--
-  多面手 MCP 功能区（v2.2）
+  多面手 MCP 功能区（v2.3）
 
-  关于 imageMso（重要，实测结论）
-  ------------------------------
-  v2.1 我给 11 个按钮各配了一个"语义对应"的 imageMso，结果赢容截图反馈：
-  只有 4 个显示出来，其余 7 个全是问号方块。
-  实测在本机 WPS 12.1 上【可用】的只有：
-      Info / Undo / Redo / PrintPreview
-  实测【不可用】（显示问号）的：
-      ViewsSwitchToNormalView / WindowDialog / SaveAs / ExportPdf /
-      FileSaveAs / RecurrenceRefresh / Cancel
-  → WPS 对 Office imageMso 名字的支持很有限，猜名字的代价是 UI 上出现一片问号，
-    比统一用 Info 更难看。所以本版只用上面那 4 个已验证可用的。
+  v2.3 改动：
+  - 删掉「导出本页」「另存副本」两个按钮（赢容要求）。功能仍在面板里
+    （面板的「导出 PDF」「另存副本」按钮），删的只是功能区入口。
+  - imageMso 只用在 WPS 上实测可用的：Info / Undo / Redo / PrintPreview。
+    试过 11 个"语义对应"名，其余 7 个显示问号方块 —— 猜名字比统一用 Info 更难看。
 
-  想更丰富（每个按钮不同图标）需要走 getImage 自定义图片回调，
-  那是另一件事，WPS 的支持程度同样要实测。要做再说。
-
-  ⚠️ size="large" 未验证是否生效（截图里按钮是小号）。
+  关于「面板」：打开右侧任务窗格（panel.html），那才是主界面。
+  功能区只留高频入口：置于前台 / 面板 / 快照三件 / 撤销 / 导出 / 状态 / 关于。
 -->
 <customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
     <ribbon startFromScratch="false">
@@ -37,8 +29,6 @@
                 </group>
                 <group id="grpOutput" label="输出">
                     <button id="btnExportPdf" onAction="ribbonExportPdf" label="导出 PDF" imageMso="Info" size="large"/>
-                    <button id="btnExportPage" onAction="ribbonExportPage" label="导出本页" imageMso="PrintPreview" size="large"/>
-                    <button id="btnSaveCopy" onAction="ribbonSaveCopy" label="另存副本" imageMso="Info" size="large"/>
                 </group>
                 <group id="grpMaintain" label="维护">
                     <button id="btnRefresh" onAction="ribbonRefresh" label="刷新状态" imageMso="Info" size="large"/>

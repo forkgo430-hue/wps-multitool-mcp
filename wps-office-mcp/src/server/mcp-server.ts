@@ -60,7 +60,6 @@ export class WpsMcpServer {
   /** 工具组变更通知是否已接上（避免重复订阅） */
   private groupsNotifyWired: boolean = false;
 
-  // 跨应用数据缓存 - 解决macOS WPS无法跨应用操作的P0问题
   private static dataCache: Map<string, { data: unknown; timestamp: number; appType: string }> = new Map();
 
   constructor(config?: Partial<McpServerConfig>) {
@@ -485,7 +484,6 @@ export class WpsMcpServer {
     );
 
     // ==================== 跨应用数据缓存工具 ====================
-    // 解决macOS WPS加载项无法跨应用操作的P0问题
     // Excel读取数据 → 缓存到MCP Server → PPT获取缓存 → 创建演示文稿
 
     // 缓存数据

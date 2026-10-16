@@ -124,7 +124,7 @@ export const openPresentationHandler: ToolHandler = async (
   };
 
   try {
-    // 跨平台参数对齐：macOS/Windows 底层均读取 params.path，需同时发送 path 别名
+    // 参数对齐：底层读取 params.path，需同时发送 path
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
@@ -434,7 +434,7 @@ export const setSlideThemeHandler: ToolHandler = async (
       success: boolean;
       message: string;
     }>(
-      'setSlideTheme', // NOTE: macOS未实现，仅Windows支持
+      'setSlideTheme', // NOTE: 仅Windows支持
       { theme },
       WpsAppType.PRESENTATION
     );
@@ -588,7 +588,7 @@ export const insertSlideImageHandler: ToolHandler = async (
   };
 
   try {
-    // 跨平台参数对齐：底层 insertImage handler 读取 path/filePath，需同时发送别名
+    // 参数对齐：insertImage handler 读取 path/filePath，需同时发送
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;

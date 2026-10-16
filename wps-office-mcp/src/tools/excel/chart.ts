@@ -533,7 +533,7 @@ export const exportChartAsImageDefinition: ToolDefinition = {
 注意：
 - outputPath 必须是绝对路径
 - chartName 通常为 "Chart 1"、"图表 1" 等，可通过 wps_excel_create_chart 返回值或界面查看
-- macOS 上建议输出到 ~/Downloads 等用户可写目录，避免沙箱权限拒绝`,
+`,
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
@@ -586,7 +586,7 @@ export const exportChartAsImageHandler: ToolHandler = async (
       {
         chartName,
         outputPath,
-        // 跨平台参数对齐：macOS/Windows 底层兼容 path/outputPath 双别名
+        // 参数对齐：底层同时读取 path/outputPath，需一并发送
         path: outputPath,
         format: filterName,
         sheet,
@@ -733,7 +733,7 @@ export const exportRangeAsImageHandler: ToolHandler = async (
       {
         range,
         outputPath,
-        // 跨平台参数对齐：macOS/Windows 底层兼容 path/outputPath 双别名
+        // 参数对齐：底层同时读取 path/outputPath，需一并发送
         path: outputPath,
         format: filterName,
         sheet,

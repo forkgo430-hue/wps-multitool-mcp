@@ -476,7 +476,7 @@ export const insertImageHandler: ToolHandler = async (
   }
 
   try {
-    // 跨平台参数对齐：macOS/Windows 底层均优先读取 params.path，同时保留 imagePath/filePath 别名
+    // 参数对齐：底层优先读取 params.path，同时保留 imagePath/filePath
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
@@ -647,7 +647,7 @@ export const setTextColorHandler: ToolHandler = async (
   }
   try {
     const response = await wpsClient.executeMethod<{ success: boolean; message: string }>(
-      'setTextColor', // NOTE: macOS未实现，仅Windows支持
+      'setTextColor', // NOTE: 仅Windows支持
       { color },
       WpsAppType.WRITER
     );

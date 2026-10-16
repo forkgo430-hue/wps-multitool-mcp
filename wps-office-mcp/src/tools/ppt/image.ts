@@ -82,7 +82,7 @@ export const insertPptImageHandler: ToolHandler = async (
   };
 
   try {
-    // 跨平台参数对齐：macOS/Windows 底层均读取 params.path，需同时发送 path/imagePath 别名
+    // 参数对齐：底层读取 params.path，需同时发送 path/imagePath
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
@@ -336,7 +336,7 @@ export const exportSlideAsImageDefinition: ToolDefinition = {
 
 注意：
 - outputPath 必须是绝对路径
-- macOS 上建议输出到 ~/Downloads 或用户可写目录，避免沙箱权限拒绝
+
 - 不指定 width/height 时使用 1280x720（16:9 默认尺寸）`,
   category: ToolCategory.PRESENTATION,
   inputSchema: {
@@ -397,7 +397,7 @@ export const exportSlideAsImageHandler: ToolHandler = async (
       {
         slideIndex,
         outputPath,
-        // 跨平台参数对齐：macOS/Windows 底层兼容 path/outputPath 双别名
+        // 参数对齐：底层同时读取 path/outputPath，需一并发送
         path: outputPath,
         format: filterName,
         width: finalWidth,

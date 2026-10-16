@@ -1,14 +1,8 @@
 /**
  * Input: 平台信息与WPS调用参数
  * Output: WPS API 调用结果
- * Pos: 跨平台 WPS 客户端。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
  * WPS通信客户端 - 仅 Windows
  * 通过 PowerShell 调用 WPS 的 COM 接口；优先走常驻桥，桥起不来退回直跑。
- *
- * 历史：曾经有一条 macOS/Linux 的"反向轮询"路线（WPS Mac 加载项在沙箱里
- * 起不了 HTTP server，只能让 MCP 当服务端、加载项来轮询）。该路线**已移除** ——
- * 只有代码没有配套加载项，实际跑不起来，留着只会让人误以为支持。
- * 相关代码（mac-poll-server.ts）与加载项（wps-claude-assistant/）已删除。
  */
 
 import { spawn } from 'child_process';
@@ -36,7 +30,6 @@ let daemonBroken = false;
 
 // PowerShell脚本路径 (Windows)
 const PS_SCRIPT_PATH = path.join(__dirname, '../../scripts/wps-com.ps1');
-
 
 // PowerShell 默认超时（毫秒）
 const PS_TIMEOUT = 30000;
@@ -196,7 +189,6 @@ export class WpsClient {
   }
 
   /**
-   * 调用WPS接口（跨平台）
    * @param app 显式指定走哪一路子进程；不传则按动作名自动解析（见 action-routes）
    */
   async invokeAction<T = unknown>(

@@ -253,7 +253,7 @@ export const insertExcelImageHandler: ToolHandler = async (
     sheet?: string;
   };
   try {
-    // 跨平台参数对齐：macOS/Windows 底层均读取 params.path，需同时发送 path/imagePath 别名
+    // 参数对齐：底层读取 params.path，需同时发送 path/imagePath
     const response = await wpsClient.executeMethod<{ message: string }>(
       'insertExcelImage',
       { filePath, path: filePath, imagePath: filePath, cell, width, height, sheet },
