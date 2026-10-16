@@ -12,12 +12,14 @@
 import { RegisteredTool } from '../../types/tools';
 import { convertTools } from './convert';
 import { generalTools } from './general';
+import { statusTools } from './status';
 
 /**
  * 所有通用的Tools
  * 包含：
  * - 转换Tools: convert_to_pdf, convert_format
  * - 通用Tools: save, save_as, ping, wire_check, get_app_info, get_selected_text, set_selected_text
+ * - 状态Tools: status（桥 + 三件套运行状态，只读、无副作用）
  *
  * 后续可继续添加更多通用功能，如：
  * - 文档比较
@@ -27,11 +29,13 @@ import { generalTools } from './general';
 export const commonTools: RegisteredTool[] = [
   ...convertTools,
   ...generalTools,
+  ...statusTools,
 ];
 
 // 分别导出，方便按需使用
 export { convertTools } from './convert';
 export { generalTools } from './general';
+export { statusTools, statusDefinition, statusHandler } from './status';
 
 // 导出单独的定义和处理器，方便测试
 export {

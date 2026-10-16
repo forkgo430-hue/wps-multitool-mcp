@@ -62,6 +62,10 @@ export class PsDaemon {
   private starting: Promise<void> | null = null;
   private ready = false;
   private disposed = false;
+  /** 当前这个进程是什么时候起来的（诊断用） */
+  private startedAt: number | null = null;
+  /** 重建过几次（超时/异常导致的），诊断用 */
+  private restarts = 0;
 
   /** 当前是否有一个已就绪的守护进程 */
   get isReady(): boolean {
@@ -71,6 +75,25 @@ export class PsDaemon {
   /** 在途请求数（诊断用） */
   get pendingCount(): number {
     return this.pending.size;
+  }
+
+  /** 桥这一层的状态，给 wps_status 用 */
+  get stats(): {
+    ready: boolean;
+    pid: number | null;
+    uptimeMs: number;
+    restarts: number;
+    pending: number;
+    disposed: boolean;
+  } {
+    return {
+      ready: this.ready,
+      pid: this.proc?.pid ?? null,
+      uptimeMs: this.startedAt === null ? 0 : Date.now() - this.startedAt,
+      restarts: this.restarts,
+      pending: this.pending.size,
+      disposed: this.disposed,
+    };
   }
 
   /**
@@ -184,6 +207,10 @@ export class PsDaemon {
       this.proc = proc;
       this.ready = false;
       this.stdoutBuf = '';
+      if (this.startedAt !== null) {
+        this.restarts += 1;
+      }
+      this.startedAt = Date.now();
 
       let settled = false;
       const readyTimer = setTimeout(() => {

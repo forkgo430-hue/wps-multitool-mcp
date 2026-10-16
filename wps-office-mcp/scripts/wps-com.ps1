@@ -317,6 +317,42 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ message = "pong"; timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() } }
     }
 
+    # 只读状态探针：报告三件套分别有没有已附着的实例。
+    # 关键区别：这里【只用 Get-ActiveWpsApp】——它只取已运行的实例，不会创建新的。
+    # 对照 getAppInfo：那个走 Get-WpsExcel/Word/Ppt，拿不到就 New-Object 起一个，
+    # 用它探状态会把 WPS 意外拉起来，而且只报第一个找到的应用。
+    "wpsStatus" {
+        $apps = @(
+            @{ key = "excel"; progId = "Ket.Application";  label = "WPS 表格" },
+            @{ key = "word";  progId = "Kwps.Application"; label = "WPS 文字" },
+            @{ key = "ppt";   progId = "Kwpp.Application"; label = "WPS 演示" }
+        )
+        $states = @{}
+        foreach ($a in $apps) {
+            $entry = @{ running = $false }
+            $inst = Get-ActiveWpsApp $a.progId
+            if ($null -ne $inst) {
+                $entry.running = $true
+                try { $entry.name = [string]$inst.Name } catch {}
+                try { $entry.version = [string]$inst.Version } catch {}
+                # 文档数：三个应用各自的集合名不一样，按顺序试
+                foreach ($coll in @("Workbooks", "Documents", "Presentations")) {
+                    try {
+                        $c = $inst.$coll
+                        if ($null -ne $c) { $entry.documents = [int]$c.Count; break }
+                    } catch {}
+                }
+            }
+            $states[$a.key] = $entry
+        }
+        Output-Json @{ success = $true; data = @{
+            apps = $states
+            psPid = $PID
+            psVersion = $PSVersionTable.PSVersion.ToString()
+            daemon = ($env:WPS_COM_DAEMON -eq '1')
+        } }
+    }
+
     # 让 WPS 可见并置于前台：① 激活已有窗口 ② 唤起 COM 实例 ③ 兜底启动可见实例
     "showWps" {
         $apps = @()
