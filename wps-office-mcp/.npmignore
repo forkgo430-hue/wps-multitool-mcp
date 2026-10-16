@@ -1,5 +1,6 @@
 # 源码和测试
 scripts/manual/
+scripts/gen-action-routes.js
 src/
 tests/
 *.test.ts

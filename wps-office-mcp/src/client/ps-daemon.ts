@@ -1,47 +1,67 @@
 /**
- * Input: 动作名与参数对象
- * Output: WPS 动作结果（与直跑模式同形：{ success, data? , error? }）
- * Pos: PowerShell 常驻守护进程客户端。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
+ * Input: 动作名、参数、应用键
+ * Output: 动作结果（与直跑模式同形：{ success, data?, error? }）
+ * Pos: 常驻桥进程的客户端（MCP server 侧）。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
- * 为什么要有这个文件
- * ------------------
- * 改造前每调一次工具就 spawn 一个 powershell.exe，重新解析 5000 行 wps-com.ps1，再连一次 COM，
- * 单次白花 0.3~0.6 秒；多步任务里这是主要瓶颈。
- * 这里改成常驻一个 powershell 进程（scripts/wps-comd.ps1），按【一行一个 JSON】收发：
- * 进程只起一次、脚本只解析一次、COM 附着关系也留在同一个 STA 线程上。
+ * 这一版和上一版的区别（①A -> ①B）
+ * -------------------------------
+ * ①A：MCP server 自己 spawn 一个常驻 powershell，进程随 server 一起生灭。
+ * ①B：改成一个【独立、常驻】的桥进程（dist/bridge/index.js），server 只是它的客户端。
+ *      桥里再按应用（excel / word / ppt / common）各持一个常驻 powershell。
  *
- * 两条路都在
+ * 换来什么
+ * --------
+ *   - MCP server 被客户端重启（改配置/切会话/崩溃重拉）时，COM 连接与已打开的文档不受打扰
+ *   - 一应用一进程：WPS 文字卡死不会堵住表格；桥只重建那一路
+ *   - 不同应用可并发（同一连接上多请求并行，各走各的子进程）
+ *
+ * 谁负责收尾
  * ----------
- * wps-client.ts 优先走守护进程；守护进程【起不来】时自动退回原来的直跑方式，
- * 不让一个进程启动问题把整条链路堵死。设 WPS_USE_DAEMON=0 可强制走直跑。
+ * 桥自己按空闲超时退出（默认 10 分钟无客户端），子进程由 wps-comd.ps1 的父进程看门狗兜底。
+ * 所以本客户端 dispose() 【只断连接，不杀桥】—— 让桥的存活不依赖 server 的存活，这正是它的意义。
+ * 需要"server 一退桥就退"的场合（例如自动化测试）设 WPS_BRIDGE_EPHEMERAL=1。
  *
- * 超时语义（对标 office-mcp 的 bridge/connection_manager.py）
- * ---------------------------------------------------------
- * COM 是 STA，守护进程同一时刻只能跑一个动作。某个动作卡死会让整个进程失去响应，
- * 所以【超时即判定该连接已死】：杀掉进程、拒绝所有在途请求，下次调用重建。
- * 绝不能"超时了但继续往这个进程里塞请求"——那只会一个接一个地接着超时。
- *
- * 另一条红线：超时后【不自动重试】。写动作（保存/导出/退出）可能已经执行了一半，
- * 自动重放会变成"执行两次"。超时一律如实抛错，由调用方决定怎么办。
+ * 失败语义（红线）
+ * --------------
+ *   DaemonUnavailableError 只能表示【请求从未送出】（连不上桥、桥起不来）—— 调用方可安全退回直跑。
+ *   请求已经写进管道之后出的任何错（超时、桥挂了），都可能已经在 WPS 里执行了一半，
+ *   绝不能自动重放，一律如实抛出。
  */
 
-import { ChildProcess, spawn } from 'child_process';
+import * as net from 'net';
+import * as os from 'os';
 import * as path from 'path';
+import { ChildProcess, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from '../utils/logger';
 
-/** 守护进程脚本（与本文件同时随包分发，见 .npmignore / package.json） */
-const PS_SCRIPT = path.join(__dirname, '../../scripts/wps-comd.ps1');
+/** 桥进程入口（与客户端同时随包分发） */
+const BRIDGE_ENTRY = path.join(__dirname, '..', 'bridge', 'index.js');
 
-/** 起进程 + 握手就绪的上限 */
-const READY_TIMEOUT_MS = 20000;
-/** 单次动作上限。COM 动作可能很慢（大文档导出、第一次插图表要拉起 Excel），默认 120 秒。 */
-const CALL_TIMEOUT_MS = parseInt(process.env.WPS_DAEMON_TIMEOUT || '120000', 10);
+/** 桥起不来的情况下，等它监听管道的上限 */
+const BRIDGE_START_TIMEOUT_MS = parseInt(process.env.WPS_BRIDGE_START_TIMEOUT || '30000', 10);
+/** 单次动作上限（桥侧还有一层同样的超时）；每次调用时重读，便于按场景临时收紧 */
+function callTimeoutMs(): number {
+  const v = parseInt(process.env.WPS_DAEMON_TIMEOUT || '120000', 10);
+  return Number.isFinite(v) && v > 0 ? v : 120000;
+}
+/** 重连尝试间隔 */
+const RECONNECT_DELAY_MS = 300;
 
-/**
- * 守护进程【根本没跑起来】时抛这个 —— 调用方看到它可以安全地退回直跑，
- * 因为请求从未被送达。与之相对，超时错误的请求可能已经执行了一半，绝不能自动重放。
- */
+function defaultPipeName(): string {
+  let user = 'default';
+  try {
+    user = os.userInfo().username || 'default';
+  } catch {
+    /* ignore */
+  }
+  const safe = user.replace(/[^A-Za-z0-9_.-]/g, '_');
+  return `\\\\.\\pipe\\wps-office-mcp-${safe}`;
+}
+
+export const BRIDGE_PIPE = process.env.WPS_BRIDGE_PIPE || defaultPipeName();
+
+/** 桥【整条】不可用（请求从未送出）时抛这个；调用方可安全退回直跑。 */
 export class DaemonUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -55,41 +75,43 @@ interface PendingCall {
   timer: NodeJS.Timeout;
 }
 
-export class PsDaemon {
-  private proc: ChildProcess | null = null;
-  private stdoutBuf = '';
-  private pending = new Map<string, PendingCall>();
-  private starting: Promise<void> | null = null;
-  private ready = false;
-  private disposed = false;
-  /** 当前这个进程是什么时候起来的（诊断用） */
-  private startedAt: number | null = null;
-  /** 重建过几次（超时/异常导致的），诊断用 */
-  private restarts = 0;
+export interface BridgeClientStats {
+  enabled: boolean;
+  connected: boolean;
+  pipe: string;
+  bridgePid: number | null;
+  uptimeMs: number;
+  restarts: number;
+  pending: number;
+  disposed: boolean;
+}
 
-  /** 当前是否有一个已就绪的守护进程 */
+export class PsDaemon {
+  private sock: net.Socket | null = null;
+  private buf = '';
+  private pending = new Map<string, PendingCall>();
+  private connecting: Promise<void> | null = null;
+  private helloOk = false;
+  private disposed = false;
+  private connectedAt: number | null = null;
+  private restarts = 0;
+  private bridgeProc: ChildProcess | null = null;
+
   get isReady(): boolean {
-    return this.proc !== null && this.ready;
+    return this.sock !== null && this.helloOk;
   }
 
-  /** 在途请求数（诊断用） */
   get pendingCount(): number {
     return this.pending.size;
   }
 
-  /** 桥这一层的状态，给 wps_status 用 */
-  get stats(): {
-    ready: boolean;
-    pid: number | null;
-    uptimeMs: number;
-    restarts: number;
-    pending: number;
-    disposed: boolean;
-  } {
+  get stats(): BridgeClientStats {
     return {
-      ready: this.ready,
-      pid: this.proc?.pid ?? null,
-      uptimeMs: this.startedAt === null ? 0 : Date.now() - this.startedAt,
+      enabled: process.env.WPS_USE_DAEMON !== '0',
+      connected: this.isReady,
+      pipe: BRIDGE_PIPE,
+      bridgePid: this.bridgeProc?.pid ?? null,
+      uptimeMs: this.connectedAt === null ? 0 : Date.now() - this.connectedAt,
       restarts: this.restarts,
       pending: this.pending.size,
       disposed: this.disposed,
@@ -97,74 +119,90 @@ export class PsDaemon {
   }
 
   /**
-   * 调用一个动作。成功/业务失败都以响应对象 resolve；
-   * 只有【基础设施问题】（起不来、超时、进程退出）才 reject。
+   * 调用一个动作。业务成功/失败都以响应对象 resolve；只有基础设施问题才 reject。
    */
-  async call(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  async call(
+    action: string,
+    params: Record<string, unknown> = {},
+    app: string = 'common'
+  ): Promise<unknown> {
     if (this.disposed) {
-      throw new DaemonUnavailableError('守护进程已关闭（dispose 之后不再接受调用）');
+      throw new DaemonUnavailableError('桥客户端已关闭（dispose 之后不再接受调用）');
     }
-    await this.ensureStarted();
+    await this.ensureConnected();
 
     const id = uuidv4();
-    const line = JSON.stringify({ id, action, params });
+    const line = JSON.stringify({ id, action, params, app });
+    const timeoutMs = callTimeoutMs();
 
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        // 卡死就是整条连接死了：丢弃重建。不重试，见文件头说明。
-        log.error('守护进程动作超时，丢弃并重建', undefined, {
-          action,
-          id,
-          timeoutMs: CALL_TIMEOUT_MS,
-        });
-        this.kill();
+        // 卡住就判定这条连接死了：断开重连（下次调用重建桥连接），但不重放本请求
+        log.error('桥动作超时，断开连接', undefined, { action, app, id, timeoutMs });
+        this.dropSocket(new Error('桥连接因超时被断开'));
         reject(
           new Error(
-            `WPS 动作超时（${CALL_TIMEOUT_MS}ms）: ${action}。` +
-              '守护进程已重建，可重试；但因为原请求可能执行了一半，这里不自动重放。'
+            `WPS 动作超时（${timeoutMs}ms）: ${action}（应用=${app}）。` +
+              '桥连接已断开重连；因原请求可能执行了一半，这里不自动重放。'
           )
         );
-      }, CALL_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
       try {
-        if (!this.proc?.stdin || this.proc.stdin.destroyed) {
-          throw new Error('stdin 不可写');
-        }
-        this.proc.stdin.write(line + '\n');
+        if (!this.sock || this.sock.destroyed) throw new Error('桥连接不可写');
+        this.sock.write(line + '\n');
       } catch (err) {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(new Error(`写入守护进程失败: ${(err as Error).message}`));
+        reject(new Error(`写入桥失败: ${(err as Error).message}`));
       }
     });
   }
 
-  /** 关掉守护进程，用于进程退出时收尾 */
-  dispose(): void {
-    this.disposed = true;
-    this.kill();
+  /** 查桥自身状态（不落到 PowerShell）：桥 PID、各应用子进程状态等 */
+  async bridgeStatus(): Promise<unknown> {
+    return this.call('__bridgeStatus', {}, 'common');
   }
 
-  /** 杀掉当前进程并清理在途请求（下次调用会重建） */
-  kill(): void {
-    const p = this.proc;
-    this.proc = null;
-    this.ready = false;
-    if (p) {
+  /**
+   * 只断开客户端连接。默认【不杀桥】—— 桥要活过 server 重启，这是设计意图。
+   * WPS_BRIDGE_EPHEMERAL=1 时才顺手把桥停掉（测试用）。
+   */
+  dispose(): void {
+    this.disposed = true;
+    const ephemeral = process.env.WPS_BRIDGE_EPHEMERAL === '1';
+    if (ephemeral) {
       try {
-        p.stdin?.end();
+        this.sock?.end();
       } catch {
-        /* stdin 可能已经关了，忽略 */
+        /* ignore */
       }
       try {
-        p.kill();
+        this.bridgeProc?.kill();
       } catch {
-        /* 进程可能已经没了，忽略 */
+        /* ignore */
+      }
+      this.bridgeProc = null;
+    }
+    this.dropSocket(new Error('桥客户端已关闭'));
+    this.sock = null;
+    this.helloOk = false;
+  }
+
+  private dropSocket(err: Error): void {
+    const s = this.sock;
+    this.sock = null;
+    this.helloOk = false;
+    if (s) {
+      try {
+        s.destroy();
+      } catch {
+        /* ignore */
       }
     }
-    this.failAll(new Error('WPS 守护进程已退出，请重试'));
+    this.failAll(err);
   }
 
   private failAll(err: Error): void {
@@ -175,145 +213,178 @@ export class PsDaemon {
     this.pending.clear();
   }
 
-  private ensureStarted(): Promise<void> {
-    if (this.proc && this.ready) {
-      return Promise.resolve();
-    }
-    if (this.starting) {
-      return this.starting;
-    }
-    this.starting = this.start().finally(() => {
-      this.starting = null;
+  private ensureConnected(): Promise<void> {
+    if (this.sock && this.helloOk) return Promise.resolve();
+    if (this.connecting) return this.connecting;
+    this.connecting = this.connect().finally(() => {
+      this.connecting = null;
     });
-    return this.starting;
+    return this.connecting;
   }
 
-  private start(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      log.info('启动 WPS COM 守护进程', { script: PS_SCRIPT });
+  private async connect(): Promise<void> {
+    // 先试直接连（桥可能已经在跑了）
+    try {
+      await this.attachToPipe(1500);
+      return;
+    } catch {
+      /* 没桥，往下走：拉一个起来 */
+    }
 
-      let proc: ChildProcess;
+    this.spawnBridge();
+    const deadline = Date.now() + BRIDGE_START_TIMEOUT_MS;
+    let lastErr: Error = new Error('未知');
+    while (Date.now() < deadline) {
+      await sleep(RECONNECT_DELAY_MS);
       try {
-        proc = spawn(
-          'powershell',
-          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS_SCRIPT],
-          { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }
-        );
-      } catch (err) {
-        reject(new DaemonUnavailableError(`无法启动 PowerShell: ${(err as Error).message}`));
+        await this.attachToPipe(2000);
         return;
+      } catch (err) {
+        lastErr = err as Error;
       }
+    }
+    throw new DaemonUnavailableError(
+      `桥进程 ${BRIDGE_START_TIMEOUT_MS}ms 内未就绪（管道 ${BRIDGE_PIPE}）：${lastErr.message}`
+    );
+  }
 
-      this.proc = proc;
-      this.ready = false;
-      this.stdoutBuf = '';
-      if (this.startedAt !== null) {
-        this.restarts += 1;
-      }
-      this.startedAt = Date.now();
-
+  /** 连上管道并等到 hello 行（确认对面是个活桥，而不是半死进程） */
+  private attachToPipe(timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const sock = net.connect(BRIDGE_PIPE);
       let settled = false;
-      const readyTimer = setTimeout(() => {
+      const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        log.error('守护进程握手超时', undefined, { timeoutMs: READY_TIMEOUT_MS });
-        this.kill();
-        reject(
-          new DaemonUnavailableError(`WPS 守护进程 ${READY_TIMEOUT_MS}ms 内未完成握手`)
-        );
-      }, READY_TIMEOUT_MS);
+        try {
+          sock.destroy();
+        } catch {
+          /* ignore */
+        }
+        reject(new Error('连接桥超时（hello 未到）'));
+      }, timeoutMs);
 
-      const onReady = (): void => {
+      const finish = (err?: Error): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(readyTimer);
+        clearTimeout(timer);
+        if (err) {
+          try {
+            sock.destroy();
+          } catch {
+            /* ignore */
+          }
+          reject(err);
+          return;
+        }
+        this.attachSocket(sock);
         resolve();
       };
 
-      proc.stdout?.on('data', (chunk: Buffer) => this.onStdout(chunk, onReady));
-
-      proc.stderr?.on('data', (chunk: Buffer) => {
-        const s = chunk.toString('utf8').trim();
-        if (s) {
-          log.warn('守护进程 stderr', { stderr: s.substring(0, 400) });
+      sock.setNoDelay(true);
+      let handshakeBuf = '';
+      sock.on('data', function onHello(chunk: Buffer) {
+        handshakeBuf += chunk.toString('utf8');
+        const idx = handshakeBuf.indexOf('\n');
+        if (idx < 0) return;
+        const line = handshakeBuf.slice(0, idx).trim();
+        sock.off('data', onHello);
+        try {
+          const msg = JSON.parse(line) as Record<string, unknown>;
+          if (msg.type !== 'hello') throw new Error('桥未按协议发 hello');
+        } catch (err) {
+          finish(new Error(`桥握手失败: ${(err as Error).message}`));
+          return;
         }
+        finish();
       });
 
-      proc.on('error', (err: Error) => {
-        clearTimeout(readyTimer);
-        this.proc = null;
-        this.ready = false;
-        log.error('守护进程启动出错', err);
-        this.failAll(new Error(`WPS 守护进程出错: ${err.message}`));
-        if (!settled) {
-          settled = true;
-          reject(new DaemonUnavailableError(`无法启动 PowerShell 守护进程: ${err.message}`));
-        }
-      });
-
-      proc.on('exit', (code, signal) => {
-        clearTimeout(readyTimer);
-        if (this.proc === proc) {
-          this.proc = null;
-          this.ready = false;
-        }
-        log.warn('守护进程退出', { code, signal });
-        this.failAll(new Error(`WPS 守护进程已退出（code=${code} signal=${signal}），请重试`));
-        if (!settled) {
-          settled = true;
-          reject(new DaemonUnavailableError(`WPS 守护进程启动后立即退出（code=${code}）`));
-        }
-      });
+      sock.on('error', (err: Error) => finish(err));
     });
   }
 
-  /** 按行切分 stdout，各自当一条响应处理 */
-  private onStdout(chunk: Buffer, onReady: () => void): void {
-    this.stdoutBuf += chunk.toString('utf8');
-
-    let idx = this.stdoutBuf.indexOf('\n');
-    while (idx >= 0) {
-      const line = this.stdoutBuf.slice(0, idx).trim();
-      this.stdoutBuf = this.stdoutBuf.slice(idx + 1);
-
-      if (line) {
-        this.handleLine(line, onReady);
+  /** 把一个已完成握手的 socket 接进收发循环 */
+  private attachSocket(sock: net.Socket): void {
+    const old = this.sock;
+    if (old) {
+      try {
+        old.destroy();
+      } catch {
+        /* ignore */
       }
-      idx = this.stdoutBuf.indexOf('\n');
     }
+    if (this.connectedAt !== null) this.restarts += 1;
+    this.connectedAt = Date.now();
+    this.sock = sock;
+    this.helloOk = true;
+    this.buf = '';
+
+    sock.on('data', (chunk: Buffer) => {
+      this.buf += chunk.toString('utf8');
+      let idx = this.buf.indexOf('\n');
+      while (idx >= 0) {
+        const line = this.buf.slice(0, idx).trim();
+        this.buf = this.buf.slice(idx + 1);
+        if (line) this.handleLine(line);
+        idx = this.buf.indexOf('\n');
+      }
+    });
+
+    sock.on('close', () => {
+      if (this.sock === sock) {
+        this.helloOk = false;
+        this.sock = null;
+        this.failAll(new Error('桥连接已关闭，请重试'));
+      }
+    });
+    sock.on('error', (err: Error) => {
+      log.warn('桥连接出错', { error: err.message });
+    });
+
+    log.info('已连上 WPS 桥', { pipe: BRIDGE_PIPE });
   }
 
-  private handleLine(line: string, onReady: () => void): void {
+  private handleLine(line: string): void {
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(line) as Record<string, unknown>;
     } catch {
-      // 守护进程只应输出 JSON；出现别的说明有东西污染了 stdout，如实报出来别吞掉
-      log.warn('守护进程输出非 JSON，已忽略', { line: line.substring(0, 200) });
+      log.warn('桥输出非 JSON，已忽略', { line: line.substring(0, 200) });
       return;
     }
-
-    const data = msg.data as Record<string, unknown> | undefined;
-    if (!this.ready && data && data.ready === true) {
-      this.ready = true;
-      log.info('守护进程就绪', { pid: data.pid });
-      onReady();
-      return;
-    }
-
     const id = typeof msg.id === 'string' ? msg.id : undefined;
     const pending = id ? this.pending.get(id) : undefined;
     if (!pending || !id) {
-      log.warn('收到无对应请求的响应', { id, body: line.substring(0, 200) });
+      log.warn('收到无对应请求的桥响应', { id, body: line.substring(0, 200) });
       return;
     }
     clearTimeout(pending.timer);
     this.pending.delete(id);
     pending.resolve(msg);
   }
+
+  private spawnBridge(): void {
+    try {
+      const child = spawn(process.execPath, [BRIDGE_ENTRY], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: process.env,
+      });
+      child.unref();
+      this.bridgeProc = child;
+      log.info('已拉起 WPS 桥进程', { pid: child.pid, entry: BRIDGE_ENTRY, pipe: BRIDGE_PIPE });
+    } catch (err) {
+      log.error('拉起桥进程失败', err as Error);
+    }
+  }
 }
 
-/** 全局单例：一个 MCP server 进程只维护一个守护进程 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** 全局单例：一个 MCP server 进程只维护一个桥客户端（连接） */
 export const psDaemon = new PsDaemon();
 
 export default psDaemon;

@@ -27,6 +27,7 @@ import { log, logRequest, logResponse } from '../utils/logger';
 import { errorUtils } from '../utils/error';
 import { macPollServer } from './mac-poll-server';
 import { psDaemon, DaemonUnavailableError } from './ps-daemon';
+import { AppKey, resolveAppKey } from './action-routes';
 
 // 平台判断
 const PLATFORM = os.platform();
@@ -167,20 +168,24 @@ async function execPowerShell(action: string, params: Record<string, unknown> = 
  * Mac/Linux: 反向轮询模式（MCP Server是服务端，WPS加载项来取命令）
  * Windows:   常驻守护进程优先，起不来则退回一调用一进程的直跑方式
  */
-async function execWpsAction(action: string, params: Record<string, unknown> = {}): Promise<unknown> {
+async function execWpsAction(
+  action: string,
+  params: Record<string, unknown> = {},
+  app: AppKey = 'common'
+): Promise<unknown> {
   if (USE_POLL) {
     return execMacPoll(action, params);
   }
 
   if (USE_DAEMON && !daemonBroken) {
     try {
-      return await psDaemon.call(action, params);
+      return await psDaemon.call(action, params, app);
     } catch (err) {
-      // 只有"请求压根没送出去"（进程起不来）才允许退回直跑。
+      // 只有"请求压根没送出去"（桥起不来）才允许退回直跑。
       // 超时那类错误请求可能已经在 WPS 里执行了一半，自动重放会变成执行两次 —— 一律如实抛出。
       if (err instanceof DaemonUnavailableError) {
         daemonBroken = true;
-        log.warn('守护进程不可用，本进程后续改用直跑模式', { reason: err.message });
+        log.warn('桥不可用，本进程后续改用直跑模式', { reason: err.message });
       } else {
         throw err;
       }
@@ -206,13 +211,18 @@ export class WpsClient {
 
   /**
    * 调用WPS接口（跨平台）
+   * @param app 显式指定走哪一路子进程；不传则按动作名自动解析（见 action-routes）
    */
-  async invokeAction<T = unknown>(action: string, params: Record<string, unknown> = {}): Promise<WpsApiResponse<T>> {
+  async invokeAction<T = unknown>(
+    action: string,
+    params: Record<string, unknown> = {},
+    app?: AppKey
+  ): Promise<WpsApiResponse<T>> {
     const startTime = Date.now();
     logRequest(action, params);
 
     try {
-      const result = await execWpsAction(action, params) as WpsApiResponse<T>;
+      const result = (await execWpsAction(action, params, app ?? resolveAppKey(action))) as WpsApiResponse<T>;
       const duration = Date.now() - startTime;
       logResponse(action, result.success, duration);
 
@@ -353,6 +363,11 @@ export class WpsClient {
 
   // ==================== 通用操作 ====================
 
+  /**
+   * 通用方法调用入口。
+   * appType 是调用点声明的目标应用，会被翻译成桥的应用键（excel/word/ppt），
+   * 从而落到对应的常驻子进程上 —— 这是 per-app 隔离的关键，别把它丢掉。
+   */
   async executeMethod<T = unknown>(
     method: string,
     params?: Record<string, unknown>,
@@ -363,7 +378,7 @@ export class WpsClient {
     if (appType === WpsAppType.PRESENTATION && pptTargetName && finalParams.presentationName === undefined) {
       finalParams = { ...finalParams, presentationName: pptTargetName };
     }
-    return this.invokeAction<T>(method, finalParams);
+    return this.invokeAction<T>(method, finalParams, resolveAppKey(method, appType));
   }
 
   async openFile(filePath: string, _appType?: WpsAppType): Promise<boolean> {
