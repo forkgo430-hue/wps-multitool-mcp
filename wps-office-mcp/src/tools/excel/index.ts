@@ -17,6 +17,7 @@ import { workbookTools } from './workbook';
 import { dataAdvancedTools } from './data-advanced';
 import { rowColumnTools } from './row-column';
 import { commentProtectTools } from './comment-protect';
+import { sheetGapsTools } from './sheet-gaps';
 
 /**
  * 所有Excel相关的Tools
@@ -36,6 +37,7 @@ export const excelTools: RegisteredTool[] = [
   ...pivotTools,
   ...chartTools,
   ...sheetTools,
+  ...sheetGapsTools,
   ...excelFormatTools,
   ...workbookTools,
   ...dataAdvancedTools,
@@ -49,6 +51,7 @@ export { dataTools } from './data';
 export { pivotTools } from './pivot';
 export { chartTools } from './chart';
 export { sheetTools } from './sheet';
+export { sheetGapsTools } from './sheet-gaps';
 export { excelFormatTools } from './format';
 export { workbookTools } from './workbook';
 export { dataAdvancedTools } from './data-advanced';

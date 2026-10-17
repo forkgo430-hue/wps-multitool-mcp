@@ -40,6 +40,7 @@ const FAST = [
 
 /** 要起子进程 / 真跑 PowerShell 的重测 */
 const HEAVY = [
+  ['excel-caps-probe.js', 'Excel 能力探测（需 WPS）'],
   ['annotation-e2e.js', '注解端到端（真起 stdio server）'],
   ['bridge-test.js', '桥进程'],
   ['cancel-verify.js', '取消机制（真跑 PowerShell）'],

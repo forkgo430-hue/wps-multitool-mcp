@@ -10,7 +10,7 @@ AI编程助手通过自然语言操控WPS Office的MCP工具集。
 ## 项目定位
 
 本项目是MCP Server + Skills框架，让AI助手（Claude Code/Cursor/Augment等）能操控WPS Office。
-- **285 个工具**（12 个内置 + 273 个专业/组工具）；**默认只列 40 个**（基础档，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
+- **296 个工具**（12 个内置 + 284 个专业/组工具）；**默认只列 40 个**（基础档，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
 - 分布（实测）：Excel 82 / Word 58 / PPT 115 / 通用 13 / 核心 5
 - 每个工具都带 MCP 注解（`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`），
   客户端从 `tools/list` 直接读到读写与破坏性，不必靠描述猜

@@ -516,6 +516,54 @@ const CURATED: Record<
     aliases: ['清缓存', '清空暂存', '删掉暂存数据'],
     notFor: ['只清 MCP 进程的内存暂存，不动你的文档'],
   },
+
+  // ===== 第 4 期补齐的 Excel 高频缺口 =====
+  wps_excel_get_sheet_info: {
+    aliases: ['表详情', '表多大', '用到哪', '隐藏行列', '数据范围'],
+    examples: ['这张表有多少行', 'A 列藏起来了吗'],
+    notFor: ['只给表名与可见性用 wps_excel_get_sheet_list；读具体内容用 wps_excel_read_range'],
+  },
+  wps_excel_auto_fit: {
+    aliases: ['自适应', '自动调整列宽', '自动列宽', '双击列宽', '合适的宽度'],
+    examples: ['列宽按内容调一下', '把列宽自适应一下'],
+    notFor: ['只设固定宽度用 wps_excel_set_column_width / set_row_height'],
+  },
+  wps_excel_set_wrap_text: {
+    aliases: ['自动换行', '换行显示', '文字折行'],
+    notFor: ['只改显示不改内容；合并单元格用 wps_excel_merge_cells'],
+  },
+  wps_excel_find_in_sheet: {
+    aliases: ['表内查找', '在哪', '这个数在哪', '找一下这个值'],
+    examples: ['"张伟"出现在哪几行', '编号 1001 在哪'],
+    notFor: ['只读不改；要替换内容用 wps_excel_find_replace'],
+  },
+  wps_excel_delete_chart: {
+    aliases: ['删图表', '删除图表', '把图删了', '图表删掉'],
+    notFor: ['只改图表样式/数据用 wps_excel_update_chart'],
+  },
+  wps_excel_get_pivot_tables: {
+    aliases: ['透视表列表', '有哪些透视表', '透视表现在什么样'],
+    notFor: ['只查表名与区域；改透视表用 wps_excel_update_pivot_table'],
+  },
+  wps_excel_refresh_pivot_tables: {
+    aliases: ['刷新透视表', '透视表更新', '数据没变'],
+    examples: ['源数据改了，透视表数字没变'],
+    notFor: ['只改透视表布局用 wps_excel_update_pivot_table'],
+  },
+  wps_excel_clear_pivot_table: {
+    aliases: ['清空透视表', '透视表重置', '把透视表内容清掉'],
+    notFor: ['保留位置与格式只清数据；彻底删掉透视表目前没有工具'],
+  },
+  wps_excel_set_sheet_page_setup: {
+    aliases: ['页面设置', '打印设置', '横向打印', '缩放到一页', '纸张大小'],
+    examples: ['横向打印', 'A4 纸', '缩放到一页宽'],
+    notFor: ['只划打印区域用 wps_excel_set_print_area；每页重复表头用 wps_excel_set_sheet_print_titles'],
+  },
+  wps_excel_set_sheet_print_titles: {
+    aliases: ['打印标题', '每页重复表头', '重复表头行', '每页都有表头'],
+    examples: ['第二页开始也要有表头'],
+    notFor: ['横向/纸张/缩放用 wps_excel_set_sheet_page_setup'],
+  },
 };
 
 /** 把 wps_word_insert_table 拆成词根（丢掉应用前缀） */

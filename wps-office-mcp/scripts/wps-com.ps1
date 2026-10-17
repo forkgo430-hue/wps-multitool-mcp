@@ -2051,6 +2051,448 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ sheets = $sheets; count = $sheets.Count; activeSheet = $excel.ActiveSheet.Name } }
     }
 
+    # ===== 第 4 期补齐（对齐 dsh-plugin-wps-office-next 的高频缺口）=====
+    # 逐条说明"为什么缺它会真的卡住"，不是凑数。
+    # 真机支持情况见 __probeCaps 的对应项；未验的一律走 warnings，不假装成功。
+
+    # 表详情：以前只有 getSheetList（表名 + 可见性），用户问"这张表多大 / 用到哪 /
+    # 哪些行被藏了"只能瞎猜。UsedRange 一次给全。
+    "getSheetInfo" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $used = $sheet.UsedRange
+        $hiddenRows = 0
+        try {
+            for ($r = 1; $r -le $used.Rows.Count; $r++) {
+                if ($used.Rows.Item($r).Hidden) { $hiddenRows++ }
+            }
+        } catch { }
+        $hiddenCols = 0
+        try {
+            for ($c = 1; $c -le $used.Columns.Count; $c++) {
+                if ($used.Columns.Item($c).Hidden) { $hiddenCols++ }
+            }
+        } catch { }
+        Output-Json @{ success = $true; data = @{
+            sheet = $sheet.Name
+            usedRange = [string]$used.Address($false, $false)
+            rows = $used.Rows.Count
+            columns = $used.Columns.Count
+            firstRow = $used.Row
+            firstColumn = $used.Column
+            hiddenRows = $hiddenRows
+            hiddenColumns = $hiddenCols
+            charts = $(try { $sheet.ChartObjects().Count } catch { 0 })
+            hasData = $(try { ($used.Cells.Item(1,1).Value2 -ne $null) } catch { $false })
+        } }
+    }
+
+    # 列宽/行高自适应：以前只能 set_column_width 手填 px/字符数，
+    # 中文表头一换就得逐列重调 —— 这是表格排版最高频的重复劳动。
+    "autoFit" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $range = if ($p.range) { $sheet.Range([string]$p.range) } else { $sheet.UsedRange }
+        # dimension 不给就两个都做 —— 用户说"自适应"时的默认预期就是全都要
+        $dim = if ($p.dimension) { [string]$p.dimension } else { "both" }
+        $did = @()
+        if ($dim -eq "column" -or $dim -eq "both") {
+            $range.EntireColumn.AutoFit() | Out-Null
+            $did += "column"
+        }
+        if ($dim -eq "row" -or $dim -eq "both") {
+            $range.EntireRow.AutoFit() | Out-Null
+            $did += "row"
+        }
+        Output-Json @{ success = $true; data = @{
+            sheet = $sheet.Name
+            dimension = $dim
+            applied = $did
+            # 行高自适应对合并单元格会抛错，属已知限制；说明白好过静默失败
+            note = if ($did -contains "row") { "行高自适应遇到合并单元格时会跳过那些行（WPS 限制）" } else { $null }
+        } }
+    }
+
+    # 自动换行：表格里最常碰的排版动作，之前完全没有
+    "setWrapText" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $range = if ($p.range) { $sheet.Range([string]$p.range) } else { $sheet.UsedRange }
+        $want = if ($null -eq $p.enabled) { $true } else { [bool]$p.enabled }
+        $range.WrapText = $want
+        Output-Json @{ success = $true; data = @{ range = [string]$range.Address($false,$false); wrapText = $want } }
+    }
+
+    # 表内查找：以前只有 find_replace（改），没有"找"。用户问"这个数在哪"无从下手。
+    # 只读，不改任何内容。
+    "findInSheet" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $what = if ($p.value) { [string]$p.value } elseif ($p.find) { [string]$p.find } else { $null }
+        if (-not $what) { Output-Json @{ success = $false; error = "value/find required" }; return }
+        $scope = if ($p.range) { $sheet.Range([string]$p.range) } else { $sheet.UsedRange }
+        $matchCase = if ($null -eq $p.matchCase) { $false } else { [bool]$p.matchCase }
+        $wholeCell = if ($null -eq $p.wholeCell) { $false } else { [bool]$p.wholeCell }
+        $found = @()
+        # 逐单元格扫，不用 Range.Find —— WPS 的 Find 参数签名与 Excel 有出入，
+        # 而 FindNext 在空结果时会抛异常，边界比逐格扫难处理。
+        try {
+            $rows = $scope.Rows.Count
+            $cols = $scope.Columns.Count
+            if ($rows * $cols -gt 200000) {
+                Output-Json @{ success = $false; error = "查找范围过大（$rows×$cols），请用 range 参数缩小" }; return
+            }
+            for ($r = 1; $r -le $rows; $r++) {
+                for ($c = 1; $c -le $cols; $c++) {
+                    $cell = $scope.Cells.Item($r, $c)
+                    $v = $cell.Value2
+                    if ($null -eq $v) { continue }
+                    $s = if ($v -is [double] -or $v -is [int]) { [string]$v } else { [string]$v }
+                    $hit = if ($matchCase) { $s.Contains($what) } else { $s.IndexOf($what, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+                    if (-not $hit) { continue }
+                    if ($wholeCell) {
+                        $equal = if ($matchCase) { $s -ceq $what } else { $s -ieq $what }
+                        if (-not $equal) { continue }
+                    }
+                    $found += @{
+                        address = [string]$cell.Address($false, $false)
+                        row = $cell.Row
+                        column = $cell.Column
+                        value = $s
+                        formula = $(try { [string]$cell.Formula } catch { $null })
+                    }
+                    if ($p.maxResults -and $found.Count -ge [int]$p.maxResults) { break }
+                }
+                if ($p.maxResults -and $found.Count -ge [int]$p.maxResults) { break }
+            }
+        } catch {
+            Output-Json @{ success = $false; error = "查找出错: $(Get-CallError $_)" }; return
+        }
+        Output-Json @{ success = $true; data = @{
+            keyword = $what
+            count = $found.Count
+            matches = $found
+            scope = [string]$scope.Address($false, $false)
+        } }
+    }
+
+    # 删除图表：以前只有 create_chart / update_chart，建错了删不掉 —— COM 没有撤销
+    "deleteChart" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $total = $sheet.ChartObjects().Count
+        if ($total -eq 0) {
+            Output-Json @{ success = $false; error = "该工作表没有图表（ChartObjects 数量为 0）" }; return
+        }
+        $deleted = @()
+        $idx = $null
+        if ($p.index) { $idx = [int]$p.index }
+        elseif ($p.name) {
+            for ($i = 1; $i -le $total; $i++) {
+                if ($sheet.ChartObjects().Item($i).Name -eq [string]$p.name) { $idx = $i; break }
+            }
+            if ($null -eq $idx) {
+                $names = @()
+                for ($i = 1; $i -le $total; $i++) { $names += [string]$sheet.ChartObjects().Item($i).Name }
+                Output-Json @{ success = $false; error = "找不到名为 $($p.name) 的图表。现有：$($names -join ', ')" }; return
+            }
+        } else {
+            $idx = $total  # 不指定就删最后一个（等价 UI 里"撤销插入图表"）
+        }
+        $obj = $sheet.ChartObjects().Item($idx)
+        $deleted += [string]$obj.Name
+        $obj.Delete()
+        $remaining = $sheet.ChartObjects().Count
+        Output-Json @{ success = $true; data = @{
+            deleted = $deleted
+            remaining = $remaining
+            note = if ($p.index -or $p.name) { $null } else { "没指定 index/name，删的是最后一个图表" }
+            warnings = @()
+        } }
+    }
+
+    # 透视表：以前只有 create/update。建完看不到有哪些、源数据变了刷不了、
+    # 改错了清不掉 —— 三个出口全缺。
+    "getPivotTables" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        # ⚠️ 实测：WPS 12.1 的【工作簿级】Workbook.PivotTables() 会抛异常，
+        #    工作表级 Sheet.PivotTables() 正常。所以先走 sheet 级；
+        #    只有调用方明确要"整个工作簿"时才试工作簿级，且失败要说清是版本限制。
+        $list = @()
+        $warnings = @()
+        $scopeNames = @()
+        if ($p.sheet) {
+            $scopeNames += [string]$p.sheet
+        } else {
+            for ($i = 1; $i -le $wb.Sheets.Count; $i++) { $scopeNames += [string]$wb.Sheets.Item($i).Name }
+        }
+        foreach ($sn in $scopeNames) {
+            $sh = $wb.Sheets.Item($sn)
+            $src = $null
+            try { $src = $sh.PivotTables() } catch { $src = $null }
+            if ($null -eq $src) { continue }
+            for ($i = 1; $i -le $src.Count; $i++) {
+                $pt = $src.Item($i)
+                $list += @{
+                    name = [string]$pt.Name
+                    sheet = $sn
+                    tableRange1 = $(try { [string]$pt.TableRange1.Address($false,$false) } catch { $null })
+                    rowFields = $(try { $pt.RowFields.Count } catch { 0 })
+                    columnFields = $(try { $pt.ColumnFields.Count } catch { 0 })
+                    dataFields = $(try { $pt.DataFields.Count } catch { 0 })
+                }
+            }
+        }
+        if (-not $p.sheet) {
+            # 补一句实测到的限制，别让调用方以为"工作簿级接口挂了是 bug"
+            $warnings = @(@{
+                step = "getPivotTables"
+                message = "本机 WPS 12.1 的工作簿级 PivotTables() 不支持，已改为逐个工作表扫（结果等价）。"
+            })
+        }
+        Output-Json @{ success = $true; data = @{
+            count = $list.Count
+            pivotTables = $list
+            scope = $(if ($p.sheet) { $p.sheet } else { "整个工作簿（逐表扫描）" })
+            warnings = $warnings
+        } }
+    }
+
+    "refreshPivotTables" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        # WPS 12.1 的 Workbook.PivotTables() 不通（实测），逐个工作表扫
+        $refreshed = @()
+        $failed = @()
+        for ($i = 1; $i -le $wb.Sheets.Count; $i++) {
+            $sh = $wb.Sheets.Item($i)
+            $src = $null
+            try { $src = $sh.PivotTables() } catch { continue }
+            for ($j = 1; $j -le $src.Count; $j++) {
+                $pt = $src.Item($j)
+                if ($p.name -and ([string]$pt.Name) -ne [string]$p.name) { continue }
+                try {
+                    $pt.RefreshTable() | Out-Null
+                    $refreshed += [string]$pt.Name
+                } catch {
+                    $failed += "$($pt.Name): $(Get-CallError $_)"
+                }
+            }
+        }
+        $warnings = @()
+        if ($p.name -and $refreshed.Count -eq 0) {
+            $warnings = @(@{ step = "refreshPivotTables"; message = "整个工作簿里没有名为「$($p.name)」的透视表（先查 wps_excel_get_pivot_tables）" })
+        }
+        if ($failed.Count -gt 0) {
+            $warnings += @(@{ step = "refreshPivotTables"; message = "有透视表刷不了：$($failed -join '；')" })
+        }
+        Output-Json @{ success = $true; data = @{
+            scope = $(if ($p.name) { "指定" } else { "全部" })
+            refreshed = $refreshed
+            failedCount = $failed.Count
+            warnings = $warnings
+        } }
+    }
+
+    # 清透视表（保留位置与格式、只清数据与字段布局）—— 比 Delete 安全，常用
+    "clearPivotTable" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        if (-not $p.name) { Output-Json @{ success = $false; error = "name required（要清哪一个透视表）" }; return }
+        $found = $null
+        for ($i = 1; $i -le $wb.Sheets.Count; $i++) {
+            $src = $null
+            try { $src = $wb.Sheets.Item($i).PivotTables() } catch { continue }
+            for ($j = 1; $j -le $src.Count; $j++) {
+                if (([string]$src.Item($j).Name) -eq [string]$p.name) { $found = $src.Item($j); break }
+            }
+            if ($found) { break }
+        }
+        if ($null -eq $found) {
+            Output-Json @{ success = $false; error = "整个工作簿里没有名为「$($p.name)」的透视表（先查 wps_excel_get_pivot_tables）" }
+            return
+        }
+        try {
+            $found.ClearTable()
+            Output-Json @{ success = $true; data = @{ cleared = [string]$found.Name; note = "ClearTable 保留透视表位置与格式，只清掉数据与字段布局" } }
+        } catch {
+            Output-Json @{ success = $false; error = "清透视表失败: $(Get-CallError $_)" }
+        }
+    }
+
+    # 页面设置：以前只有 set_print_area。多页表打印时"每页重复表头"、
+    # 横向打印、纸张大小这些高频需求全做不了
+    "setSheetPageSetup" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        $ps = $sheet.PageSetup
+        $applied = @()
+        $failed = @()
+        # 逐属性设、逐属性容错：WPS 对纸张枚举的支持与 Excel 不完全一致，
+        # 一个属性失败不该让整次调用失败（那是"部分成功"的典型场景）
+        if ($p.orientation) {
+            try {
+                $o = ([string]$p.orientation).ToLower()
+                if ($o -eq "landscape") { $ps.Orientation = 2 }
+                elseif ($o -eq "portrait") { $ps.Orientation = 1 }
+                else { $failed += "orientation(值不认识:$($p.orientation))" }
+                if ($failed.Count -eq 0 -or $failed[-1] -notlike "orientation*") { $applied += "orientation" }
+            } catch { $failed += "orientation" }
+        }
+        if ($null -ne $p.zoom) {
+            try { $ps.Zoom = [int]$p.zoom; $applied += "zoom" } catch { $failed += "zoom" }
+        }
+        if ($p.paperSize) {
+            try { $ps.PaperSize = [int]$p.paperSize; $applied += "paperSize" } catch { $failed += "paperSize" }
+        }
+        if ($null -ne $p.zoomFitWidth -or $null -ne $p.zoomFitHeight) {
+            try {
+                $ps.Zoom = $false   # 先关缩放才能设 FitTo
+                $ps.FitToPagesWide = $(if ($null -ne $p.zoomFitWidth) { [int]$p.zoomFitWidth } else { $ps.FitToPagesWide })
+                $ps.FitToPagesTall = $(if ($null -ne $p.zoomFitHeight) { [int]$p.zoomFitHeight } else { $ps.FitToPagesTall })
+                $applied += "fitToPages"
+            } catch { $failed += "fitToPages" }
+        }
+        $warnings = @()
+        if ($failed.Count -gt 0) {
+            $warnings = @(@{ step = "setSheetPageSetup"; message = "以下属性本机 WPS 不接受：$($failed -join '/')。其余已设上。" })
+        }
+        Output-Json @{ success = $true; data = @{
+            sheet = $sheet.Name
+            applied = $applied
+            failed = $failed
+            warnings = $warnings
+        } }
+    }
+
+    # 每页重复表头行：多页表的刚需
+    "setSheetPrintTitles" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $(Resolve-Book $excel $p)
+        if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+        $sheet = if ($p.sheet) { $wb.Sheets.Item([string]$p.sheet) } else { $excel.ActiveSheet }
+        if ($p.rows) {
+            $sheet.PageSetup.PrintTitleRows = [string]$p.rows
+            Output-Json @{ success = $true; data = @{ sheet = $sheet.Name; printTitleRows = [string]$p.rows } }
+        } elseif ($p.columns) {
+            $sheet.PageSetup.PrintTitleColumns = [string]$p.columns
+            Output-Json @{ success = $true; data = @{ sheet = $sheet.Name; printTitleColumns = [string]$p.columns } }
+        } elseif ($p.clear) {
+            $sheet.PageSetup.PrintTitleRows = ""
+            $sheet.PageSetup.PrintTitleColumns = ""
+            Output-Json @{ success = $true; data = @{ sheet = $sheet.Name; cleared = $true } }
+        } else {
+            # 单引号：$1:$1 里的 $ 在单引号里是字面量。用双引号会被当成变量引用
+            # "变量引用无效，':' 后面的变量名称字符无效" —— 踩过。
+            Output-Json @{ success = $false; error = 'rows / columns / clear 三选一必填（例：rows = $1:$1 表示第 1 行作表头）' }
+        }
+    }
+
+    # Excel 侧能力探测。与 __probeCaps（Word 侧）分开：两者的 COM 对象模型
+    # 完全不同，混在一起探测的结果没法归因。
+    #
+    # 自建工作簿而不是用用户当前打开的表 —— 探测里有"真的改"的操作
+    # （AutoFit / WrapText / PageSetup），绝不能碰用户的文档。
+    # 建完必删；删不掉会在 note 里报出来，不静默留垃圾。
+    "__probeExcelCaps" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $wb = $null
+        try {
+            $wb = $excel.Workbooks.Add()
+        } catch {
+            Output-Json @{ success = $false; error = "建临时工作簿失败: $(Get-CallError $_)" }
+            return
+        }
+        $caps = [ordered]@{}
+        # 造一点数据：空表上很多探测项会被静默跳过（Count=0），测出来是假的支持
+        try {
+            $sh = $wb.Worksheets.Item(1)
+            for ($r = 1; $r -le 3; $r++) {
+                for ($c = 1; $c -le 3; $c++) {
+                    $sh.Cells.Item($r, $c).Value2 = "v${r}_${c}"
+                }
+            }
+        } catch { }
+
+        # ---- 第 4 期新增接口 ----
+        $caps["sheet.usedRange"]    = { $u = $wb.Worksheets.Item(1).UsedRange
+                                          if ($u.Rows.Count -lt 1) { throw "UsedRange 为空，探测无意义" } }
+        $caps["sheet.autoFitColumn"] = { $col = $wb.Worksheets.Item(1).Columns.Item(1); $w0 = $col.ColumnWidth
+                                          $col.EntireColumn.AutoFit() | Out-Null
+                                          try { $col.ColumnWidth = $w0 } catch { } }
+        $caps["sheet.autoFitRow"]    = { $row = $wb.Worksheets.Item(1).Rows.Item(1); $h0 = $row.RowHeight
+                                          $row.EntireRow.AutoFit() | Out-Null
+                                          try { $row.RowHeight = $h0 } catch { } }
+        $caps["sheet.wrapText"]      = { $c = $wb.Worksheets.Item(1).Range("A1"); $o = $c.WrapText
+                                          try { $c.WrapText = $true } finally { $c.WrapText = $o } }
+        $caps["sheet.findRead"]      = { $v = $wb.Worksheets.Item(1).Range("A1").Value2
+                                          if ($null -eq $v) { throw "A1 没值，探测无意义" } }
+        $caps["sheet.chartObjects"]  = { $n = $wb.Worksheets.Item(1).ChartObjects().Count
+                                          if ($n -ne 0) { throw "新建工作簿不该有图表，实际 $n" } }
+        $caps["sheet.pivotTables"]   = { $n = $wb.PivotTables().Count
+                                          if ($n -ne 0) { throw "新建工作簿不该有透视表，实际 $n" } }
+        # 工作簿级 PivotTables() 在 WPS 12.1 上抛异常（实测，见 probe 输出），
+        # 所以真正常用的是【工作表级】Sheet.PivotTables()。两条路分开探，别混。
+        $caps["sheet.pivotTablesOnSheet"] = { $n = $wb.Worksheets.Item(1).PivotTables().Count
+                                          if ($n -ne 0) { throw "新建工作簿不该有透视表，实际 $n" } }
+        $caps["sheet.pageSetup"]     = { $ps = $wb.Worksheets.Item(1).PageSetup; $o = $ps.Orientation
+                                          try { $ps.Orientation = 2 } finally { $ps.Orientation = $o } }
+        $caps["sheet.pageSetupZoom"] = { $ps = $wb.Worksheets.Item(1).PageSetup; $o = $ps.Zoom
+                                          try { $ps.Zoom = 80 } finally { $ps.Zoom = $o } }
+        $caps["sheet.printTitles"]   = { $ps = $wb.Worksheets.Item(1).PageSetup
+                                          $ps.PrintTitleRows = '$1:$1'
+                                          $got = $ps.PrintTitleRows
+                                          if ($got -notmatch '1') { throw "设置后读回来不是第1行（实际=$got）" }
+                                          $ps.PrintTitleRows = '' }
+
+        $supported = 0; $unsupported = @(); $leaked = @()
+        foreach ($k in $caps.Keys) {
+            try {
+                & $caps[$k] | Out-Null
+                $supported++
+            } catch {
+                $unsupported += $k
+            }
+        }
+        $note = $null
+        try { $wb.Close($false) } catch { $leaked += "临时工作簿删不掉：$(Get-CallError $_)" }
+        Output-Json @{ success = $true; data = @{
+            total = $caps.Count
+            supported = $supported
+            unsupported = $unsupported
+            leaked = $leaked
+            note = $(if ($leaked.Count -gt 0) { $leaked -join '；' } else { $null })
+            warning = "探测在临时工作簿上跑（改完改回），不会碰你的文档。"
+        } }
+    }
+
     "switchSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
