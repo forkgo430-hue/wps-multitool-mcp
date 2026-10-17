@@ -24,6 +24,7 @@ import { onToolGroupsChanged } from '../tools/common/toolgroups';
 import { createChildLogger } from '../utils/logger';
 import { McpError, formatWpsErrorTag, WpsErrorType } from '../utils/error';
 import { runWithCancel } from './cancel-context';
+import { getToolAnnotations } from './tool-annotations';
 import { CancelError } from '../bridge/cancellable';
 import { MCP_NAME, MCP_VERSION } from '../version';
 
@@ -112,11 +113,17 @@ export class WpsMcpServer {
       });
 
       return {
-        tools: tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        })),
+        tools: tools.map((tool) => {
+          const annotations = getToolAnnotations(tool.name);
+          return {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+            // 注解必须【嵌套】在 annotations 里。铺在顶层客户端会整个忽略 ——
+            // 这坑踩过：单测全绿，端到端才发现 40 个工具一个注解都没透出去。
+            ...(annotations ? { annotations } : {}),
+          };
+        }),
       };
     });
 

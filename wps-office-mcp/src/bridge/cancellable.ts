@@ -34,6 +34,16 @@ export class CancelError extends Error {
 /** 一眼就是只读的动作前缀 */
 const READ_ONLY_PREFIXES = ['get', 'list', 'read', 'find', 'query', 'probe', 'ping', 'check', 'caps', 'diagnose'];
 
+/**
+ * 名字带 find/探测味、但其实会改文档的动作 —— 必须从只读里单独挖出来。
+ * find_replace 是真例子：它以 find 开头（看起来像查找），实际是替换内容。
+ * 误判成只读的后果：允许"放弃等待"，调用方以为没改成、内容其实改了。
+ */
+const WRITE_OVERRIDE = new Set([
+  'findReplace',
+  'find_replace',
+]);
+
 /** 名字看不出来但实际只读的（探测类内建动作 + 少数历史命名） */
 const READ_ONLY_EXTRA = new Set([
   '__probeParams',
@@ -46,26 +56,45 @@ const READ_ONLY_EXTRA = new Set([
   '__sleepRead',
   '__bridgeStatus',
   'wpsStatus',
+  // 精确项而不是前缀：statusBar（设置状态栏文字）是写入，加前缀会误伤它
+  'status',
   'getAppInfo',
   'getOpenDocuments',
   'getOpenWorkbooks',
   'getOpenPresentations',
   'proofreadBasic',
+  'proofread_basic',
   'evaluateFormula',
+  'evaluate_formula',
   'diagnoseFormula',
+  'diagnose_formula',
 ]);
 
 /** 这些前缀【一定】是写入，优先级高于上面的猜测（防止 getXxx 里混进写操作） */
 const WRITE_PREFIXES = ['set', 'add', 'insert', 'delete', 'remove', 'update', 'modify', 'save', 'create', 'close', 'quit', 'convert', 'apply', 'merge', 'split', 'move', 'copy', 'paste', 'replace', 'clear', 'hide', 'show', 'protect', 'unprotect', 'sort', 'fill', 'group', 'mark', 'accept', 'reject', 'enable', 'disable', 'start', 'switch', 'open', 'export', 'import', 'rename', 'rotate', 'duplicate', 'wrap', 'lock'];
 
 /**
- * 该动作是不是只读。
- * 判定顺序：显式白名单 → 写入前缀（一票否决）→ 只读前缀 → 默认【否】。
+ * 下划线 ↔ 驼峰互转。
+ * 为什么需要：同一个动作在两处是两种拼法 —— PS 侧的 case 标签是驼峰
+ * （`evaluateFormula`），MCP 工具名是下划线（`wps_excel_evaluate_formula`）。
+ * 两边各判一次、任一命中即生效，否则同一个动作会在两处得出相反结论。
+ */
+function camel(s: string): string {
+  return s.replace(/_([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+}
+function snake(s: string): string {
+  return s.replace(/([a-z0-9])([A-Z])/g, (_m, a: string, b: string) => `${a}_${b.toLowerCase()}`);
+}
+
+/** 该动作是不是只读。
+ * 判定顺序：显式写入覆盖 → 显式只读白名单 → 写入前缀（一票否决）→ 只读前缀 → 默认【否】。
  * 默认否是刻意的：判不出来就按"不能安全放弃等待"处理，宁可让调用方多等一会儿。
  */
 export function isReadOnlyAction(action: string): boolean {
   if (!action) return false;
-  if (READ_ONLY_EXTRA.has(action)) return true;
+  const forms = [action, camel(action), snake(action)];
+  if (forms.some((f) => WRITE_OVERRIDE.has(f))) return false;
+  if (forms.some((f) => READ_ONLY_EXTRA.has(f))) return true;
 
   const a = action.charAt(0).toLowerCase() + action.slice(1);
   for (const p of WRITE_PREFIXES) {
@@ -75,4 +104,44 @@ export function isReadOnlyAction(action: string): boolean {
     if (a.startsWith(p)) return true;
   }
   return false;
+}
+
+/**
+ * 会造成不可逆后果（删内容、丢未保存改动、原地改格式）的动作。
+ * 给 MCP 的 destructiveHint 用 —— 判据是"用户会不会想先看一眼再确认"，
+ * 所以不包括普通写操作（设个字号、改个公式不算破坏）。
+ */
+const DESTRUCTIVE_PREFIXES = ['delete', 'remove', 'clear', 'replace', 'convert', 'drop', 'kill', 'wipe', 'purge'];
+const DESTRUCTIVE_EXACT = new Set([
+  'closeDocument', 'closeWorkbook', 'closePresentation',
+  'closeDocumentWithoutSave', 'closeWithoutSave',
+  'quitApplication', 'quitApp',
+  'saveAs', 'saveAsDocument', 'saveAsWorkbook', 'saveAsPresentation',
+  'close', 'quit',
+]);
+
+export function isDestructiveAction(action: string): boolean {
+  if (!action) return false;
+  const forms = [action, camel(action), snake(action)];
+  if (forms.some((f) => DESTRUCTIVE_EXACT.has(f))) return true;
+  const a = action.charAt(0).toLowerCase() + action.slice(1);
+  return DESTRUCTIVE_PREFIXES.some((p) => a.startsWith(p));
+}
+
+/**
+ * 重复执行结果是否一致（幂等）。
+ * 只读天然幂等；写入里"设/改/存"也是（重复设同一个值无变化），
+ * 但"插入/追加/合并"每跑一次就多一份，不能重放。
+ */
+const NON_IDEMPOTENT_PREFIXES = ['insert', 'add', 'append', 'copy', 'paste', 'merge', 'split', 'duplicate', 'import', 'generate', 'create', 'start', 'move'];
+
+export function isIdempotentAction(action: string): boolean {
+  if (!action) return false;
+  if (isReadOnlyAction(action)) return true;
+  if (isDestructiveAction(action)) return false;
+  const forms = [action, camel(action), snake(action)];
+  if (forms.some((f) => WRITE_OVERRIDE.has(f))) return false;
+  const a = action.charAt(0).toLowerCase() + action.slice(1);
+  if (NON_IDEMPOTENT_PREFIXES.some((p) => a.startsWith(p))) return false;
+  return true; // set / update / modify / save / format 之类
 }
