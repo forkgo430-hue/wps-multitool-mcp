@@ -1,0 +1,88 @@
+/**
+ * 一键跑全部验证 —— CI 与本地回归的门禁入口。
+ *
+ * 为什么要有这个
+ * --------------
+ * 之前 9 个 verify 脚本全靠人记得逐个跑。今天已经吃过一次亏：
+ * 工具数在注册表 / 注解表 / 文档三处漂了四轮才发现，
+ * 根因就是"没有任何一个地方会因为数字对不上而失败"。
+ *
+ * 所以这里的定位是**门禁**：任何一个 verify 挂了，这个脚本就非 0 退出，
+ * CI 随之红。人不记得跑没关系，红了会来找你。
+ *
+ * 用法：
+ *   node scripts/manual/verify-all.js          # 快测（不启动子进程，秒级）
+ *   node scripts/manual/verify-all.js --all    # 全量（含真跑 PowerShell / 起 server）
+ *
+ * 分快慢两档的原因：cancel-verify 会 spawn PowerShell 子进程、annotation-e2e 会
+ * 真起一个 stdio server 跑协议握手，它们慢（十几秒到几十秒），本地随手跑会烦，
+ * 但 CI 上必须跑（那才是防"单测全绿但功能是坏的"的关键）。
+ */
+
+const { spawnSync } = require('child_process');
+const path = require('path');
+
+const DIR = __dirname;
+const ALL = true;
+
+/** 不需要 spawn 子进程的快测：本地随手跑、CI 每提交都跑 */
+const FAST = [
+  ['error-map-test.js', '错误分类映射'],
+  ['error-type-verify.js', '错误类型与可重试标签'],
+  ['search-meta-verify.js', '工具检索元数据（别名/反例）'],
+  ['basic-tier-verify.js', '默认列出恰好 40 个'],
+  ['tool-groups-test.js', '工具组加载'],
+  ['intent-test.js', '意图识别词表'],
+  ['annotation-verify.js', '工具注解与三方对账'],
+  ['warnings-batch-verify.js', 'warnings 语义 + 批量执行'],
+  ['skill-verify.js', 'skill 包规范'],
+];
+
+/** 要起子进程 / 真跑 PowerShell 的重测 */
+const HEAVY = [
+  ['excel-caps-probe.js', 'Excel 能力探测（需 WPS）'],
+  ['word-caps-probe.js', 'Word 能力探测（需 WPS）'],
+  ['annotation-e2e.js', '注解端到端（真起 stdio server）'],
+  ['bridge-test.js', '桥进程'],
+  ['cancel-verify.js', '取消机制（真跑 PowerShell）'],
+];
+
+const list = [...FAST, ...(ALL ? HEAVY : [])];
+
+console.log(`\n═══ 验证门禁（共 ${list.length} 项${ALL ? '，含重测' : '，快测档'}）═══\n`);
+
+const results = [];
+for (const [file, label] of list) {
+  const started = Date.now();
+  process.stdout.write(`  ${label.padEnd(28, ' ')} …`);
+  const r = spawnSync(process.execPath, [path.join(DIR, file)], {
+    encoding: 'utf8',
+    timeout: 300000,
+  });
+  const ms = Date.now() - started;
+  const okFlag = r.status === 0;
+  results.push({ file, label, ok: okFlag, ms });
+
+  if (okFlag) {
+    const tail = (r.stdout || '').trim().split('\n').pop() || '';
+    console.log(` 通过  ${String(ms).padStart(5)}ms  ${tail.slice(0, 60)}`);
+  } else {
+    console.log(` 失败  ${String(ms).padStart(5)}ms`);
+    // 失败时把细节打全：门禁的价值就在这行
+    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    out.trim()
+      .split('\n')
+      .filter((l) => l.trim())
+      .slice(-25)
+      .forEach((l) => console.log(`        ${l}`));
+  }
+}
+
+const bad = results.filter((r) => !r.ok);
+console.log(`\n═══ 结果：${results.length - bad.length}/${results.length} 通过 ═══`);
+if (bad.length) {
+  console.log(`失败项：${bad.map((b) => b.file).join(', ')}`);
+  console.log('\n门禁不通过 —— 别绕过它，先看失败原因。');
+  process.exit(1);
+}
+process.exit(0);
