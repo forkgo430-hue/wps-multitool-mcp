@@ -7,18 +7,18 @@
  * MCP Server 通过 PowerShell COM 桥接直接操作 WPS；本加载项给人提供
  * 「看得见、能接管、能回退」的入口 —— 这正是 MCP 工具做不到的那一环。
  *
- * 功能矩阵（11 个按钮，见 ribbon.xml）：
+ * 功能矩阵（9 个按钮，见 ribbon.xml）：
  *   窗口：置于前台 / 面板
  *   快照：保存快照 / 还原快照 / 撤销改动
- *   输出：导出 PDF / 导出本页 / 另存副本
+ *   输出：导出 PDF
  *   维护：刷新状态 / 解除卡死 / 关于
  *
+ * 已移除：「导出本页」「另存副本」（功能区与面板的入口、代码、注释全部清掉）。
+ *
  * 已知限制（如实说明，别让使用者以为有而实际没有）：
- *   1) WPS JS 加载项【没有侧边栏 API】，所以「面板」是用对话框展示完整状态，
- *      不是真任务面板。
- *   2) 「导出本页」只能导整个文档为 PDF 再按页取 —— WPS 12.1 的 JS API
- *      没有"只导当前页"的接口。已如实标注。
- *   3) 文件系统操作走 ActiveX FSO，WPS 若禁用 ActiveX 则快照功能不可用
+ *   1) 「面板」用的是 wps.CreateTaskPane —— 是真任务窗格，不是对话框。
+ *      ⚠ 早期注释里写过"没有侧边栏 API"，那是没验证就下的结论，已证伪。
+ *   2) 文件系统操作走 ActiveX FSO，WPS 若禁用 ActiveX 则快照功能不可用
  *      （会明确报错，不静默失败）。
  *
  * 当前维护者：赢容（基于 钱七 & 老王团队的 wps-skills 演进）
@@ -172,7 +172,7 @@ function ribbonSnapshotSave(control) {
     if (!doc) { lines.push('  ⚠ 没有打开的文档'); alert(lines.join('\n')); return; }
     if (!doc.fullPath) {
         lines.push('  ⚠ 文档尚未保存到磁盘，无法建快照。');
-        lines.push('  请先用「另存副本」保存一份。');
+        lines.push('  请先保存：Ctrl+S，或让 MCP 调 wps_common_save。');
         alert(lines.join('\n'));
         return;
     }
@@ -308,10 +308,6 @@ function ribbonExportPdf(control) {
     }
     alert(lines.join('\n'));
 }
-
-// 导出本页
-
-// 另存副本：带时间戳，不动原文件
 
 // ---------- 维护组 ----------
 
