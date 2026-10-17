@@ -19,7 +19,13 @@ const ROOT = path.resolve(__dirname, '../..');
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
 const { getToolMeta, __clearToolMetaCache } = require(path.join(ROOT, 'dist', 'server', 'tool-metadata.js'));
 const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
+const { WpsMcpServer } = require(path.join(ROOT, 'dist', 'server', 'mcp-server.js'));
 
+// 走真实注册路径：registerBuiltinTools() 的 12 个 + src/tools 的 273 个。
+// 只 registerAll 会漏掉内置那一批 —— wps_check_connection 的别名就是这么漏成 0 的，
+// 搜「检查连接」命中 0 个。
+const _inst = new WpsMcpServer();
+_inst.registerBuiltinTools();
 toolRegistry.registerAll(allTools);
 
 let pass = 0;
@@ -134,6 +140,23 @@ for (const t of ALL) {
 }
 const rate = ((withZh / ALL.length) * 100).toFixed(1);
 ok(`中文别名覆盖 ≥90% 的工具`, withZh / ALL.length >= 0.9, `（${withZh}/${ALL.length} = ${rate}%）`);
+
+// 内置的 12 个（mcp-server 手写，不在 src/tools 下）必须有中文别名。
+// 这批以前没进覆盖统计，wps_check_connection 的别名是 0 —— 搜「检查连接」命中 0 个。
+const BUILTIN = [
+  'wps_check_connection', 'wps_get_active_document', 'wps_insert_text',
+  'wps_get_active_workbook', 'wps_get_cell_value', 'wps_set_cell_value',
+  'wps_get_active_presentation', 'wps_execute_method',
+  'wps_cache_data', 'wps_get_cached_data', 'wps_list_cache', 'wps_clear_cache',
+];
+const noAlias = BUILTIN.filter((n) => {
+  const def = toolRegistry.getTool(n)?.definition;
+  if (!def) return true;
+  return !getToolMeta(def).aliases.some((a) => /[一-龥]/.test(a));
+});
+ok('内置 12 个工具都有中文别名', noAlias.length === 0, noAlias.join(','));
+ok('搜「检查连接」能命中 wps_check_connection',
+   toolRegistry.searchTools('检查连接', { limit: 5, hints: false }).some((h) => h.name === 'wps_check_connection'));
 
 console.log(`\n汇总：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);
