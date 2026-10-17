@@ -5,9 +5,16 @@
  * 内容：MCP 工具名 → 它在 wps-com.ps1 里实际会触发的动作名。
  * 注解本身不在这里写死，由 cancellable.ts 的判定函数在运行时算，
  * 这样改了判定规则不必重新生成本文件。
+ *
+ * 空数组 = 动作名是运行期参数，静态推不出来（目前只有 wps_execute_method，
+ * 它能执行任意 WPS 动作）。这类工具的注解写在 tool-annotations.ts 的
+ * EXTRA_ANNOTANCES 里手写，别拿猜出来的名字去判读写。
  */
 
 export const TOOL_ACTIONS: Readonly<Record<string, readonly string[]>> = {
+  "wps_cache_data": ['cacheData'],
+  "wps_check_connection": ['ping'],
+  "wps_clear_cache": ['clearCache'],
   "wps_common_get_app_info": ['getAppInfo'],
   "wps_common_get_selected_text": ['getSelectedText'],
   "wps_common_ping": ['ping'],
@@ -103,6 +110,14 @@ export const TOOL_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   "wps_excel_update_pivot_table": ['updatePivotTable'],
   "wps_excel_write_range": ['writeRange'],
   "wps_excel_zoom": ['setZoom'],
+  "wps_execute_method": [],
+  "wps_get_active_document": ['getActiveDocument'],
+  "wps_get_active_presentation": ['getActivePresentation'],
+  "wps_get_active_workbook": ['getActiveWorkbook'],
+  "wps_get_cached_data": ['getCachedData'],
+  "wps_get_cell_value": ['getCellValue'],
+  "wps_insert_text": ['insertText'],
+  "wps_list_cache": ['listCache'],
   "wps_list_tool_groups": ['listToolGroups'],
   "wps_load_tool_group": ['loadToolGroup'],
   "wps_ppt_add_animation": ['addAnimation'],
@@ -222,6 +237,7 @@ export const TOOL_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   "wps_ppt_unify_font": ['unifyFont'],
   "wps_route_intent": ['routeIntent'],
   "wps_search_tools": ['searchTools'],
+  "wps_set_cell_value": ['setCellValue'],
   "wps_unload_tool_group": ['unloadToolGroup'],
   "wps_word_add_caption": ['addCaption'],
   "wps_word_add_footnote": ['addFootnote'],

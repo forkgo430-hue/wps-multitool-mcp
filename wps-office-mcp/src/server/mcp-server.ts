@@ -25,6 +25,7 @@ import { createChildLogger } from '../utils/logger';
 import { McpError, formatWpsErrorTag, WpsErrorType } from '../utils/error';
 import { runWithCancel } from './cancel-context';
 import { getToolAnnotations } from './tool-annotations';
+import { serverInstructions, setToolCount } from './server-info';
 import { CancelError } from '../bridge/cancellable';
 import { MCP_NAME, MCP_VERSION } from '../version';
 
@@ -69,6 +70,16 @@ export class WpsMcpServer {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.registry = toolRegistry;
 
+    // 工具注册放在【构造期】而不是 start() 里 —— 因为 instructions（客户端第一眼
+    // 看到的介绍，含作者署名与真实工具数）在 new Server() 时就要定下来。
+    // registerBuiltinTools() 只依赖 this.registry，不碰 this.server，提前调用安全。
+    this.registerBuiltinTools();
+    this.registry.registerAll(allTools);
+    // 介绍里的工具数从注册表数，不写死 —— 写死必随版本腐化
+    const toolCount = this.registry.listAllTools().length;
+    setToolCount(toolCount);
+    logger.info(`Registered ${toolCount} tools in total (builtin + professional)`);
+
     // 创建MCP Server实例
     this.server = new Server(
       {
@@ -79,6 +90,8 @@ export class WpsMcpServer {
         capabilities: {
           tools: {},
         },
+        // 介绍 + 作者署名：随 initialize 响应发给客户端。
+        instructions: serverInstructions(),
       }
     );
 
@@ -135,7 +148,7 @@ export class WpsMcpServer {
 
       // 客户端发 notifications/cancelled 时 extra.signal 会 abort。
       // 把它放进 AsyncLocalStorage，调用链深处（wps-client → 桥 → 子进程）自己取，
-      // 不用改 273 个工具的签名。真正"能不能取消"由 bridge/cancellable.ts 裁决。
+      // 不用改 285 个工具的签名。真正"能不能取消"由 bridge/cancellable.ts 裁决。
       const signal = extra?.signal;
       if (signal) {
         signal.addEventListener(
@@ -764,12 +777,8 @@ export class WpsMcpServer {
 
     logger.info('Starting MCP Server...');
 
-    // 注册内置Tools
-    this.registerBuiltinTools();
-
-    // 注册Excel、Word、PPT专业Tools - 这才是老王的核心功能
-    this.registry.registerAll(allTools);
-    logger.info(`Registered ${allTools.length} professional tools (Excel/Word/PPT)`);
+    // 工具已在构造期注册完（registerBuiltinTools + registerAll），
+    // 因为 instructions 要在 new Server() 时就带上真实的工具数。
 
     // 创建stdio传输层
     const transport = new StdioServerTransport();

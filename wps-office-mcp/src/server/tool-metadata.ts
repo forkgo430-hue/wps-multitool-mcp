@@ -12,7 +12,7 @@
  * 4 个 transition、3 个 image 插入、2 个 toc、2 个 zoom，名字和描述高度重合，
  * 模型搜出来一堆同名候选只能乱猜。所以这一层主要补两样：
  *   1) 反例 notFor：显式写"这个不干 X，要干 X 用 Y" —— 这是主力价值
- *   2) 别名：按英文词根表自动拼中文说法（273 个工具全覆盖，不用逐个手写），
+ *   2) 别名：按英文词根表自动拼中文说法（285 个工具全覆盖，不用逐个手写），
  *      实测能给 66 个关键词里的 17 个多捞到命中（共 +34 对），是锦上添花
  *
  * 打分为什么别名最低
@@ -465,6 +465,56 @@ const CURATED: Record<
   wps_execute_method: {
     aliases: ['直接调COM', '万能方法', '没有对应工具'],
     notFor: ['逃生舱：优先用专用工具，只有确实没有对应工具时才用它裸调 COM'],
+  },
+
+  // ===== 内置工具（mcp-server.ts 的 registerBuiltinTools）=====
+  // 这一批在 server 里手写，不在 src/tools 下，机器拼不出中文别名 ——
+  // wps_check_connection 之前别名是 0，搜「检查连接」命中 0 个。
+  wps_check_connection: {
+    aliases: ['检查连接', '连接状态', '通不通', '能连上吗'],
+    examples: ['WPS 连上了吗', '连接断了吗'],
+    notFor: ['只测连接；看桥进程与队列状态用 wps_common_status'],
+  },
+  wps_get_active_document: {
+    aliases: ['当前文档', '活动文档', '打开的是哪个文档'],
+    notFor: ['只查是哪个；切换目标文档用 wps_word_switch_document'],
+  },
+  wps_get_active_workbook: {
+    aliases: ['当前工作簿', '活动工作簿', '打开的是哪个表格'],
+    notFor: ['只查是哪个；切换目标工作簿用 wps_excel_switch_workbook'],
+  },
+  wps_get_active_presentation: {
+    aliases: ['当前演示文稿', '活动演示', '打开的是哪个PPT'],
+    notFor: ['只查是哪个；切换目标演示用 wps_ppt_switch_presentation'],
+  },
+  wps_insert_text: {
+    aliases: ['插入文本', '插字', '在文档里打字'],
+    notFor: ['往光标处插文本；替换已有内容用 wps_word_find_replace'],
+  },
+  wps_get_cell_value: {
+    aliases: ['读单元格', '单元格值', '取格子里的值'],
+    notFor: ['取单个格子；读整片区域用 wps_excel_read_range'],
+  },
+  wps_set_cell_value: {
+    aliases: ['写单元格', '填格子', '设置单元格内容'],
+    notFor: ['写单个格子；写整片区域用 wps_excel_write_range'],
+  },
+  wps_cache_data: {
+    aliases: ['暂存数据', '缓存数据', '存中间结果'],
+    examples: ['先把算出来的结果暂存起来'],
+    notFor: ['只在本 MCP 进程内的内存暂存，不落盘、不跨会话'],
+  },
+  wps_get_cached_data: {
+    aliases: ['取暂存数据', '读缓存', '取暂存结果'],
+    notFor: ['读之前 wps_cache_data 暂存的东西；读表格内容用 wps_excel_read_range'],
+  },
+  wps_list_cache: {
+    aliases: ['看缓存列表', '暂存了哪些'],
+    notFor: ['只列 key；要值用 wps_get_cached_data'],
+  },
+  wps_clear_cache: {
+    aliases: ['清缓存', '清空暂存', '删掉暂存数据'],
+    notFor: ['只清 MCP 进程的内存暂存，不动你的文档'],
   },
 };
 

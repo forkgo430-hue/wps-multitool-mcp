@@ -306,7 +306,7 @@ export class ToolRegistry {
   ): ToolSearchHit[] {
     const kw = (keyword || '').trim().toLowerCase();
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
-    // 正/反例默认只给前 5 条命中：273 个工具全带上会撑爆上下文
+    // 正/反例默认只给前 5 条命中：285 个工具全带上会撑爆上下文
     const hintTop = opts.hints === false ? 0 : 5;
     const out: Array<ToolSearchHit & { score: number; matchedBy: string }> = [];
 

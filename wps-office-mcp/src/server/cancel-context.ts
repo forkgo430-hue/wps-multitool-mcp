@@ -5,8 +5,8 @@
  *
  * 为什么用 AsyncLocalStorage 而不是改函数签名
  * ------------------------------------------
- * 工具 handler 的签名是 `(args) => Promise<ToolCallResult>`，全仓 273 个工具都是这个形状。
- * 要把 signal 传下去就得改 273 处签名 + 每个 client 调用点 —— 收益极低、破坏面极大。
+ * 工具 handler 的签名是 `(args) => Promise<ToolCallResult>`，全仓 285 个工具都是这个形状。
+ * 要把 signal 传下去就得改 285 处签名 + 每个 client 调用点 —— 收益极低、破坏面极大。
  * 用 AsyncLocalStorage 在【请求入口】放一次，调用链深处任何地方都能取到，
  * 签名一个字都不用动。
  *
