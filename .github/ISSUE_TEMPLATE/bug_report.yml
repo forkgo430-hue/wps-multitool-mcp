@@ -69,5 +69,5 @@ body:
       label: 自查
       options:
         - label: 已重启 WPS（加载项只在启动时加载）
-        - label: 已确认 `wps-office-mcp/dist/index.js` 存在（构建过）
+        - label: 已确认 `wps-multitool-mcp/dist/index.js` 存在（构建过）
         - label: 已在 `issues` 里搜过同类问题

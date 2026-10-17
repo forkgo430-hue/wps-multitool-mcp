@@ -137,6 +137,9 @@ and `-InstallDir`.
 <details>
 <summary><b>MCP config only (no add-in)</b></summary>
 
+> `wps-multitool-mcp` appears twice in the path on purpose: the outer one is the clone directory,
+> the inner one is the project subdirectory. If unsure, run the one-liner — it prints your real path.
+
 **Claude Code** — `~/.claude/settings.json`:
 
 ```json
@@ -144,7 +147,7 @@ and `-InstallDir`.
   "mcpServers": {
     "wps-multitool-mcp": {
       "command": "node",
-      "args": ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+      "args": ["/your/path/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
     }
   }
 }
@@ -155,7 +158,7 @@ and `-InstallDir`.
 ```toml
 [mcp_servers.wps-multitool-mcp]
 command = "node"
-args = ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+args = ["/your/path/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
 ```
 
 Standard stdio server (spec 2025-11-25) — works with any MCP client.

@@ -134,6 +134,9 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 <details>
 <summary><b>只配 MCP，不装加载项</b></summary>
 
+> 下面路径里出现两次 `wps-multitool-mcp` 是正常的：外层是 clone 出来的目录，内层是项目子目录。
+> 不确定就用一键安装脚本，它会把你机器上的真实路径打印出来。
+
 **Claude Code** — `~/.claude/settings.json`：
 
 ```json
@@ -141,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
   "mcpServers": {
     "wps-multitool-mcp": {
       "command": "node",
-      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+      "args": ["/你的路径/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
     }
   }
 }
@@ -152,7 +155,7 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```toml
 [mcp_servers.wps-multitool-mcp]
 command = "node"
-args = ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+args = ["/你的路径/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
 ```
 
 标准 stdio 实现（spec 2025-11-25），任何 MCP 客户端都能接。
