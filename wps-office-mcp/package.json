@@ -1,7 +1,7 @@
 {
   "name": "wps-multitool-mcp",
   "version": "1.0.1",
-  "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。基于 钱七 & 老王团队的 wps-skills 演进。",
+  "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -26,10 +26,7 @@
     "automation"
   ],
   "author": "赢容",
-  "contributors": [
-    "钱七 & 老王团队（原作者，github.com/lc2panda/wps-skills）"
-  ],
-  "basedOn": "wps-skills（钱七 & 老王团队）",
+  "contributors": [],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

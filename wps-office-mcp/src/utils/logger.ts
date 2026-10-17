@@ -2,7 +2,7 @@
  * Input: 日志消息与上下文
  * Output: 结构化日志输出
  * Pos: MCP 日志系统模块。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
- * 日志工具 - 老王的日志系统
+ * 日志工具
  * 写日志比写代码还规范，报错了至少知道是哪个SB搞出来的
  */
 
@@ -21,7 +21,7 @@ export enum LogLevel {
 }
 
 /**
- * 自定义日志格式 - 老王风格
+ * 自定义日志格式
  */
 const wangFormat = winston.format.printf(({ level, message, timestamp, ...meta }) => {
   const metaStr = Object.keys(meta).length ? ` | ${JSON.stringify(meta)}` : '';

@@ -1,6 +1,6 @@
 /**
  * Input: package.json
- * Output: 单一真相源的 NAME / VERSION / AUTHOR / BASED_ON
+ * Output: 单一真相源的 NAME / VERSION / AUTHOR / CONTRIBUTORS
  * Pos: 版本与署名信息。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
  * 为什么要有这个文件
@@ -22,7 +22,7 @@ const FALLBACK = {
   name: 'wps-multitool-mcp',
   version: '1.0.1',
   author: '赢容',
-  contributors: ['钱七 & 老王团队'],
+  contributors: [] as string[],
 } as const;
 
 interface PackageInfo {
@@ -30,8 +30,6 @@ interface PackageInfo {
   version: string;
   author: string;
   contributors: string[];
-  /** 原作者/上游项目，署名用 */
-  basedOn: string;
 }
 
 function load(): PackageInfo {
@@ -50,8 +48,7 @@ function load(): PackageInfo {
           author: typeof raw.author === 'string' ? raw.author : FALLBACK.author,
           contributors: Array.isArray(raw.contributors)
             ? (raw.contributors as unknown[]).map(String)
-            : [...FALLBACK.contributors],
-          basedOn: typeof raw.basedOn === 'string' ? raw.basedOn : 'wps-skills（钱七 & 老王团队）',
+            : [],
         };
       }
     } catch {
@@ -61,7 +58,6 @@ function load(): PackageInfo {
   return {
     ...FALLBACK,
     contributors: [...FALLBACK.contributors],
-    basedOn: 'wps-skills（钱七 & 老王团队）',
   };
 }
 
@@ -71,10 +67,9 @@ export const MCP_NAME = info.name;
 export const MCP_VERSION = info.version;
 export const MCP_AUTHOR = info.author;
 export const MCP_CONTRIBUTORS: readonly string[] = info.contributors;
-export const MCP_BASED_ON = info.basedOn;
 
 /** 一行版署名，给「关于」类展示用 */
 export function versionLine(): string {
-  const c = MCP_CONTRIBUTORS.length ? `（基于 ${MCP_BASED_ON}）` : '';
+  const c = MCP_CONTRIBUTORS.length ? `（${MCP_CONTRIBUTORS.join('、')}）` : '';
   return `${MCP_NAME} v${MCP_VERSION} — ${MCP_AUTHOR}${c} · MIT`;
 }

@@ -1,11 +1,9 @@
-# WPS Skills
-
-> 此项目的任何功能、架构更新，必须在结束后同步更新相关文档。这是我们契约的一部分。
+# WPS Office 多面手 MCP
 
 AI编程助手通过自然语言操控WPS Office的MCP工具集。
 
-> **WPS Office 多面手 MCP** — 基于 [wps-skills](https://github.com/lc2panda/wps-skills) 演进。
-> 当前维护者：**赢容**；原作者：**钱七 & 老王团队**。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+> **WPS Office 多面手 MCP**（wps-multitool-mcp）
+> 当前维护者：**赢容**。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 项目定位
 
@@ -21,7 +19,7 @@ AI编程助手通过自然语言操控WPS Office的MCP工具集。
 - 配套 skill `wps-multitool`（`wps-office-mcp/skills/`）：把「探活→定组→加载组→
   选型读反例→写前确认」固化成默认链路，安装到 `~/.workbuddy/skills/`
 - 仅支持 Windows（WPS 的 COM 自动化只在 Windows 可用）
-- v2.0 起走**常驻桥进程**：冷启动约 5 秒，之后每次调用 2~3ms（一应用一进程，互不阻塞）
+- 走**常驻桥进程**：冷启动约 5 秒，之后每次调用 2~3ms（一应用一进程，互不阻塞）
 
 ## 前提条件
 
@@ -36,8 +34,8 @@ AI编程助手通过自然语言操控WPS Office的MCP工具集。
 ### 步骤1: 克隆项目
 
 ```bash
-git clone https://github.com/lc2panda/wps-skills.git
-cd wps-skills
+git clone https://github.com/forkgo430/wps-multitool-mcp.git
+cd wps-multitool-mcp
 ```
 
 如果项目已存在，跳过此步。
@@ -61,7 +59,7 @@ cd ..
   "mcpServers": {
     "wps-office": {
       "command": "node",
-      "args": ["/你的路径/wps-skills/wps-office-mcp/dist/index.js"]
+      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
     }
   }
 }
@@ -73,7 +71,7 @@ cd ..
   "mcpServers": {
     "wps-office": {
       "command": "node",
-      "args": ["/你的路径/wps-skills/wps-office-mcp/dist/index.js"]
+      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
     }
   }
 }
@@ -83,9 +81,9 @@ cd ..
 ```toml
 [mcp_servers.wps-office]
 command = "node"
-args = ["/你的路径/wps-skills/wps-office-mcp/dist/index.js"]
+args = ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
 ```
-或命令行注册：`codex mcp add wps-office -- node /你的路径/wps-skills/wps-office-mcp/dist/index.js`
+或命令行注册：`codex mcp add wps-office -- node /你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js`
 
 **Augment / 其他MCP兼容IDE** — 参考各IDE的MCP Server配置文档，使用相同的command和args。本项目 MCP Server 为标准 stdio 实现（spec 2025-11-25），与所有 MCP 一等客户端（Claude Code / Cursor / Codex CLI / GitHub Copilot CLI / Windsurf 等）兼容。
 
@@ -94,11 +92,7 @@ args = ["/你的路径/wps-skills/wps-office-mcp/dist/index.js"]
 ⚠️ 需要人工操作（AI无法直接操作WPS应用）：
 
 ```powershell
-# Windows
-powershell scripts/install.ps1
-
-# Linux
-bash scripts/install.sh
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 ```
 
 ⚠️ 安装后必须重启WPS Office才能生效。
@@ -110,30 +104,29 @@ bash scripts/install.sh
 mkdir -p ~/.claude/skills
 
 # 创建符号链接
-ln -sf "$(pwd)/skills/wps-excel" ~/.claude/skills/wps-excel
-ln -sf "$(pwd)/skills/wps-word" ~/.claude/skills/wps-word
-ln -sf "$(pwd)/skills/wps-ppt" ~/.claude/skills/wps-ppt
-ln -sf "$(pwd)/skills/wps-office" ~/.claude/skills/wps-office
+ln -sf "$(pwd)/wps-office-mcp/skills/wps-multitool" ~/.claude/skills/wps-multitool
 ```
 
 ### 步骤6: 验证安装
 
-```bash
-# 验证MCP Server可启动
-node wps-office-mcp/dist/index.js &
-# 应看到 "MCP Server started successfully" 日志
-kill %1 2>/dev/null
+```powershell
+cd wps-office-mcp
+npm run verify
+# 应看到 14 项验证门禁全绿（含 Word/Excel 真机能力探测）
 ```
 
 ## 架构
 
 ```
-Skills层(SKILL.md自然语言指导)
-  ↓ Claude Code调用
-MCP Server层(默认列出 40 个工具)
-  ↓ wpsClient.executeMethod()
-执行层
-  └── Windows: 常驻桥 → wps-com.ps1 (COM 接口) → Ket/Kwps/Kwpp.Application
+Skills 层：SKILL.md（探活 → 定组 → 加载组 → 选型 → 写前确认）
+  ↓ MCP 协议（stdio）
+MCP Server（默认只列 40 个基础工具，其余按需加载）
+  ↓ wpsClient.executeMethod() —— 命名管道
+常驻桥（Node：dist/bridge/index.js；按应用拆子进程，互不阻塞）
+  ↓ 每个应用一个常驻 PowerShell（excel / word / ppt / common）
+wps-comd.ps1（stdin JSON 分发）→ wps-com.ps1（COM 动作）
+  ↓
+Ket / Kwps / Kwpp.Application（WPS 表格 / 文字 / 演示）
 ```
 
 ## 工具清单
@@ -158,8 +151,9 @@ MCP Server层(默认列出 40 个工具)
 | MCP连接失败 | 确认 `npm install && npm run build` 已执行，检查dist/index.js存在 |
 | WPS未响应 | 重启WPS Office，确认加载项已安装 |
 | "arguments error" | 重新运行安装脚本，重启WPS |
-| Linux找不到插件 | 查看INSTALL.md中的Linux专用指南 |
+| Linux找不到插件 | 本项目仅支持 Windows（WPS 的 COM 自动化只在 Windows 可用） |
 | 工具调用返回null | 确认WPS中已打开对应类型的文档 |
+| 其他问题 | 到 GitHub 仓库提 issue：https://github.com/forkgo430/wps-multitool-mcp/issues |
 
 ## 许可证
 

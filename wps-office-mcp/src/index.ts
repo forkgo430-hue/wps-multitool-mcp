@@ -3,7 +3,7 @@
  * Output: MCP Server 导出与启动日志
  * Pos: MCP 服务入口模块。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
  * WPS Office MCP Server - 入口文件
- * 老王出品，让AI能操控WPS Office
+ * 赢容出品，让AI能操控WPS Office
  *
  * 启动方式：
  * - 开发模式：npm run dev
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
   mainLogger.info('='.repeat(50));
   mainLogger.info('WPS Office MCP Server');
-  mainLogger.info('老王出品，必属精品');
+  mainLogger.info('赢容出品，必属精品');
   mainLogger.info('='.repeat(50));
 
   // 创建服务器实例

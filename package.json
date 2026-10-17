@@ -1,8 +1,8 @@
 {
-  "name": "wps-skills",
-  "version": "1.0.0",
-  "description": "WPS Office AI智能助手 - 通过MCP协议让Claude操控WPS Office",
-  "author": "老王 <laowang@wujindian.com>",
+  "name": "wps-multitool-mcp",
+  "version": "1.0.1",
+  "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。",
+  "author": "赢容",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/laowang/wps-skills.git"
+    "url": "https://github.com/forkgo430/wps-multitool-mcp.git"
   },
   "keywords": [
     "wps",

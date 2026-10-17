@@ -7,7 +7,6 @@
     MCP Server通过常驻桥进程 + PowerShell COM接口直接操作WPS，无需HTTP服务
 
     当前维护者：赢容
-    基于 wps-skills（原作者：钱七 & 老王团队）演进
 -->
 <manifest xmlns="http://schemas.wps.cn/oaassist/2019/manifest"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">

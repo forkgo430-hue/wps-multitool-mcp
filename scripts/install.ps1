@@ -5,7 +5,7 @@
 # ============================================================================
 # WPS-Claude-Skills 安装脚本 (Windows PowerShell)
 # ============================================================================
-# 作者：老王 (隔壁老王团队 DevOps - 张大牛)
+# 作者：赢容
 #
 # 艹，这个SB脚本负责把整个项目环境搭建起来
 # 包括检查Node.js、npm、编译TypeScript、复制加载项到WPS目录
@@ -27,7 +27,7 @@ param(
 )
 
 # ============================================================================
-# 老王专用颜色输出函数
+# 颜色输出函数
 # 艹，Windows的控制台颜色真TM难搞
 # ============================================================================
 function Write-ColorOutput {
@@ -44,7 +44,7 @@ function Write-Err { Write-ColorOutput $args[0] "Red" }       # 改名避免和�
 function Write-Info { Write-ColorOutput $args[0] "Cyan" }
 
 # ============================================================================
-# 打印老王风格的 Banner
+# 打印 Banner
 # 虽然花里胡哨，但用户体验还是要有的嘛
 # ============================================================================
 function Show-Banner {
@@ -54,7 +54,7 @@ function Show-Banner {
     Write-Host "║         WPS-Claude-Skills 安装程序 v1.0                   ║" -ForegroundColor Cyan
     Write-Host "║                                                           ║" -ForegroundColor Cyan
     Write-Host "║         让 WPS Office 说人话的智能助手                    ║" -ForegroundColor Cyan
-    Write-Host "║         (老王出品，必属精品，不接受反驳)                  ║" -ForegroundColor Cyan
+    Write-Host "║         (赢容出品，必属精品，不接受反驳)                  ║" -ForegroundColor Cyan
     Write-Host "║                                                           ║" -ForegroundColor Cyan
     Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
@@ -151,7 +151,7 @@ function Test-WpsInstallation {
         }
     }
 
-    # 尝试从注册表获取，这是老王的骚操作
+    # 尝试从注册表获取
     try {
         $regPaths = @(
             "HKLM:\SOFTWARE\Kingsoft\Office",
@@ -244,7 +244,7 @@ function Copy-WpsAddon {
     }
 
     # WPS 加载项目标目录 (Windows)
-    # 注意这个路径，老王查了半天WPS文档才找到的
+    # 注意这个路径，是查 WPS 文档找到的
     $wpsAddonsPath = Join-Path $env:APPDATA "kingsoft\wps\jsaddons"
     $addonTarget = Join-Path $wpsAddonsPath "wps-claude-addon_"
 
@@ -339,7 +339,7 @@ function New-ClaudeConfig {
     Write-Host $configJson -ForegroundColor Yellow
     Write-Host ""
     Write-Info "  请将上述配置添加到 ~/.claude/settings.json 或者项目根目录的 .mcp.json"
-    Write-Info "  不会配置？去看README.md，老王都写好了！"
+    Write-Info "  不会配置？去看README.md，都写好了！"
 
     return $true
 }
@@ -351,7 +351,7 @@ function New-ClaudeConfig {
 function Show-CompletionMessage {
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
-    Write-Success "   安装完成！老王出品，必属精品！"
+    Write-Success "   安装完成！赢容出品，必属精品！"
     Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
     Write-Host ""
 
@@ -368,7 +368,7 @@ function Show-CompletionMessage {
     Write-Host "  - 检查WPS是否正确安装并重启" -ForegroundColor White
     Write-Host "  - 检查Node.js版本是否 >= 18.0.0" -ForegroundColor White
     Write-Host "  - 查看项目README.md获取更多帮助" -ForegroundColor White
-    Write-Host "  - 实在不行？找老王，但老王可能会骂你（开玩笑的）" -ForegroundColor White
+    Write-Host "  - 实在不行？到 GitHub 提 issue（开玩笑的）" -ForegroundColor White
     Write-Host ""
 }
 
