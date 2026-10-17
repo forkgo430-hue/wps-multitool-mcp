@@ -3,7 +3,7 @@
 **简体中文** | [English](README.en.md)
 
 <!-- AUTO:badges:start -->
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![version](https://img.shields.io/badge/version-1.0.1-green.svg)](CHANGELOG.md) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#快速开始)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![version](https://img.shields.io/badge/version-1.0.1-green.svg)](CHANGELOG.md) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#快速开始)
 <!-- AUTO:badges:end -->
 
 > 让 AI 直接操控你**正开着**的 WPS 文字 / 表格 / 演示 —— 走 COM 接口真改文档，不是模拟点击。
