@@ -145,8 +145,10 @@ function makeBlocks(lang) {
       ].join('\n');
 
   // 徽章行同样不许手抄：版本取自 package.json，工具数取自注册表。
-  // CI 徽章暂不挂 —— workflow 还没在 GitHub 上真跑绿过，挂了只会显示 no status。
+  // CI 徽章在 run #5 真跑绿之后才挂（没绿就挂只会显示 no status / failing，比不挂难看）。
   const badgesBlock = [
+    '[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)]' +
+      '(https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml)',
     '[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)',
     `[![version](https://img.shields.io/badge/version-${pkg.version}-green.svg)](CHANGELOG.md)`,
     `[![tools](https://img.shields.io/badge/tools-${total}-brightgreen.svg)](${en ? '#capabilities' : '#能力一览'})`,
