@@ -44,13 +44,28 @@ const cache = new Map<string, ToolAnnotations | undefined>();
 /**
  * 自动生成覆盖不到的工具 —— 手写在这里，并说明为什么。
  *
- * wps_execute_method 在 mcp-server.ts 里直接 this.registry.register()，
- * 不走 allTools，所以 gen 脚本观测不到它。它能执行【任意】WPS 动作
- * （参数是方法名字符串），意味着调用方可以让它删东西、关文档、原地转格式，
- * 所以破坏性按 true 给，不是 false。
+ * 有两类，覆盖不到的原因完全不同：
+ *
+ * 【一】动作名是运行期参数，静态推不出来。
+ *   wps_execute_method 在 mcp-server.ts 里直接 this.registry.register()，
+ *   不走 allTools，所以 gen 脚本观测不到它；它的动作名还是调用时传进来的字符串。
+ *   它能执行【任意】WPS 动作（删东西、关文档、原地转格式），破坏性按 true 给。
+ *
+ * 【二】它本身不是"一个动作"，而是"编排别人的容器"。
+ *   wps_common_batch 是批量执行器：它的 handler 不直接调 executeAction，
+ *   而是转手调注册表里的其它工具，所以观测不到任何动作名，
+ *   落到"按工具名推断"会推出 'batch' 这种毫无意义的名字 → 判成非破坏性、幂等。
+ *   但它能装下任意写入型工具（含删除、另存为、关闭），这三项都必须按最坏情况给：
+ *   非只读、破坏性、非幂等。名字推断在这里不是"保守"，是"猜错了"。
  */
 const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
   wps_execute_method: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  wps_common_batch: {
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,

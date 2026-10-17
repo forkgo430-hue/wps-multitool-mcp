@@ -16,6 +16,7 @@ import { statusTools } from './status';
 import { toolGroupTools } from './toolgroups';
 import { intentTools } from './intent';
 import { repairTools } from './repair';
+import { batchTools } from './batch';
 
 /**
  * 所有通用的Tools
@@ -26,6 +27,7 @@ import { repairTools } from './repair';
  * - 修复Tools: repair（诊断文档健康度 / 挡路对话框 / 清理无名残留文档）
  * - 工具组管理（core 组，永远列出）: list_tool_groups, load_tool_group, unload_tool_group, search_tools
  * - 意图识别（core 组）: route_intent —— 一句话判断该开哪个组
+ * - 批量执行: batch —— 一次 1~3 步，省掉逐个调用的往返，遇错不中断
  *
  * 默认只列 40 个基础工具（WPS_TOOL_TIER=full 可关闭），其余靠 search + load 按需拉
  */
@@ -34,6 +36,7 @@ export const commonTools: RegisteredTool[] = [
   ...generalTools,
   ...statusTools,
   ...repairTools,
+  ...batchTools,
   ...toolGroupTools,
   ...intentTools,
 ];
@@ -43,6 +46,7 @@ export { convertTools } from './convert';
 export { generalTools } from './general';
 export { statusTools, statusDefinition, statusHandler } from './status';
 export { repairTools, repairDefinition, repairHandler } from './repair';
+export { batchTools, batchDefinition, batchHandler, BATCH_MAX_STEPS } from './batch';
 export {
   intentTools,
   routeIntentDefinition,
