@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-caps';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-caps';
 process.env.WPS_BRIDGE_IDLE_MS = '30000';
 process.env.WPS_DAEMON_TIMEOUT = process.env.WPS_DAEMON_TIMEOUT || '120000';
 

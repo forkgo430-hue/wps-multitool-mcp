@@ -37,7 +37,7 @@ const T = WpsErrorType;
 eq('超时', classifyWpsError('WPS 动作超时（120000ms）: getCellValue（应用=excel）。桥连接已断开重连；因原请求可能执行了一半，这里不自动重放。'), T.TIMEOUT);
 eq('RPC_E_CALL_REJECTED 必须不是 timeout', classifyWpsError('Call was rejected by callee. (异常来自 HRESULT:0x80010001 (RPC_E_CALL_REJECTED))'), T.COM_ERROR);
 eq('MK_E_UNAVAILABLE', classifyWpsError('使用"1"个参数调用"GetActiveObject"时发生异常:"操作无法使用 (异常来自 HRESULT:0x800401E3 (MK_E_UNAVAILABLE))"'), T.APP_NOT_RUNNING);
-eq('桥未就绪', classifyWpsError('桥进程 30000ms 内未就绪（管道 \\\\.\\pipe\\wps-office-mcp-x）：connect ENOENT'), T.BRIDGE_UNAVAILABLE);
+eq('桥未就绪', classifyWpsError('桥进程 30000ms 内未就绪（管道 \\\\.\\pipe\\wps-multitool-mcp-x）：connect ENOENT'), T.BRIDGE_UNAVAILABLE);
 eq('守护进程已关闭', classifyWpsError('守护进程已关闭（dispose 之后不再接受调用）'), T.DAEMON_UNAVAILABLE);
 eq('WPS 没开', classifyWpsError('WPS Word not running'), T.APP_NOT_RUNNING);
 eq('没有活动文档', classifyWpsError('No active document'), T.DOCUMENT_NOT_FOUND);

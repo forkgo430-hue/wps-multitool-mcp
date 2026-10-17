@@ -12,7 +12,7 @@
  */
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-queuetest';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-queuetest';
 process.env.WPS_BRIDGE_IDLE_MS = '30000';
 // 队列压到最小，让"第 5 个被拒"能被快速验到
 process.env.WPS_QUEUE_MAX = process.env.WPS_QUEUE_MAX || '4';

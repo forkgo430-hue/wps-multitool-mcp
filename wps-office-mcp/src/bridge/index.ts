@@ -49,7 +49,7 @@ function defaultPipeName(): string {
     /* 取不到就用 default */
   }
   const safe = user.replace(/[^A-Za-z0-9_.-]/g, '_');
-  return `\\\\.\\pipe\\wps-office-mcp-${safe}`;
+  return `\\\\.\\pipe\\wps-multitool-mcp-${safe}`;
 }
 
 const PIPE_NAME = process.env.WPS_BRIDGE_PIPE || defaultPipeName();
@@ -70,7 +70,7 @@ function normalizeApp(v: unknown): AppKey {
 /** 确保日志目录存在 —— 桥是 detached 进程，stdio 被忽略，只能落文件 */
 try {
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  fs.mkdirSync(path.join(home, '.wps-office-mcp', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.wps-multitool-mcp', 'logs'), { recursive: true });
 } catch {
   /* 建不了目录也不能拦住桥 */
 }

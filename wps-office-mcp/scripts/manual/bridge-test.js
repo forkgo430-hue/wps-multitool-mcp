@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const MODE = process.argv[2] || 'cold';
 
 // 必须在 require 客户端之前设好（模块加载时读环境变量）
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-selftest';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-selftest';
 process.env.WPS_BRIDGE_START_TIMEOUT = '40000';
 process.env.WPS_BRIDGE_IDLE_MS = MODE === 'idle' ? '6000' : '300000';
 

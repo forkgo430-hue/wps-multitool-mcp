@@ -6,7 +6,7 @@
 
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-probe';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-probe';
 process.env.WPS_BRIDGE_IDLE_MS = '60000';
 
 const { psDaemon } = require(path.join(ROOT, 'dist', 'client', 'ps-daemon.js'));

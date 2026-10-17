@@ -13,7 +13,7 @@
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-academic-smoke';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-academic-smoke';
 process.env.WPS_BRIDGE_IDLE_MS = '300000';
 process.env.WPS_DAEMON_TIMEOUT = '60000';
 

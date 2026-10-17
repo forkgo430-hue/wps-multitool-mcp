@@ -40,7 +40,7 @@ const isEnvTrue = (value?: string): boolean => {
  */
 const createLogger = (name: string): winston.Logger => {
   const homeDir = process.env.HOME || process.env.USERPROFILE || require('os').homedir();
-  const logDir = path.join(homeDir, '.wps-office-mcp', 'logs');
+  const logDir = path.join(homeDir, '.wps-multitool-mcp', 'logs');
   // MCP 默认走 stdio 协议，stdout 必须保持纯净；仅在显式开启时才输出 Console 日志
   const enableConsoleLog = isEnvTrue(process.env.MCP_CONSOLE_LOG);
   const transports: winston.transport[] = [

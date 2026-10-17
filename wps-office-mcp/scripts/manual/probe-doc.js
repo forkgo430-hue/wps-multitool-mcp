@@ -8,7 +8,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-probedoc';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-probedoc';
 process.env.WPS_BRIDGE_IDLE_MS = '60000';
 
 const { psDaemon } = require(path.join(ROOT, 'dist', 'client', 'ps-daemon.js'));

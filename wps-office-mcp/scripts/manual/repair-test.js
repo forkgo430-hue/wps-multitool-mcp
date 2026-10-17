@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-office-mcp-repairtest';
+process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-repairtest';
 process.env.WPS_BRIDGE_IDLE_MS = '30000';
 process.env.WPS_DAEMON_TIMEOUT = process.env.WPS_DAEMON_TIMEOUT || '90000';
 

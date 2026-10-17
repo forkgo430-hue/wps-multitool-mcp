@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '../..');
-const PIPE = '\\\\.\\pipe\\wps-office-mcp-daemoncheck';
+const PIPE = '\\\\.\\pipe\\wps-multitool-mcp-daemoncheck';
 const LOGDIR = path.join(os.tmpdir(), 'wps-bridge-diag');
 
 function psCount() {

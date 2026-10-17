@@ -57,7 +57,7 @@ function defaultPipeName(): string {
     /* ignore */
   }
   const safe = user.replace(/[^A-Za-z0-9_.-]/g, '_');
-  return `\\\\.\\pipe\\wps-office-mcp-${safe}`;
+  return `\\\\.\\pipe\\wps-multitool-mcp-${safe}`;
 }
 
 export const BRIDGE_PIPE = process.env.WPS_BRIDGE_PIPE || defaultPipeName();

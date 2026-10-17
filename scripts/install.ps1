@@ -321,7 +321,7 @@ function New-ClaudeConfig {
 
     $claudeConfig = @{
         mcpServers = @{
-            "wps-office" = @{
+            "wps-multitool" = @{
                 command = "node"
                 args = @($mcpDistPathFormatted)
                 env = @{

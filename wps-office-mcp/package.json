@@ -1,5 +1,5 @@
 {
-  "name": "wps-office-mcp",
+  "name": "wps-multitool-mcp",
   "version": "2.0.0",
   "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。基于 钱七 & 老王团队的 wps-skills 演进。",
   "main": "dist/index.js",
