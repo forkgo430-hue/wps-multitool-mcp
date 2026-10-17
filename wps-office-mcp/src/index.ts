@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Input: 运行环境与启动参数
  * Output: MCP Server 导出与启动日志
@@ -8,6 +9,10 @@
  * 启动方式：
  * - 开发模式：npm run dev
  * - 生产模式：npm run build && npm start
+ * - npx 模式：npx wps-multitool-mcp（靠 package.json 的 bin 指向本文件）
+ *
+ * 注意 shebang 必须在第一行（tsc 会原样保留）：npm 的 bin 在 Unix 下
+ * 靠它找解释器，删了这一行 `npx wps-multitool-mcp` 会报 SyntaxError。
  */
 
 import { createMcpServer } from './server/mcp-server';

@@ -3,7 +3,7 @@
 **简体中文** | [English](README.en.md)
 
 <!-- AUTO:badges:start -->
-[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![version](https://img.shields.io/badge/version-1.0.1-green.svg)](CHANGELOG.md) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#快速开始)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#快速开始)
 <!-- AUTO:badges:end -->
 
 > 让 AI 直接操控你**正开着**的 WPS 文字 / 表格 / 演示 —— 走 COM 接口真改文档，不是模拟点击。
@@ -19,14 +19,35 @@ WPS 的 COM 自动化能力够，但直接丢给模型会踩三个坑：几百�
 
 ## 快速开始
 
-**一条命令**（需要能访问 GitHub；国内网络请先挂代理）：
+### 方式一：只要 AI 能操控 WPS（最轻，不克隆、不编译）
+
+```powershell
+npx -y wps-multitool-mcp
+```
+
+已发布到 npm，直接以 MCP stdio 服务运行。写进客户端配置：
+
+```json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "npx",
+      "args": ["-y", "wps-multitool-mcp"]
+    }
+  }
+}
+```
+
+这条路径**不含** WPS 里的侧边面板和 skill（不需要它们也能用）；想要面板 / 快照 / 撤销，用方式二。
+
+### 方式二：完整安装（含加载项面板 + skill，推荐）
 
 ```powershell
 irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
 ```
 
-它会自动完成：检查环境 → 拉取项目 → 安装依赖并编译 → 部署 WPS 加载项 → 安装 skill → 打印 MCP 配置。
-装完**重启 WPS 和你的 AI 客户端**，然后把打印出来的配置粘进客户端即可。
+自动完成：检查环境 → 拉取项目 → 装依赖并编译 → 部署 WPS 加载项 → 安装 skill → 打印 MCP 配置。
+装完**重启 WPS 和你的 AI 客户端**，把打印出来的配置粘进客户端即可。
 
 <details>
 <summary><b>手动安装（网络受限 / 想自己控制每一步）</b></summary>

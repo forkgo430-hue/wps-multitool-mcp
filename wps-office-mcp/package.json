@@ -4,6 +4,15 @@
   "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "wps-multitool-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "scripts/wps-com.ps1",
+    "scripts/wps-comd.ps1",
+    "skills"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

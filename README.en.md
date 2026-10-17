@@ -3,7 +3,7 @@
 [简体中文](README.md) | **English**
 
 <!-- AUTO:badges:start -->
-[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![version](https://img.shields.io/badge/version-1.0.1-green.svg)](CHANGELOG.md) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#quick-start)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#quick-start)
 <!-- AUTO:badges:end -->
 
 > Let AI drive the WPS Office windows **you already have open** — real COM edits, not simulated clicks.
@@ -21,7 +21,29 @@ and every tool exposes machine-readable read/write annotations.
 
 ## Quick start
 
-**One command** (needs GitHub access; use a proxy if you're behind the GFW):
+### Option 1: server only (lightest — no clone, no build)
+
+```powershell
+npx -y wps-multitool-mcp
+```
+
+Published on npm; runs as a stdio MCP server. Register it in your client:
+
+```json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "npx",
+      "args": ["-y", "wps-multitool-mcp"]
+    }
+  }
+}
+```
+
+This path does **not** include the in-WPS side panel or the skill (both optional);
+use option 2 for the panel / snapshots / undo.
+
+### Option 2: full install (add-in panel + skill, recommended)
 
 ```powershell
 irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
