@@ -1,0 +1,58 @@
+name: CI
+
+# 门禁的意义：今天工具数在「live 注册表 / 注解表 / 文档」三处漂了四轮才发现，
+# 根因是没有任何一个地方会因为"数字对不上"而失败。这里把三件事变成硬失败：
+#   1) 构建不过 → 红
+#   2) 任一 verify 脚本挂 → 红
+#   3) 注解映射表与注册表不一致（改了工具没重跑生成器）→ 红
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    # Windows 是硬要求：cancel-verify 要真 spawn PowerShell 子进程，
+    # bridge-test 也要起常驻进程。Linux runner 上这些会假绿。
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: wps-office-mcp/package-lock.json
+
+      - name: 安装依赖
+        working-directory: wps-office-mcp
+        run: npm ci
+
+      - name: 类型检查 + 构建
+        working-directory: wps-office-mcp
+        run: npm run build
+
+      - name: 注解映射表与注册表一致性
+        working-directory: wps-office-mcp
+        run: |
+          node scripts/manual/gen-tool-annotations.js
+          git diff --exit-code -- src/server/tool-annotations.generated.ts
+        # 加了新工具却忘了重跑生成器 → 生成的表与提交的不一致 → 这一步红。
+        # 这是今天那次三处数字漂移的直接防线。
+
+      - name: 验证门禁（全量，含真跑 PowerShell 与端到端）
+        working-directory: wps-office-mcp
+        run: npm run verify:all
+
+      - name: 上传验证日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-log
+          path: |
+            ~/.workbuddy/wps-multitool-mcp/logs/*.log
+            ~/.wps-multitool-mcp/logs/*.log
+          if-no-files-found: ignore

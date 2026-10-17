@@ -32,6 +32,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const OUT = path.join(ROOT, 'src', 'server', 'tool-annotations.generated.ts');
@@ -40,17 +41,32 @@ const { wpsClient } = require(path.join(ROOT, 'dist', 'client', 'wps-client.js')
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
 const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
 
+/**
+ * 观测上下文用 AsyncLocalStorage，不用全局变量。
+ *
+ * 为什么：一开始用的是全局 `recording`，结果生成器不幂等 ——
+ * 同一个 wps_common_status，这次观测到 'status'、那次 'wpsStatus'。
+ * 因为加了超时保护后，超时的 handler 【并没有真的停下】，它还在异步跑，
+ * 全局 recording 早就被下一个工具换成别人了，它的回话就串到别人头上去了。
+ * AsyncLocalStorage 跟着各自的调用链走，超时也不串。
+ */
+const als = new AsyncLocalStorage();
+
+/** 动作名推不出来、注解手写的工具。名单真源在 handwritten-annotations.js，
+ *  与 tool-annotations.ts 的 EXTRA_ANNOTATIONS 共用（下面有断言卡住同步）。 */
+const { EXTRA_ANNOTATIONS_KEYS } = require(path.join(ROOT, 'scripts', 'manual', 'handwritten-annotations.js'));
+const HANDWRITTEN = new Set(EXTRA_ANNOTATIONS_KEYS);
+
 // ---- 1. 换掉真正的出口，装上记录器 ----------------------------------------
-let recording = null;
-const origInvoke = wpsClient.invokeAction.bind(wpsClient);
 wpsClient.invokeAction = async (action, params, appKey) => {
   // 只记合法的动作名。wps_execute_method 的动作名是【调用时传入的参数】，
   // 空参探测时拿到的是 undefined —— 记进去就是脏数据，会误导后来人。
-  if (recording) {
+  const ctx = als.getStore();
+  if (ctx) {
     if (typeof action === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(action)) {
-      recording.actions.add(action);
+      ctx.actions.add(action);
     } else {
-      recording.unresolved = true; // 走到了出口，但动作名推不出来
+      ctx.unresolved = true; // 走到了出口，但动作名推不出来
     }
   }
   return { success: false, error: '__annotation_probe__' };
@@ -75,21 +91,22 @@ wpsClient.invokeAction = async (action, params, appKey) => {
 
   for (const t of tools) {
     const name = t.name;
-    const rec = { name, actions: new Set(), unresolved: false };
-    recording = rec;
+    const rec = { actions: new Set(), unresolved: false };
     try {
       const tool = toolRegistry.getTool(name);
       // 加超时：有些 handler 会做重循环或长 sleep，观测脚本不该被它们拖住。
-      // 超时不算失败 —— 已经记到的动作名照样算数。
+      // 超时不算失败 —— 已经记到的动作名照样算数（ALS 保证不会串到别的工具）。
       await Promise.race([
-        tool.handler({}),
+        als.run(rec, () => tool.handler({})),
         new Promise((_, rej) => setTimeout(() => rej(new Error('__probe_timeout__')), 150)),
       ]);
     } catch (e) {
       // 参数校验就抛错的（没走到调用出口），走下面的名字推断兜底
     }
-    recording = null;
-    if (rec.actions.size) {
+    if (HANDWRITTEN.has(name)) {
+      // 编排类/逃生舱类：动作名不由它自己决定，映射记空，注解走手写表
+      map[name] = [];
+    } else if (rec.actions.size) {
       map[name] = [...rec.actions];
     } else {
       missed.push({ name, unresolved: rec.unresolved });
@@ -107,6 +124,7 @@ wpsClient.invokeAction = async (action, params, appKey) => {
       .replace(/^(word|excel|ppt|common)_/, '');
     return act.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
   };
+  // unresolved 保留作调试线索：这些工具到了出口但动作名是运行期参数
   const unresolved = [];
   const inferred = [];
   for (const { name, unresolved: u } of missed) {
@@ -150,15 +168,28 @@ wpsClient.invokeAction = async (action, params, appKey) => {
   // ---- 4. 报告 ------------------------------------------------------------
   const multi = Object.entries(map).filter(([, a]) => a.length > 1);
   console.log(`工具总数（真实注册路径）: ${tools.length}`);
-  console.log(`  运行时观测到动作      : ${tools.length - missed.length}`);
+  console.log(`  运行时观测到动作      : ${tools.length - missed.length - HANDWRITTEN.size}`);
   console.log(`  名字推断兜底          : ${inferred.length}${inferred.length ? ' → ' + inferred.slice(0, 6).join(', ') : ''}`);
-  console.log(`  动作名推不出（手写注解）: ${unresolved.length}${unresolved.length ? ' → ' + unresolved.join(', ') : ''}`);
+  console.log(`  手写注解（不推断）    : ${HANDWRITTEN.size} → ${[...HANDWRITTEN].join(', ')}`);
   console.log(`一工具多动作    : ${multi.length}`);
   for (const [n, a] of multi.slice(0, 6)) console.log(`   ${n} → ${a.join(', ')}`);
 
   // 自检：注解表条目必须与真实注册表一致，否则就是漂移
   if (Object.keys(map).length !== tools.length) {
     console.error(`✗ 注解表 ${Object.keys(map).length} 条 ≠ 注册表 ${tools.length} 个工具`);
+    process.exit(1);
+  }
+  // HANDWRITTEN 与 EXTRA_ANNOTATIONS 必须同步（名单真源已抽到
+  // handwritten-annotations.js）。这里反向验：名单里的工具必须真能拿到注解 ——
+  // 它们在映射表里被记成空数组，注解只能来自 tool-annotations.ts 的
+  // EXTRA_ANNOTATIONS。忘了写就会退回"名字推断"，而推断对编排类是猜错的。
+  const { getToolAnnotations } = require(path.join(ROOT, 'dist', 'server', 'tool-annotations.js'));
+  const noHand = EXTRA_ANNOTATIONS_KEYS.filter((k) => !getToolAnnotations(k));
+  if (noHand.length) {
+    console.error(
+      `✗ 名单里的工具拿不到手写注解：${noHand.join(', ')}\n  ` +
+        '查 tool-annotations.ts 的 EXTRA_ANNOTATIONS 是否已写；忘了写就会静默退回名字推断。'
+    );
     process.exit(1);
   }
   console.log(`\n已写入 ${path.relative(ROOT, OUT)}（条目 ${Object.keys(map).length} = 注册表 ${tools.length}）`);

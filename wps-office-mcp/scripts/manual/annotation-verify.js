@@ -59,9 +59,12 @@ const names = toolRegistry.listAllTools().map((t) => t.name);
 
 console.log('\n=== A. 覆盖率与三方对账 ===');
 const cov = annotationCoverage(names);
-eq('真实注册的工具总数', cov.total, 285);
+console.log(`  真实注册的工具总数: ${cov.total}`);
+// 刻意不硬编码数字。硬编码过一次（285），结果每加一个工具这条断言就红 —
+// 而"红"不代表出错，只代表有人在加工具。真正要防的是【不一致】，不是【变化】。
+ok('注解表条目数 = 注册表工具数', Object.keys(TOOL_ACTIONS).length === cov.total,
+   `${Object.keys(TOOL_ACTIONS).length} vs ${cov.total}`);
 eq('拿到注解的个数', cov.annotated, cov.total);
-eq('注解映射表条目数', Object.keys(TOOL_ACTIONS).length, cov.total);
 const mapOnly = Object.keys(TOOL_ACTIONS).filter((n) => !names.includes(n));
 ok('注解表里没有已下线的工具', mapOnly.length === 0, mapOnly.slice(0, 5).join(','));
 // 这条是防漂移的关键：注册表加了工具却没重跑生成器，这里立刻红
