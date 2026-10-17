@@ -151,6 +151,8 @@ function makeBlocks(lang) {
       '(https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml)',
     '[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)',
     `[![version](https://img.shields.io/badge/version-${pkg.version}-green.svg)](CHANGELOG.md)`,
+    // release 徽章走 shields 动态读 GitHub，不打版本号 —— 发新版本自动变，不会漂
+    '[![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases)',
     `[![tools](https://img.shields.io/badge/tools-${total}-brightgreen.svg)](${en ? '#capabilities' : '#能力一览'})`,
     '[![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](' +
       (en ? '#quick-start' : '#快速开始') +
