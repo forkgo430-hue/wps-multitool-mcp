@@ -4,12 +4,12 @@
 
 - Windows 10/11 + WPS Office（真机验证绕不开，很多接口只有 WPS 见过世面）
 - Node.js ≥ 18
-- 首次：`cd wps-office-mcp && npm ci && npm run build`
+- 首次：`cd wps-multitool-mcp && npm ci && npm run build`
 
 ## 常用命令
 
 ```powershell
-cd wps-office-mcp
+cd wps-multitool-mcp
 npm run build          # TypeScript 构建
 npm run verify         # 快测门禁（9 项，秒级）
 npm run verify:all     # 全量门禁（14 项，含真机探测，约 1 分钟）

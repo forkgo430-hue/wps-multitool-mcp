@@ -63,7 +63,7 @@ function Stop-ExistingProcesses {
     foreach ($proc in $nodeProcesses) {
         try {
             $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)").CommandLine
-            if ($cmdLine -match "wps-office-mcp") {
+            if ($cmdLine -match "wps-multitool-mcp") {
                 Write-Warning "发现已运行的 MCP Server (PID: $($proc.Id))，正在停止..."
                 Stop-Process -Id $proc.Id -Force
             }
@@ -90,7 +90,7 @@ function Stop-ExistingProcesses {
 
 # 启动 MCP Server
 function Start-McpServer {
-    $mcpPath = Join-Path $ProjectRoot "wps-office-mcp"
+    $mcpPath = Join-Path $ProjectRoot "wps-multitool-mcp"
 
     if (-not (Test-Path $mcpPath)) {
         Write-Error "MCP Server 目录不存在: $mcpPath"

@@ -86,7 +86,7 @@ if (-not $SkipNodeCheck) {
 
 Write-Step "Installing npm dependencies" 2
 
-$McpDir = "$ProjectRoot\wps-office-mcp"
+$McpDir = "$ProjectRoot\wps-multitool-mcp"
 if (-not (Test-Path $McpDir)) {
     Write-Error-Msg "MCP directory not found: $McpDir"
     exit 1
@@ -101,7 +101,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Success "Dependencies installed"
 } else {
     Write-Error-Msg "npm install failed"
-    Write-Host "  Try manually: cd wps-office-mcp && npm install" -ForegroundColor Gray
+    Write-Host "  Try manually: cd wps-multitool-mcp && npm install" -ForegroundColor Gray
     exit 1
 }
 
@@ -114,7 +114,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Success "Compilation complete"
 } else {
     Write-Error-Msg "Compilation failed"
-    Write-Host "  Try manually: cd wps-office-mcp && npm run build" -ForegroundColor Gray
+    Write-Host "  Try manually: cd wps-multitool-mcp && npm run build" -ForegroundColor Gray
     exit 1
 }
 
@@ -125,7 +125,7 @@ if (-not (Test-Path "$env:USERPROFILE\.claude")) {
     Write-Success "Created .claude directory"
 }
 
-$McpServerPath = "$ProjectRoot\wps-office-mcp\dist\index.js" -replace "\\", "\\"
+$McpServerPath = "$ProjectRoot\wps-multitool-mcp\dist\index.js" -replace "\\", "\\"
 
 if (Test-Path $ClaudeSettingsPath) {
     try {

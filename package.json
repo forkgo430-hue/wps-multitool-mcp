@@ -6,11 +6,11 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "build": "cd wps-office-mcp && npm run build",
-    "test": "cd wps-office-mcp && npm test",
-    "start": "cd wps-office-mcp && npm start",
-    "install:all": "cd wps-office-mcp && npm install",
-    "clean": "cd wps-office-mcp && rm -rf dist node_modules"
+    "build": "cd wps-multitool-mcp && npm run build",
+    "test": "cd wps-multitool-mcp && npm test",
+    "start": "cd wps-multitool-mcp && npm start",
+    "install:all": "cd wps-multitool-mcp && npm install",
+    "clean": "cd wps-multitool-mcp && rm -rf dist node_modules"
   },
   "repository": {
     "type": "git",

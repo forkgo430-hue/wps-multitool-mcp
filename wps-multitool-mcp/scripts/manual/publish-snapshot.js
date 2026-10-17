@@ -23,7 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname, '..', '..'); // wps-office-mcp/
+const ROOT = path.resolve(__dirname, '..', '..'); // wps-multitool-mcp/
 const REPO_ROOT = path.resolve(ROOT, '..');
 const MCP_CFG = path.join(os.homedir(), '.codebuddy', 'mcp.json');
 

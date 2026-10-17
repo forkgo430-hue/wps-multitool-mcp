@@ -66,13 +66,13 @@ function Show-Banner {
 function Resolve-ProjectRoot {
     if ($PSScriptRoot) {
         $parent = (Get-Item $PSScriptRoot).Parent.FullName
-        if (Test-Path (Join-Path $parent 'wps-office-mcp')) {
+        if (Test-Path (Join-Path $parent 'wps-multitool-mcp')) {
             Write-Ok "使用本地项目: $parent"
             return $parent
         }
     }
 
-    $hasProject = Test-Path (Join-Path $InstallDir 'wps-office-mcp')
+    $hasProject = Test-Path (Join-Path $InstallDir 'wps-multitool-mcp')
 
     if ($hasProject -and -not $Force) {
         Write-Ok "使用已存在项目: $InstallDir（加 -Force 可删除重建）"
@@ -94,7 +94,7 @@ function Resolve-ProjectRoot {
     if ($hasGit) {
         Write-Hint "git clone --depth 1"
         git clone --depth 1 $RepoGit $InstallDir
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $InstallDir 'wps-office-mcp'))) {
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $InstallDir 'wps-multitool-mcp'))) {
             throw "git clone 失败。常见原因：访问不了 github.com。可先用代理，或手动下载仓库后运行 scripts/install.ps1"
         }
     } else {
@@ -104,7 +104,7 @@ function Resolve-ProjectRoot {
         New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
         tar -xzf $tmp -C $InstallDir --strip-components=1
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-        if (-not (Test-Path (Join-Path $InstallDir 'wps-office-mcp'))) {
+        if (-not (Test-Path (Join-Path $InstallDir 'wps-multitool-mcp'))) {
             throw "解压失败。常见原因：访问不了 github.com。可手动下载仓库后运行 scripts/install.ps1"
         }
     }
@@ -114,7 +114,7 @@ function Resolve-ProjectRoot {
 
 function Get-McpVersion {
     param([string]$ProjectRoot)
-    $pkg = Join-Path $ProjectRoot 'wps-office-mcp\package.json'
+    $pkg = Join-Path $ProjectRoot 'wps-multitool-mcp\package.json'
     if (Test-Path $pkg) {
         try {
             # 用正则而不是 ConvertFrom-Json：老版本 PowerShell 对带 BOM/特殊字符的
@@ -224,9 +224,9 @@ function Test-WpsInstallation {
 # ============================================================================
 function Install-McpServer {
     param([string]$ProjectRoot)
-    $mcpPath = Join-Path $ProjectRoot 'wps-office-mcp'
+    $mcpPath = Join-Path $ProjectRoot 'wps-multitool-mcp'
     if (-not (Test-Path $mcpPath)) {
-        Write-Err2 "找不到 wps-office-mcp 目录: $mcpPath"
+        Write-Err2 "找不到 wps-multitool-mcp 目录: $mcpPath"
         return $false
     }
     if ($DryRun) {
@@ -305,7 +305,7 @@ function Install-WpsAddon {
 # ============================================================================
 function Install-Skill {
     param([string]$ProjectRoot)
-    $src = Join-Path $ProjectRoot 'wps-office-mcp\skills\wps-multitool'
+    $src = Join-Path $ProjectRoot 'wps-multitool-mcp\skills\wps-multitool'
     if (-not (Test-Path $src)) { Write-Warn2 "找不到 skill 源目录，跳过"; return $true }
 
     $targets = @(
@@ -335,7 +335,7 @@ function Install-Skill {
 # ============================================================================
 function Show-McpConfig {
     param([string]$ProjectRoot)
-    $dist = (Join-Path $ProjectRoot 'wps-office-mcp\dist\index.js').Replace('\', '/')
+    $dist = (Join-Path $ProjectRoot 'wps-multitool-mcp\dist\index.js').Replace('\', '/')
     # 用 here-string 而不是 ConvertTo-Json：PS 5.1 输出的一层层缩进很难看，配置要能直接复制
     $cfg = @"
 {
@@ -370,7 +370,7 @@ function Show-Completion {
     Write-Host "   1. 重启 WPS Office（加载项只在启动时加载）" -ForegroundColor White
     Write-Host "   2. 把上面的 MCP 配置写进你的 AI 客户端，重启客户端" -ForegroundColor White
     Write-Host "   3. 验证：" -ForegroundColor White
-    Write-Host "        cd $(Join-Path $ProjectRoot 'wps-office-mcp')" -ForegroundColor DarkGray
+    Write-Host "        cd $(Join-Path $ProjectRoot 'wps-multitool-mcp')" -ForegroundColor DarkGray
     Write-Host "        npm run verify" -ForegroundColor DarkGray
     Write-Host "   4. 用法：在客户端里直接说任务，例如" -ForegroundColor White
     Write-Host "        「在这份文档末尾加一段总结」" -ForegroundColor DarkGray
