@@ -1,0 +1,251 @@
+#!/usr/bin/env node
+/**
+ * Input: 本地 HEAD 的 tracked 文件树 + ~/.codebuddy/mcp.json 里的 GitHub Token
+ * Output: 远端 refs/heads/main 指向一个内容与本地 HEAD 完全一致的快照提交
+ * Pos: 发布通道 B（维护者用，走 api.github.com 的 Git Data API）。一旦我被修改，请更新我的头部注释，以及所属目录的 md。
+ *
+ * 什么时候用它（以及为什么还要 publish-snapshot.js）
+ * ------------------------------------------------
+ * 通道 A = scripts/manual/publish-snapshot.js，用 git 协议推（要求 github.com:443 通）。
+ * 本脚本是同一个结果的第二条通道：全程只用 HTTPS 443 上的 REST API，
+ * 适合 git 协议被墙或被代理掐掉的环境。
+ *
+ * 流程与 publish-snapshot.js 保持同一约定：建【无父级】的根提交再强推，
+ * 远端永远是干净的快照历史；本地历史不受影响。
+ *
+ * 步骤：git ls-tree -r HEAD → 逐个 POST /git/blobs → POST /git/trees → POST /git/commits → PATCH /git/refs/heads/分支
+ * 每步自检：blob sha 必须回填一致、生成的 tree sha 必须等于本地 %T、推完后远端 tree 必须等于本地 %T。
+ *
+ * 用法：
+ *   node scripts/manual/push-api.js "提交信息"           # 与远端同一棵树时自动跳过
+ *   node scripts/manual/push-api.js "提交信息" -f        # 强制重推（换提交信息时用）
+ *   node scripts/manual/push-api.js "提交信息" --dry     # 只建对象，不动 ref（验证连通性用）
+ *   node scripts/manual/push-api.js "提交信息" --branch gh-pages
+ * 环境：Token 优先取 GITHUB_TOKEN，否则读 ~/.codebuddy/mcp.json 的 GitHub 连接器。
+ *       Token 需要 Contents 读写权限；推荐另开免 2FA 的 Granular Token（见 HANDOFF 待办）。
+ */
+
+const { execSync, execFileSync } = require('child_process');
+const fs = require('fs');
+const https = require('https');
+const os = require('os');
+const path = require('path');
+
+const ROOT = path.resolve(__dirname, '..', '..'); // wps-multitool-mcp/
+const REPO_ROOT = path.resolve(ROOT, '..');
+const MCP_CFG = path.join(os.homedir(), '.codebuddy', 'mcp.json');
+const MAX_BLOB = 95 * 1024 * 1024; // GitHub 单 blob 上限 100MB，留点余量
+
+const run = (cmd, cwd = REPO_ROOT) =>
+  execSync(cmd, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 26 });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- 入参 ----------
+const argv = process.argv.slice(2);
+const dry = argv.includes('--dry');
+const force = argv.includes('-f') || argv.includes('--force');
+const bIdx = argv.indexOf('--branch');
+const branch = bIdx >= 0 ? argv[bIdx + 1] : 'main';
+const taken = new Set([...(bIdx >= 0 ? [argv[bIdx], argv[bIdx + 1]] : [])]);
+const msg = argv.find((a) => !a.startsWith('-') && !taken.has(a)) || `snapshot ${new Date().toISOString()}`;
+
+// ---------- 凭据 / 仓库 ----------
+function readToken() {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(MCP_CFG, 'utf8'));
+    const t = cfg && cfg.mcpServers && cfg.mcpServers.GitHub
+      && cfg.mcpServers.GitHub.env && cfg.mcpServers.GitHub.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+    if (t) return t;
+  } catch (e) { /* 落到下面的报错 */ }
+  console.error('没找到 Token：请设 GITHUB_TOKEN，或在 ~/.codebuddy/mcp.json 的 GitHub 连接器里配 PAT');
+  process.exit(1);
+}
+
+function originUrl() {
+  const url = run('git remote get-url origin').trim();
+  const m = url.match(/github\.com[/:]([^/]+)\/([^/.]+)(?:\.git)?$/);
+  if (!m) {
+    console.error(`解析不了 origin: ${url}`);
+    process.exit(1);
+  }
+  return { owner: m[1], repo: m[2] };
+}
+
+// ---------- HTTPS ----------
+function api(method, urlPath, token, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), 'utf8');
+    const headers = {
+      'User-Agent': 'wps-multitool-mcp-push-api',
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = payload.length;
+    }
+    const r = https.request({ host: 'api.github.com', path: urlPath, method, timeout: 120000, headers }, (res) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        let json = null;
+        try { json = data ? JSON.parse(data) : null; } catch (e) { /* 非 JSON 走 status 分支 */ }
+        if (res.statusCode >= 200 && res.statusCode < 300) return resolve({ json, headers: res.headers });
+        const err = new Error(`${method} ${urlPath} -> HTTP ${res.statusCode} ${(json && json.message) || data.slice(0, 160)}`);
+        err.status = res.statusCode;
+        // 403 可能是限流也可能是真没权限；只有配额明确告罄时才等
+        const remaining = res.headers['x-ratelimit-remaining'];
+        err.waitMs = remaining === '0'
+          ? Math.max(0, Number(res.headers['x-ratelimit-reset']) * 1000 - Date.now() + 1000)
+          : 0;
+        reject(err);
+      });
+    });
+    r.on('timeout', () => r.destroy(new Error(`${method} ${urlPath} 超时（120s）`)));
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+async function withRetry(label, fn, tries = 6) {
+  for (let i = 1; i <= tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const retryable = !e.status || e.status >= 500 || e.status === 429 || e.waitMs > 0;
+      if (i === tries || !retryable) throw e;
+      const wait = e.waitMs || Math.min(30000, i * i * 2000);
+      console.log(`  retry ${label} 第 ${i} 次失败（${e.message.slice(0, 100)}），等 ${Math.round(wait / 1000)}s`);
+      await sleep(wait);
+    }
+  }
+}
+
+// ---------- 读本地树 ----------
+function localEntries() {
+  // -z 避免中文/空格文件名被拆开：<mode> SP <type> SP <sha> TAB <path> NUL
+  const raw = execFileSync('git', ['ls-tree', '-r', '-z', 'HEAD'], {
+    cwd: REPO_ROOT, maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'pipe'],
+  }).toString('utf8');
+  return raw.split('\0').filter(Boolean).map((line) => {
+    const parts = line.split('\t');
+    const meta = parts[0].split(/\s+/);
+    return { mode: meta[0], type: meta[1], sha: meta[2], path: parts.slice(1).join('\t') };
+  });
+}
+
+function blobContent(sha) {
+  return execFileSync('git', ['cat-file', 'blob', sha], {
+    cwd: REPO_ROOT, maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+// ---------- 主流程 ----------
+(async () => {
+  const { owner, repo } = originUrl();
+  const token = readToken();
+  const localTree = run('git show -s --format=%T HEAD').trim(); // %T 而非 HEAD^{tree}：cmd 会吃掉 ^
+  const base = `/repos/${owner}/${repo}`;
+  console.log(`本地树 ${localTree.slice(0, 7)} -> ${owner}/${repo}@${branch}${dry ? '（--dry，不动 ref）' : ''}`);
+
+  // 0. 远端已经是同一棵树就别白跑
+  if (!force) {
+    let remoteTree = null;
+    try {
+      const res = await withRetry('读远端 HEAD', () => api('GET', `${base}/commits/heads/${branch}`, token));
+      remoteTree = res.json && (res.json.commit ? res.json.commit.tree.sha : res.json.tree && res.json.tree.sha);
+    } catch (e) {
+      if (!`${e.message}`.includes('404')) throw e;
+      console.log(`远端还没有 ${branch}（首次推送）`);
+    }
+    if (remoteTree === localTree) {
+      console.log(`远端 ${branch} 已是同一棵树（${remoteTree.slice(0, 7)}），无事可做。换提交信息重推请加 -f`);
+      process.exit(0);
+    }
+    if (remoteTree) console.log(`远端树 ${remoteTree.slice(0, 7)} != 本地，继续`);
+  }
+
+  // 1. 过滤不支持的对象
+  const all = localEntries();
+  const entries = [];
+  for (const e of all) {
+    if (e.type === 'commit') { console.log(`  跳过子模块 ${e.path}`); continue; }
+    if (e.mode === '040000') continue; // ls-tree -r 不会给纯树，兜底
+    const size = Number(run(`git cat-file -s ${e.sha}`).trim());
+    if (size > MAX_BLOB) {
+      console.error(`${e.path} 超过 95MB，Git Data API 收不下`);
+      process.exit(1);
+    }
+    entries.push(e);
+  }
+  console.log(`${entries.length} 个文件待上传（本树共 ${all.length} 个对象）`);
+
+  // 2. 逐个建 blob（并发 6，幂等：同内容重复 POST 返回同一个 sha）
+  const blobs = new Map();
+  let done = 0;
+  const queue = entries.slice();
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (queue.length) {
+      const e = queue.shift();
+      const content = blobContent(e.sha).toString('base64');
+      const res = await withRetry(`blob ${e.path}`, () =>
+        api('POST', `${base}/git/blobs`, token, { content, encoding: 'base64' }));
+      if (res.json.sha !== e.sha) {
+        throw new Error(`blob sha 不符：${e.path} 本地 ${e.sha.slice(0, 7)} vs 远端 ${res.json.sha.slice(0, 7)}`);
+      }
+      blobs.set(e.sha, res.json.sha);
+      done += 1;
+      if (done % 25 === 0 || done === entries.length) console.log(`  blob ${done}/${entries.length}`);
+    }
+  }));
+
+  // 3. 一次性建树（路径带 / 时 GitHub 自动补中间子树）
+  const treeItems = entries.map((e) => ({ path: e.path, mode: e.mode, type: 'blob', sha: blobs.get(e.sha) }));
+  const treeRes = await withRetry('create tree', () => api('POST', `${base}/git/trees`, token, { tree: treeItems }));
+  const tree = treeRes.json;
+  if (tree.sha !== localTree) {
+    console.error(`tree sha 不符：本地 ${localTree.slice(0, 7)} vs 远端 ${tree.sha.slice(0, 7)}（可能有文件被跳过）`);
+    process.exit(1);
+  }
+  console.log(`tree ${tree.sha.slice(0, 7)}（与本地 %T 一致）`);
+
+  // 4. 无父级根提交 —— 与 publish-snapshot.js 的快照约定一致
+  const commitRes = await withRetry('create commit', () =>
+    api('POST', `${base}/git/commits`, token, { message: msg, tree: tree.sha, parents: [] }));
+  const commit = commitRes.json;
+  console.log(`commit ${commit.sha.slice(0, 7)}`);
+
+  if (dry) {
+    console.log('--dry：对象都建好了，ref 未动（悬空对象 GitHub 会自行 GC）');
+    process.exit(0);
+  }
+
+  // 5. 移动 ref（force=true：这一步本来就是快照覆盖）
+  try {
+    await withRetry('update ref', () =>
+      api('PATCH', `${base}/git/refs/heads/${branch}`, token, { sha: commit.sha, force: true }));
+  } catch (e) {
+    if (!`${e.message}`.includes('404')) throw e;
+    await withRetry('create ref', () =>
+      api('POST', `${base}/git/refs`, token, { ref: `refs/heads/${branch}`, sha: commit.sha }));
+  }
+
+  // 6. 自检：远端这棵树必须等于本地 %T
+  const check = await withRetry('自检远端 HEAD', () => api('GET', `${base}/commits/heads/${branch}`, token));
+  const head = check.json;
+  const remote = head && (head.commit ? head.commit.tree.sha : head.tree && head.tree.sha);
+  if (remote !== localTree) {
+    console.error(`推完仍不一致：远端树 ${remote} vs 本地 ${localTree}`);
+    process.exit(1);
+  }
+  console.log(`远端 ${branch} = ${head.sha.slice(0, 7)}，树 ${remote.slice(0, 7)} 与本地 HEAD 一致`);
+  process.exit(0);
+})().catch((e) => {
+  console.error(`失败：${e.message}`);
+  process.exit(1);
+});
