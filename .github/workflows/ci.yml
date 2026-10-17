@@ -47,8 +47,8 @@ jobs:
         working-directory: wps-office-mcp
         run: |
           node scripts/manual/gen-doc-stats.js
-          git diff --exit-code -- ../../README.md ../wps-claude-addon/panel.html
-        # README 的工具数/分布/清单表与面板数字全部由注册表生成（AUTO 区）。
+          git diff --exit-code -- ../../README.md ../../README.en.md ../wps-claude-addon/panel.html
+        # README（中/英两份）的工具数/分布/清单表与面板数字全部由注册表生成（AUTO 区）。
         # 加了工具忘了重跑 → diff 非空 → 红。和上面注解表同一套路：
         # 数字只能有一个来源，忘了同步就让它失败。
 

@@ -32,6 +32,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..', '..');
 const REPO_ROOT = path.resolve(ROOT, '..');
 const README = path.join(REPO_ROOT, 'README.md');
+const README_EN = path.join(REPO_ROOT, 'README.en.md');
 const PANEL = path.join(REPO_ROOT, 'wps-claude-addon', 'panel.html');
 
 const { WpsMcpServer } = require(path.join(ROOT, 'dist', 'server', 'mcp-server.js'));
@@ -67,51 +68,95 @@ const TABLE_ROWS = [
   {
     group: 'excel',
     label: 'Excel',
+    labelEn: 'Excel',
     caps: '公式/数据/图表/透视表/工作表/格式/工作簿/行列/批注保护/图片导出',
+    capsEn:
+      'formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export',
   },
   {
     group: 'word',
     label: 'Word',
+    labelEn: 'Word',
     caps: '格式/内容/文档管理/页眉页脚/批注/书签/表格/模板填写/学术排版/修订/索引/交叉引用',
+    capsEn:
+      'formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references',
   },
   {
     group: 'ppt',
     label: 'PPT',
+    labelEn: 'PPT',
     caps: '幻灯片/形状/图片/表格/美化/动画/图表/3D/数据可视化/图片导出',
+    capsEn: 'slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export',
   },
   {
     // common + core：core 是工具组管理本身，与通用工具合一行展示
     group: 'common',
     label: '通用',
+    labelEn: 'Common',
     caps: '保存/连接检测/文本选取/格式转换/工具组管理/意图路由/批量执行',
+    capsEn:
+      'save, connection check, text selection, format conversion, tool groups, intent routing, batch',
     includeCore: true,
   },
 ];
 
-const tableLines = [
-  '| 应用 | 工具数 | 主要能力 |',
-  '|------|--------|---------|',
-];
-// 口径与上方统计区【完全一致】：内置计入对应组、core 计入通用。
-// 曾经表格用"专业互斥 + 单列内置"口径（19/68/115/92 + 12），数字虽对但和统计区
-// 长得不像，读者一律当成"旧的没同步"—— 口径不统一比数字错更费沟通成本。
-for (const row of TABLE_ROWS) {
-  let n = byGroup[row.group] || 0;
-  if (row.includeCore) n += byGroup.core || 0;
-  tableLines.push(`| ${row.label} | ${n} | ${row.caps} |`);
-}
-tableLines.push(`| 内置 | ${builtinCount}（已计入上方各组） | 连接检查/万能方法调用/数据缓存 |`);
-const tableBlock = tableLines.join('\n');
+const commonTotal = (byGroup.common || 0) + (byGroup.core || 0);
 
-const statsBlock = [
-  `- **${total} 个工具**（${builtinCount} 个内置 + ${professionalCount} 个专业/组工具）；` +
-    `**默认只列 ${listed} 个**（基础档，按需加载 —— 口径与校验见 \`scripts/manual/basic-tier-verify.js\`）`,
-  `- 分布（按工具组，内置计入对应组）：` +
-    `通用 ${(byGroup.common || 0) + (byGroup.core || 0)}（含 core）/ ` +
-    `Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
-  `- 注解（实测）：只读 ${ann.readOnly} / 破坏性 ${ann.destructive} / 非幂等 ${ann.nonIdempotent}，` +
-    `覆盖 ${ann.annotated}/${ann.total}`,
-].join('\n');
+/** 按语言生成三块 AUTO 内容（中文 README 与英文 README 共用同一份实测数字） */
+function makeBlocks(lang) {
+  const en = lang === 'en';
+  const tableLines = en
+    ? ['| App | Tools | Highlights |', '|-----|-------|-----------|']
+    : ['| 应用 | 工具数 | 主要能力 |', '|------|--------|---------|'];
+  // 口径与统计区【完全一致】：内置计入对应组、core 计入通用。
+  // 曾经表格用"专业互斥 + 单列内置"口径，数字虽对但和统计区长得不像，
+  // 读者一律当成"旧的没同步"—— 口径不统一比数字错更费沟通成本。
+  for (const row of TABLE_ROWS) {
+    let n = byGroup[row.group] || 0;
+    if (row.includeCore) n += byGroup.core || 0;
+    tableLines.push(
+      en
+        ? `| ${row.labelEn} | ${n} | ${row.capsEn} |`
+        : `| ${row.label} | ${n} | ${row.caps} |`
+    );
+  }
+  tableLines.push(
+    en
+      ? `| Built-in | ${builtinCount} (already counted above) | connection check, generic method, data cache |`
+      : `| 内置 | ${builtinCount}（已计入上方各组） | 连接检查/万能方法调用/数据缓存 |`
+  );
+
+  const statsBlock = en
+    ? [
+        `- **${total} tools** (${builtinCount} built-in + ${professionalCount} specialized); ` +
+          `**only ${listed} listed by default** (essential tier, load on demand — see \`scripts/manual/basic-tier-verify.js\`)`,
+        `- Distribution (by tool group, built-ins counted in their app group): ` +
+          `Common ${commonTotal} (incl. core) / Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
+        `- Annotations (measured): read-only ${ann.readOnly} / destructive ${ann.destructive} / ` +
+          `non-idempotent ${ann.nonIdempotent} — coverage ${ann.annotated}/${ann.total}`,
+      ].join('\n')
+    : [
+        `- **${total} 个工具**（${builtinCount} 个内置 + ${professionalCount} 个专业/组工具）；` +
+          `**默认只列 ${listed} 个**（基础档，按需加载 —— 口径与校验见 \`scripts/manual/basic-tier-verify.js\`）`,
+        `- 分布（按工具组，内置计入对应组）：` +
+          `通用 ${commonTotal}（含 core）/ Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
+        `- 注解（实测）：只读 ${ann.readOnly} / 破坏性 ${ann.destructive} / 非幂等 ${ann.nonIdempotent}，` +
+          `覆盖 ${ann.annotated}/${ann.total}`,
+      ].join('\n');
+
+  // 徽章行同样不许手抄：版本取自 package.json，工具数取自注册表。
+  // CI 徽章暂不挂 —— workflow 还没在 GitHub 上真跑绿过，挂了只会显示 no status。
+  const badgesBlock = [
+    '[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)',
+    `[![version](https://img.shields.io/badge/version-${pkg.version}-green.svg)](CHANGELOG.md)`,
+    `[![tools](https://img.shields.io/badge/tools-${total}-brightgreen.svg)](${en ? '#capabilities' : '#能力一览'})`,
+    '[![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](' +
+      (en ? '#quick-start' : '#快速开始') +
+      ')',
+  ].join(' ');
+
+  return { statsBlock, tableBlock: tableLines.join('\n'), badgesBlock };
+}
 
 // ---- 3. 替换 README 的 AUTO 区 -------------------------------------------------
 
@@ -126,27 +171,29 @@ function replaceAutoRegion(text, startMarker, endMarker, block, label) {
   return text.slice(0, startIdx + startMarker.length) + '\n' + block + '\n' + text.slice(endIdx);
 }
 
-let readme = fs.readFileSync(README, 'utf8');
-const before = readme;
-readme = replaceAutoRegion(
-  readme,
-  '<!-- AUTO:tool-stats:start -->',
-  '<!-- AUTO:tool-stats:end -->',
-  statsBlock,
-  'tool-stats'
-);
-readme = replaceAutoRegion(
-  readme,
-  '<!-- AUTO:tool-table:start -->',
-  '<!-- AUTO:tool-table:end -->',
-  tableBlock,
-  'tool-table'
-);
-if (readme !== before) {
-  fs.writeFileSync(README, readme, 'utf8');
-  console.log(`已更新 README.md（AUTO 区两块）`);
-} else {
-  console.log('README.md 已是最新（AUTO 区无需改动）');
+/** 中英两份 README 用同一套数据生成，各自有独立的 AUTO 标记 */
+const DOCS = [
+  { file: README, lang: 'zh', name: 'README.md' },
+  { file: README_EN, lang: 'en', name: 'README.en.md' },
+];
+
+for (const doc of DOCS) {
+  if (!fs.existsSync(doc.file)) {
+    console.error(`✗ 找不到 ${doc.name}`);
+    process.exit(1);
+  }
+  const blocks = makeBlocks(doc.lang);
+  let text = fs.readFileSync(doc.file, 'utf8');
+  const before = text;
+  text = replaceAutoRegion(text, '<!-- AUTO:badges:start -->', '<!-- AUTO:badges:end -->', blocks.badgesBlock, 'badges');
+  text = replaceAutoRegion(text, '<!-- AUTO:tool-stats:start -->', '<!-- AUTO:tool-stats:end -->', blocks.statsBlock, 'tool-stats');
+  text = replaceAutoRegion(text, '<!-- AUTO:tool-table:start -->', '<!-- AUTO:tool-table:end -->', blocks.tableBlock, 'tool-table');
+  if (text !== before) {
+    fs.writeFileSync(doc.file, text, 'utf8');
+    console.log(`已更新 ${doc.name}（AUTO 区三块）`);
+  } else {
+    console.log(`${doc.name} 已是最新（AUTO 区无需改动）`);
+  }
 }
 
 // ---- 4. panel.html：工具数那行 + 版本号 ----------------------------------------
