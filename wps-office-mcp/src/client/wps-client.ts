@@ -23,6 +23,33 @@ import { psDaemon, DaemonUnavailableError } from './ps-daemon';
 import { AppKey, resolveAppKey } from './action-routes';
 import { currentSignal } from '../server/cancel-context';
 import { CancelError } from '../bridge/cancellable';
+import { ToolWarning } from '../types/tools';
+
+/**
+ * 从 data 里挑出部分成功提示。
+ *
+ * 容错是有意的：PS 侧是 6400 行的手写脚本，它给 warnings 的形状不保证统一
+ * （可能是对象、可能是纯字符串）。解析失败就当没提示 —— 宁可少报，
+ * 也不能让一条脏数据把整次调用的结果判成失败。
+ */
+export function extractWarnings(data: unknown): ToolWarning[] {
+  if (!data || typeof data !== 'object') return [];
+  const raw = (data as Record<string, unknown>).warnings;
+  if (!Array.isArray(raw)) return [];
+  const out: ToolWarning[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string' && item.trim()) {
+      out.push({ message: item.trim() });
+    } else if (item && typeof item === 'object') {
+      const o = item as Record<string, unknown>;
+      const message = typeof o.message === 'string' ? o.message.trim() : '';
+      if (!message) continue;
+      const step = typeof o.step === 'string' ? o.step : undefined;
+      out.push(step ? { step, message } : { message });
+    }
+  }
+  return out;
+}
 
 // 仅 Windows：优先走常驻桥（省掉每次 spawn powershell + 解析 5000 行脚本）。
 // 设 WPS_USE_DAEMON=0 可强制退回直跑模式。
@@ -211,6 +238,11 @@ export class WpsClient {
         this.status.connected = true;
         this.status.lastHeartbeat = new Date();
       }
+
+      // PS 侧把部分成功提示放在 data.warnings（约定位置），这里提到顶层，
+      // handler 不用每次去 data 里翻 —— 200 多个 handler 没法逐个记得翻。
+      const warnings = extractWarnings(result.data);
+      if (warnings.length) result.warnings = warnings;
 
       return result;
     } catch (error) {

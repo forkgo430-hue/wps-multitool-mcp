@@ -5769,12 +5769,22 @@ switch ($Action) {
             }
         }
 
+        # 降级插题注属于"主操作做完了但有保留" —— 走 warnings 约定，
+        # 让上层渲染成 [部分成功|...]，模型不会当成原生域插成功了。
+        $capWarnings = @()
+        if ($mode -eq "manual") {
+            $capWarnings = @(@{
+                step = "insertCaption.原生接口"
+                message = "原生题注接口在本机 WPS 不可用，已按标签自增序号手工插入；序号是文本不是域，图表目录无法自动收集"
+            })
+        }
         Output-Json @{ success = $true; data = @{
             label = $label
             text = $title
             mode = $mode
             caption = $captionText
-            note = if ($mode -eq "manual") { "原生题注接口在本机 WPS 不可用，已按标签自增序号手工插入；序号是文本不是域，图表目录无法自动收集" } else { $null }
+            note = if ($mode -eq "manual") { $capWarnings[0].message } else { $null }
+            warnings = $capWarnings
             nativeError = $nativeErr
         } }
     }
@@ -6419,20 +6429,24 @@ switch ($Action) {
                 $k = [string]$p.alignment
                 if ($map.ContainsKey($k)) { try { $s.ParagraphFormat.Alignment = $map[$k]; $applied += "alignment" } catch { $failed += "alignment" } }
             }
-            # ⚠️ note 先算好再放进 hashtable。不要写成 `note = (if ...)`：
+            # ⚠️ warnings 先算好再放进 hashtable。不要写成 `warnings = (if ...)`：
             #    hashtable 字面里带括号的 if 会在运行期报
             #    "无法将 if 项识别为 cmdlet"（而文件级 PARSE 却是通的，很迷惙）。
-            #    同文件 addCaption 那处不带括号能跗，但别依赖这种微妙差异。
-            $note = $null
+            #    同文件 insertCaption 那处不带括号能跗，但别依赖这种微妙差异。
+            $warnings = @()
             if ($failed.Count -gt 0) {
-                $note = "以下属性本机 WPS 不接受：$($failed -join '/')。样式已建成，其余属性已设上。"
+                $warnings = @(@{
+                    step = "addStyle.属性"
+                    message = "以下属性本机 WPS 不接受：$($failed -join '/')。样式已建成，其余属性已设上。"
+                })
             }
             Output-Json @{ success = $true; data = @{
                 name = [string]$p.name
                 styleName = [string]$s.NameLocal
                 applied = $applied
                 failed = $failed
-                note = $note
+                note = if ($warnings.Count -gt 0) { $warnings[0].message } else { $null }
+                warnings = $warnings
             } }
         } catch {
             Output-Json @{ success = $false; error = "新建样式失败: $(Get-CallError $_)" }

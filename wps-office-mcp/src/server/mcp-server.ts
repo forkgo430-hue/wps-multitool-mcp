@@ -190,7 +190,7 @@ export class WpsMcpServer {
         // 失败时把错误类型 + 可重试性透出去（前缀形式，不改动 isError 语义）
         // 形如 [busy|可重试·稍后退避] / [timeout|勿重试·可能已执行一半]
         const content = result.success
-          ? result.content
+          ? prefixWithWarnings(result)
           : result.content.map((c, i) =>
               i === 0 && c.type === 'text' && typeof c.text === 'string' && result.errorType
                 ? {
@@ -850,3 +850,23 @@ export const createMcpServer = (
 };
 
 export default WpsMcpServer;
+
+/**
+ * 成功但有保留时，在正文前挂一段提示。
+ *
+ * 为什么必须显式写出来：模型看到 success=true 就会当"全好了"，
+ * 不说的话它不会去看 warnings —— 而 warnings 里的内容往往正是用户需要知道的
+ * （"某个属性没设上""这个锚点插不进去"）。宁可啰嗦一点，也不能让用户以为全好。
+ */
+export function prefixWithWarnings(result: ToolCallResult): ToolContent[] {
+  const ws = result.warnings;
+  if (!ws || !ws.length) return result.content;
+  const lines = ws.map((w) => (w.step ? `  - ${w.step}：${w.message}` : `  - ${w.message}`));
+  const head = `[部分成功|主操作已完成，${ws.length} 处未按预期]`;
+  const hint = '以下是没成功的部分（不要当成全好，也不要重复执行整批）';
+  return result.content.map((c, i) =>
+    i === 0 && c.type === 'text' && typeof c.text === 'string'
+      ? { ...c, text: `${head} ${hint}\n${lines.join('\n')}\n\n${c.text}` }
+      : c
+  );
+}

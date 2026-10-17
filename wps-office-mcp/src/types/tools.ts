@@ -21,6 +21,10 @@ export interface ToolParameterSchema {
   properties?: Record<string, ToolParameterSchema>;
   required?: string[];
   default?: unknown;
+  /** 数组下界（转成 JSON Schema 的 minItems） */
+  minItems?: number;
+  /** 数组上界（转成 JSON Schema 的 maxItems）—— 批量上限要靠它在协议层就说清 */
+  maxItems?: number;
 }
 
 /**
@@ -106,6 +110,26 @@ export interface ToolCallRequest {
 /**
  * Tool调用结果
  */
+/**
+ * 部分成功的提示项 —— 「主操作做完了，但有 N 处没按预期」。
+ *
+ * 为什么需要它
+ * ------------
+ * 过去只有 success 的 true/false 二值。但 WPS 这类 COM 自动化天然会"做一半"：
+ * 某个属性本机不接受、某个锚点插不上、某一步超时。把它算失败 → 用户以为啥也没变，
+ * 于是重做一遍；算成功 → 用户以为全好了，等到发现没生效。
+ * 于是就有了第三态：**成功了，但有保留**。
+ *
+ * 约定：warnings 非空不等于失败。success 仍为 true，调用方可以照常拿 data，
+ * 但必须把 warnings 念给用户听。
+ */
+export interface ToolWarning {
+  /** 出问题的步骤或对象，如 'addStyle.format'、'第3步'。没有就留空 */
+  step?: string;
+  /** 给人看的一句话，说清"什么没成" */
+  message: string;
+}
+
 export interface ToolCallResult {
   /** 对应的请求ID */
   id: string;
@@ -119,6 +143,12 @@ export interface ToolCallResult {
   errorType?: string;
   /** 该错误能否安全重试（失败时）——重放不会造成"执行两次" */
   retryable?: boolean;
+  /**
+   * 部分成功提示（成功也可能有）。
+   * 与 success 正交：success=true + warnings 非空 = 做完了但有保留，
+   * 渲染时必须让模型知道，别让它当成全好。
+   */
+  warnings?: ToolWarning[];
 }
 
 /**

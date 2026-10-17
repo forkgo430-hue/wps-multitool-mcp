@@ -23,16 +23,18 @@ import {
   ToolCallResult,
   ToolCategory,
   RegisteredTool,
+  ToolWarning,
 } from '../../types/tools';
 import { wpsClient } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
 
 type Args = Record<string, unknown>;
 
-const ok = (text: string): ToolCallResult => ({
+const ok = (text: string, warnings?: ToolWarning[]): ToolCallResult => ({
   id: uuidv4(),
   success: true,
   content: [{ type: 'text', text }],
+  ...(warnings && warnings.length ? { warnings } : {}),
 });
 
 const fail = (text: string, err?: string): ToolCallResult => ({
@@ -42,10 +44,10 @@ const fail = (text: string, err?: string): ToolCallResult => ({
   error: err ?? text,
 });
 
-/** 统一调用：Word 应用，走常驻桥 */
-async function call<T>(action: string, params: Args): Promise<{ ok: boolean; data?: T; error?: string }> {
+/** 统一调用：Word 应用，走常驻桥。warnings 一路带回（主操作成功但有保留） */
+async function call<T>(action: string, params: Args): Promise<{ ok: boolean; data?: T; error?: string; warnings?: ToolWarning[] }> {
   const r = await wpsClient.executeMethod<T>(action, params, WpsAppType.WRITER);
-  return { ok: r.success, data: r.data, error: r.error };
+  return { ok: r.success, data: r.data, error: r.error, warnings: r.warnings };
 }
 
 /** 失败时统一文案：把 WPS 的原始报错带上，别让调用方只看到"失败" */
@@ -404,7 +406,10 @@ export const addStyleHandler: ToolHandler = async (args: Args): Promise<ToolCall
     return ok(
       `已新建样式「${r.data?.name ?? args.name}」` +
         (applied.length ? `，设置：${applied.join('/')}` : '（未指定格式属性，是空样式）') +
-        '。接下来用 wps_word_apply_style 套到段落上。'
+        '。接下来用 wps_word_apply_style 套到段落上。',
+      // 样式建成了、但有几个属性本机 WPS 不接受 —— 这是"部分成功"不是失败，
+      // 必须让调用方知道，否则模型会当全好了。
+      r.warnings
     );
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);

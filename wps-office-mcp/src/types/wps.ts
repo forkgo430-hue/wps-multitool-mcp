@@ -6,6 +6,8 @@
  * 跟WPS加载项通信用的类型，别tm搞混了
  */
 
+import { ToolWarning } from './tools';
+
 /**
  * WPS应用类型枚举
  */
@@ -52,6 +54,11 @@ export interface WpsApiResponse<T = unknown> {
   error?: string;
   /** 错误码 */
   errorCode?: number;
+  /**
+   * 部分成功提示。PS 侧约定放在 `data.warnings`（数组），
+   * 由 invokeAction 提到这一层 —— 这样 handler 不用去 data 里翻。
+   */
+  warnings?: ToolWarning[];
 }
 
 /**
