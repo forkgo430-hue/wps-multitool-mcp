@@ -156,7 +156,7 @@ function makeBlocks(lang) {
     '[![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases)',
     `[![tools](https://img.shields.io/badge/tools-${total}-brightgreen.svg)](${en ? '#capabilities' : '#能力一览'})`,
     '[![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](' +
-      (en ? '#quick-start' : '#快速开始') +
+      (en ? '#requirements' : '#安装') +
       ')',
   ].join(' ');
 
