@@ -11,6 +11,86 @@
 WPS 的 COM 自动化能力够，但直接丢给模型会踩三个坑：几百个工具撑爆上下文、写到一半失败说不清、近名工具改错地方还不报错。
 这个 MCP 把三件事做成**机制**而不是叮嘱：默认只列 40 个其余按需加载、失败前缀写明能不能重试、每个工具带机器可读的读写注解。
 
+## 目录
+
+- [快速开始](#快速开始) · [环境要求](#环境要求) · [能力边界](#能力边界)
+- [规模](#规模实测) · [架构](#架构) · [能力一览](#能力一览)
+- [设计取舍](#设计取舍) · [故障排除](#故障排除) · [许可](#许可)
+
+## 快速开始
+
+**一条命令**（需要能访问 GitHub；国内网络请先挂代理）：
+
+```powershell
+irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
+```
+
+它会自动完成：检查环境 → 拉取项目 → 安装依赖并编译 → 部署 WPS 加载项 → 安装 skill → 打印 MCP 配置。
+装完**重启 WPS 和你的 AI 客户端**，然后把打印出来的配置粘进客户端即可。
+
+<details>
+<summary><b>手动安装（网络受限 / 想自己控制每一步）</b></summary>
+
+```bash
+git clone https://github.com/forkgo430/wps-multitool-mcp.git
+cd wps-multitool-mcp
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+```
+
+脚本干的事和上面一样。也可以只跑其中几步，见脚本里的 `-DryRun`（只检查不修改）、`-Dev`（加载项用符号链接，改源码即时生效）。
+
+</details>
+
+<details>
+<summary><b>只配置 MCP、不装加载项（加载项只影响 WPS 里的侧边面板）</b></summary>
+
+**Claude Code** — `~/.claude/settings.json`：
+
+```json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "node",
+      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+**Cursor** — `.cursor/mcp.json`；**OpenAI Codex CLI** — `~/.codex/config.toml`：
+
+```toml
+[mcp_servers.wps-multitool-mcp]
+command = "node"
+args = ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+```
+
+**其他 MCP 客户端** — 同一个 `command` / `args`。本项目是标准 stdio 实现（spec 2025-11-25）。
+
+</details>
+
+## 环境要求
+
+| 要求 | 说明 |
+|------|------|
+| **Windows 10 / 11** | WPS 的 COM 自动化只在 Windows 可用，没有 macOS / Linux 版本 |
+| **WPS Office 2019+**（实测 12.1） | 加载项与 COM 接口都依赖它；装在哪个盘都行 |
+| **Node.js ≥ 18** | 构建与运行 MCP Server |
+| **一个 MCP 客户端** | Claude Code / Cursor / Codex CLI / CodeBuddy / WorkBuddy 等 |
+| 网络 | 一键安装需要能访问 GitHub（国内需代理）；否则用「手动安装」 |
+
+## 能力边界
+
+诚实地划一下范围，避免预期错位：
+
+| 能做 | 不能做 |
+|------|--------|
+| 读写**当前打开**的 WPS 文档：文字、表格、演示 | 不操作云端文档；文件没打开会先让你打开，不会偷偷开一堆窗口 |
+| 排版与格式：样式、字体、段落、表格、图表、页眉页脚、目录 | **没有撤销 / 回滚**（COM 写入不是事务，重要操作前先存快照） |
+| 表格数据读写、公式、透视表、条件格式、图片导出 | 不做**自动重试**：分不清"没执行"和"执行了一半"，失败前缀会写明能不能重发 |
+| 批注 / 书签 / 修订 / 交叉引用 / 索引 / 学术排版 | 不保证每个 WPS 版本的每个 COM 属性都支持——不支持的走 `warnings`，不假装成功 |
+| 一次组合 1~3 步的连续操作（`wps_common_batch`） | 不做长时间后台任务，也不跨机器操作 |
+
 ## 规模（实测）
 
 <!-- AUTO:tool-stats:start -->
@@ -20,8 +100,7 @@ WPS 的 COM 自动化能力够，但直接丢给模型会踩三个坑：几百�
 <!-- AUTO:tool-stats:end -->
 
 - 配套 skill `wps-multitool`：把「探活 → 定组 → 加载组 → 选型读反例 → 写前确认」固化成默认链路
-  （源码在 `wps-office-mcp/skills/wps-multitool/`，安装到 AI 助手的 skills 目录）
-- 仅支持 Windows（WPS 的 COM 自动化只在 Windows 可用）
+  （源码在 `wps-office-mcp/skills/wps-multitool/`，一键安装会装进客户端的 skills 目录）
 - 走**常驻桥进程**：冷启动约 5 秒，之后每次调用 2~3ms（一应用一进程，互不阻塞）
 
 ## 架构
@@ -68,97 +147,6 @@ flowchart TB
 | 内置 | 12（已计入上方各组） | 连接检查/万能方法调用/数据缓存 |
 <!-- AUTO:tool-table:end -->
 
-## 快速开始
-
-<details>
-<summary><b>6 步安装（点击展开）</b></summary>
-
-### 步骤1: 克隆项目
-
-```bash
-git clone https://github.com/forkgo430/wps-multitool-mcp.git
-cd wps-multitool-mcp
-```
-
-### 步骤2: 安装依赖并编译
-
-```bash
-cd wps-office-mcp
-npm install
-npm run build
-cd ..
-```
-
-### 步骤3: 配置 MCP Server
-
-将以下配置写入对应文件，注意把路径替换为项目实际绝对路径。
-
-**Claude Code** — 写入 `~/.claude/settings.json`：
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-**Cursor** — 写入项目根目录 `.cursor/mcp.json`：
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-**OpenAI Codex CLI** — 写入 `~/.codex/config.toml`：
-
-```toml
-[mcp_servers.wps-multitool-mcp]
-command = "node"
-args = ["/你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-```
-
-或命令行注册：`codex mcp add wps-multitool-mcp -- node /你的路径/wps-multitool-mcp/wps-office-mcp/dist/index.js`
-
-**Augment / 其他 MCP 兼容 IDE** — 参考各 IDE 的 MCP 配置文档，使用相同的 command 与 args。
-本项目是标准 stdio 实现（spec 2025-11-25），与所有 MCP 一等客户端（Claude Code / Cursor / Codex CLI / GitHub Copilot CLI / Windsurf 等）兼容。
-
-### 步骤4: 安装 WPS 加载项
-
-⚠️ 需要人工操作（AI 无法直接操作 WPS 应用）：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install.ps1
-```
-
-⚠️ 安装后必须重启 WPS Office 才能生效。
-
-### 步骤5: 安装 skill（仅 Claude Code 需要）
-
-```bash
-mkdir -p ~/.claude/skills
-ln -sf "$(pwd)/wps-office-mcp/skills/wps-multitool" ~/.claude/skills/wps-multitool
-```
-
-### 步骤6: 验证安装
-
-```powershell
-cd wps-office-mcp
-npm run verify
-# 应看到 14 项验证门禁全绿（含 Word/Excel 真机能力探测）
-```
-
-</details>
-
 ## 设计取舍
 
 这几个决定看起来"反直觉"，但都是为了不把模型和用户坑进去：
@@ -177,10 +165,10 @@ npm run verify
 
 | 问题 | 解决方案 |
 |------|---------|
-| MCP 连接失败 | 确认 `npm install && npm run build` 已执行，检查 `dist/index.js` 存在 |
-| WPS 未响应 | 重启 WPS Office，确认加载项已安装 |
-| "arguments error" | 重新运行安装脚本，重启 WPS |
-| Linux 找不到插件 | 本项目仅支持 Windows（WPS 的 COM 自动化只在 Windows 可用） |
+| MCP 连接失败 | 确认已构建（`wps-office-mcp/dist/index.js` 存在），客户端配置路径正确 |
+| WPS 未响应 | 重启 WPS Office，确认加载项已安装（`%APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_`） |
+| "arguments error" | 重跑 `scripts/install.ps1`，然后重启 WPS |
+| 一键安装卡在下载 | 访问不了 GitHub；挂代理，或改用「手动安装」 |
 | 工具调用返回 null | 确认 WPS 中已打开对应类型的文档 |
 | 其他问题 | 到 GitHub 仓库提 issue：https://github.com/forkgo430/wps-multitool-mcp/issues |
 

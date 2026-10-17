@@ -1,451 +1,424 @@
-﻿# Input: 用户执行安装命令
-# Output: WPS Claude 加载项安装 + MCP Server 构建
-# Pos: Windows 手动安装入口脚本
-# 一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
-# ============================================================================
-# WPS-Claude-Skills 安装脚本 (Windows PowerShell)
-# ============================================================================
-# 作者：赢容
+﻿# Input: 用户执行安装命令（本地 -File 或 irm | iex 一键）
+# Output: 依赖安装 + TypeScript 构建 + WPS 加载项部署 + MCP 配置示例 + skill 安装
+# Pos: Windows 安装入口脚本。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
 #
-# 艹，这个SB脚本负责把整个项目环境搭建起来
-# 包括检查Node.js、npm、编译TypeScript、复制加载项到WPS目录
-#
-# 用法：以管理员身份运行 PowerShell，执行 .\scripts\install.ps1
+# 两种用法：
+#   一键（需能访问 GitHub）：
+#     irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
+#   本地（已克隆）：
+#     powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 #
 # 参数：
-#   -SkipNodeCheck  跳过Node.js版本检查（你确定你知道自己在干嘛？）
-#   -SkipWpsCheck   跳过WPS安装检查（没WPS你装个锤子）
-#   -Dev            开发模式（创建符号链接而不是复制文件）
-# ============================================================================
-
-#Requires -Version 5.1
+#   -InstallDir <dir>  一键模式下装到哪，默认 %USERPROFILE%\wps-multitool-mcp
+#   -SkipNodeCheck     跳过 Node.js 检查
+#   -SkipWpsCheck      跳过 WPS 安装检查
+#   -Dev               加载项用符号链接部署（改源码即时生效，需管理员权限）
+#   -DryRun            只检查 + 打印计划，不做任何改动
+#   -Force             目标目录已存在时删除重建
+#
+# 普通权限即可运行（只有 -Dev 的目录符号链接需要管理员）。
+# 不用 #Requires：一键模式是 `irm | iex` 执行的字符串，#Requires 在该上下文会报错，
+# 所以改成运行时检查（作用相同，但两种模式都能跑）。
 
 param(
+    [string]$InstallDir = (Join-Path $env:USERPROFILE 'wps-multitool-mcp'),
     [switch]$SkipNodeCheck,
     [switch]$SkipWpsCheck,
-    [switch]$Dev
+    [switch]$Dev,
+    [switch]$DryRun,
+    [switch]$Force
 )
 
-# ============================================================================
-# 颜色输出函数
-# 艹，Windows的控制台颜色真TM难搞
-# ============================================================================
-function Write-ColorOutput {
-    param(
-        [string]$Message,
-        [string]$Color = "White"
-    )
-    Write-Host $Message -ForegroundColor $Color
+$ErrorActionPreference = 'Continue'
+
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "需要 PowerShell 5.1 或更高版本（当前 $($PSVersionTable.PSVersion)）" -ForegroundColor Red
+    return
 }
 
-function Write-Success { Write-ColorOutput $args[0] "Green" }
-function Write-Warn { Write-ColorOutput $args[0] "Yellow" }  # 改名避免和系统冲突
-function Write-Err { Write-ColorOutput $args[0] "Red" }       # 改名避免和系统冲突
-function Write-Info { Write-ColorOutput $args[0] "Cyan" }
+$RepoGit = 'https://github.com/forkgo430/wps-multitool-mcp.git'
+$RepoTar = 'https://codeload.github.com/forkgo430/wps-multitool-mcp/tar.gz/refs/heads/main'
 
 # ============================================================================
-# 打印 Banner
-# 虽然花里胡哨，但用户体验还是要有的嘛
+# 输出辅助
 # ============================================================================
+function Write-Step { param([string]$m) Write-Host "`n>>> $m" -ForegroundColor Cyan }
+function Write-Ok { param([string]$m) Write-Host "  [OK] $m" -ForegroundColor Green }
+function Write-Warn2 { param([string]$m) Write-Host "  [!]  $m" -ForegroundColor Yellow }
+function Write-Err2 { param([string]$m) Write-Host "  [X]  $m" -ForegroundColor Red }
+function Write-Hint { param([string]$m) Write-Host "       $m" -ForegroundColor DarkGray }
+
 function Show-Banner {
     Write-Host ""
-    Write-Host "╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║                                                           ║" -ForegroundColor Cyan
-    Write-Host "║         WPS-Claude-Skills 安装程序 v1.0                   ║" -ForegroundColor Cyan
-    Write-Host "║                                                           ║" -ForegroundColor Cyan
-    Write-Host "║         让 WPS Office 说人话的智能助手                    ║" -ForegroundColor Cyan
-    Write-Host "║         (赢容出品，必属精品，不接受反驳)                  ║" -ForegroundColor Cyan
-    Write-Host "║                                                           ║" -ForegroundColor Cyan
-    Write-Host "╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  ============================================================" -ForegroundColor Cyan
+    Write-Host "   WPS Office 多面手 MCP  ·  wps-multitool-mcp" -ForegroundColor White
+    Write-Host "   让 AI 直接操控你正开着的 WPS 文字 / 表格 / 演示" -ForegroundColor DarkGray
+    Write-Host "  ============================================================" -ForegroundColor Cyan
+    if ($DryRun) { Write-Warn2 "DryRun 模式：只检查与打印计划，不做任何改动" }
     Write-Host ""
 }
 
 # ============================================================================
-# 获取项目根目录
-# 这个函数用来定位项目根目录，别TM瞎改路径
+# 定位项目根目录
+#   本地模式：脚本位于 <repo>/scripts/install.ps1
+#   一键模式：$PSScriptRoot 为空 —— 先看 InstallDir 是否已有项目，没有就拉取
 # ============================================================================
-function Get-ProjectRoot {
-    $scriptPath = $PSScriptRoot
-    return (Get-Item $scriptPath).Parent.FullName
+function Resolve-ProjectRoot {
+    if ($PSScriptRoot) {
+        $parent = (Get-Item $PSScriptRoot).Parent.FullName
+        if (Test-Path (Join-Path $parent 'wps-office-mcp')) {
+            Write-Ok "使用本地项目: $parent"
+            return $parent
+        }
+    }
+
+    $hasProject = Test-Path (Join-Path $InstallDir 'wps-office-mcp')
+
+    if ($hasProject -and -not $Force) {
+        Write-Ok "使用已存在项目: $InstallDir（加 -Force 可删除重建）"
+        return $InstallDir
+    }
+
+    if ($DryRun) {
+        Write-Warn2 "DryRun：将把项目拉取到 $InstallDir"
+        return $null
+    }
+
+    if ($hasProject -and $Force) {
+        Write-Warn2 "删除已存在目录: $InstallDir"
+        Remove-Item -Path $InstallDir -Recurse -Force
+    }
+
+    Write-Step "获取项目文件 -> $InstallDir"
+    $hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+    if ($hasGit) {
+        Write-Hint "git clone --depth 1"
+        git clone --depth 1 $RepoGit $InstallDir
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $InstallDir 'wps-office-mcp'))) {
+            throw "git clone 失败。常见原因：访问不了 github.com。可先用代理，或手动下载仓库后运行 scripts/install.ps1"
+        }
+    } else {
+        Write-Hint "未检测到 git，改用 tarball 下载"
+        $tmp = Join-Path $env:TEMP ("wps-multitool-" + [guid]::NewGuid().ToString('N') + ".tar.gz")
+        Invoke-WebRequest -Uri $RepoTar -OutFile $tmp -UseBasicParsing
+        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        tar -xzf $tmp -C $InstallDir --strip-components=1
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path (Join-Path $InstallDir 'wps-office-mcp'))) {
+            throw "解压失败。常见原因：访问不了 github.com。可手动下载仓库后运行 scripts/install.ps1"
+        }
+    }
+    Write-Ok "项目已就绪: $InstallDir"
+    return $InstallDir
+}
+
+function Get-McpVersion {
+    param([string]$ProjectRoot)
+    $pkg = Join-Path $ProjectRoot 'wps-office-mcp\package.json'
+    if (Test-Path $pkg) {
+        try {
+            # 用正则而不是 ConvertFrom-Json：老版本 PowerShell 对带 BOM/特殊字符的
+            # json 偶尔会抛异常，版本号这种一行就能取的东西不值得冒险。
+            $raw = Get-Content $pkg -Raw
+            if ($raw -match '"version"\s*:\s*"([^"]+)"') { return $Matches[1] }
+        } catch {}
+    }
+    return 'dev'
 }
 
 # ============================================================================
-# 检查 Node.js 版本
-# 没有Node.js >= 18.0.0，你玩个锤子？
+# 环境检查
 # ============================================================================
 function Test-NodeVersion {
-    Write-Info ">>> 检查 Node.js 版本..."
-
+    Write-Step "检查 Node.js"
+    if ($SkipNodeCheck) { Write-Warn2 "已跳过"; return $true }
     try {
-        $nodeVersion = node --version 2>$null
-        if (-not $nodeVersion) {
-            throw "Node.js 未安装"
-        }
-
-        # 提取版本号 (去掉 v 前缀)
-        $version = $nodeVersion.TrimStart('v')
-        $majorVersion = [int]($version.Split('.')[0])
-
-        if ($majorVersion -lt 18) {
-            Write-Err "✗ 艹！Node.js 版本过低: $nodeVersion"
-            Write-Err "  需要 Node.js >= 18.0.0，你这版本太老了，升级去！"
-            Write-Info "  下载地址: https://nodejs.org"
+        $v = node --version 2>$null
+        if (-not $v) { throw "未安装" }
+        $major = [int]($v.TrimStart('v').Split('.')[0])
+        if ($major -lt 18) {
+            Write-Err2 "Node.js 版本过低: $v（需要 >= 18）"
+            Write-Hint "下载: https://nodejs.org"
             return $false
         }
-
-        Write-Success "✓ Node.js 版本: $nodeVersion (这个可以)"
+        Write-Ok "Node.js $v"
         return $true
-    }
-    catch {
-        Write-Err "✗ Node.js 未安装或无法访问"
-        Write-Info "  请从 https://nodejs.org 下载安装 Node.js 18+ 版本"
-        Write-Info "  没有Node.js你让老子怎么帮你编译TypeScript？"
+    } catch {
+        Write-Err2 "未检测到 Node.js"
+        Write-Hint "请安装 Node.js 18+：https://nodejs.org"
         return $false
     }
 }
 
-# ============================================================================
-# 检查 npm 是否可用
-# npm都没有，你装的什么野鸡Node.js？
-# ============================================================================
 function Test-NpmAvailable {
-    Write-Info ">>> 检查 npm 是否可用..."
-
     try {
-        $npmVersion = npm --version 2>$null
-        if (-not $npmVersion) {
-            throw "npm 未安装"
-        }
-
-        Write-Success "✓ npm 版本: $npmVersion"
+        $v = npm --version 2>$null
+        if (-not $v) { throw "未安装" }
+        Write-Ok "npm $v"
         return $true
-    }
-    catch {
-        Write-Err "✗ npm 未安装或无法访问"
-        Write-Err "  你这Node.js装的有问题啊，npm都没有？"
+    } catch {
+        Write-Err2 "npm 不可用（Node.js 安装可能不完整）"
         return $false
     }
 }
 
-# ============================================================================
-# 检查 WPS Office 是否安装
-# 没WPS你装这个加载项干嘛？给空气用？
-# ============================================================================
 function Test-WpsInstallation {
-    Write-Info ">>> 检查 WPS Office 安装..."
+    Write-Step "检查 WPS Office"
+    if ($SkipWpsCheck) { Write-Warn2 "已跳过"; return $true }
 
-    # WPS 可能的安装路径，这些憨批路径要全都检查一遍
-    $wpsPaths = @(
-        "${env:ProgramFiles}\Kingsoft\WPS Office\ksolaunch.exe",
-        "${env:ProgramFiles(x86)}\Kingsoft\WPS Office\ksolaunch.exe",
-        "${env:LOCALAPPDATA}\Kingsoft\WPS Office\ksolaunch.exe",
-        # 新版WPS可能在这些路径
-        "${env:ProgramFiles}\Kingsoft\WPS Office\office6\wps.exe",
-        "${env:ProgramFiles(x86)}\Kingsoft\WPS Office\office6\wps.exe"
-    )
+    # 检测顺序：运行中的进程 → 卸载项 → 已知安装路径 → 注册表 6.0 子键。
+    # 为什么不能只查 Program Files：实测有用户装在 D:\APPdate\WPS Office\...
+    # 为什么不需要安装路径：加载项目录固定在 %APPDATA%\kingsoft\wps\jsaddons，
+    # 只需要确认"装过 WPS"这件事。
 
-    foreach ($path in $wpsPaths) {
-        if (Test-Path $path) {
-            Write-Success "✓ WPS Office 已安装: $path"
+    # 1) 运行中的进程（最可靠的正面信号）
+    foreach ($n in @('wps', 'et', 'wpp', 'Ket', 'Kwps', 'Kwpp')) {
+        $p = Get-Process -Name $n -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p -and $p.Path) {
+            Write-Ok "WPS Office 正在运行: $($p.Path)"
             return $true
         }
     }
 
-    # 尝试从注册表获取
-    try {
-        $regPaths = @(
-            "HKLM:\SOFTWARE\Kingsoft\Office",
-            "HKLM:\SOFTWARE\WOW6432Node\Kingsoft\Office",
-            "HKCU:\SOFTWARE\Kingsoft\Office"
-        )
-
-        foreach ($regPath in $regPaths) {
-            $regValue = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue
-            if ($regValue -and $regValue.InstallRoot) {
-                Write-Success "✓ WPS Office 已安装: $($regValue.InstallRoot)"
-                return $true
-            }
+    # 2) 卸载项（装过但没在运行）
+    $uninstallRoots = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    foreach ($root in $uninstallRoots) {
+        $hit = Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+            $item = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            if ($item -and $item.DisplayName -like '*WPS Office*') { $item }
+        } | Select-Object -First 1
+        if ($hit) {
+            Write-Ok "WPS Office 已安装: $($hit.DisplayName)"
+            return $true
         }
     }
-    catch {}
 
-    Write-Warn "⚠ 未检测到 WPS Office 安装"
-    Write-Warn "  请确保已安装 WPS Office 2019 或更高版本"
-    Write-Info "  下载地址: https://www.wps.cn"
-    Write-Warn "  没有WPS你装这个加载项给谁用？"
+    # 3) 常见安装路径
+    $candidates = @(
+        "${env:ProgramFiles}\Kingsoft\WPS Office\ksolaunch.exe",
+        "${env:ProgramFiles(x86)}\Kingsoft\WPS Office\ksolaunch.exe",
+        "${env:LOCALAPPDATA}\Kingsoft\WPS Office\ksolaunch.exe",
+        "${env:ProgramFiles}\Kingsoft\WPS Office\office6\wps.exe",
+        "${env:ProgramFiles(x86)}\Kingsoft\WPS Office\office6\wps.exe"
+    )
+    foreach ($p in $candidates) {
+        if (Test-Path $p) { Write-Ok "WPS Office: $p"; return $true }
+    }
+
+    # 4) 注册表子键（存在 Office\6.0 即说明装过）
+    foreach ($reg in @('HKLM:\SOFTWARE\Kingsoft\Office\6.0', 'HKLM:\SOFTWARE\WOW6432Node\Kingsoft\Office\6.0', 'HKCU:\SOFTWARE\Kingsoft\Office\6.0')) {
+        if (Test-Path $reg) { Write-Ok "注册表存在 WPS Office 安装痕迹: $reg"; return $true }
+    }
+
+    Write-Warn2 "未检测到 WPS Office"
+    Write-Hint "请先安装 WPS Office：https://www.wps.cn（加载项必须有它才有意义）"
     return $false
 }
 
 # ============================================================================
-# 安装 MCP Server 依赖并编译 TypeScript
-# 这一步是核心，编译不过老子把键盘都给你砸了
+# 依赖安装 + 构建
 # ============================================================================
-function Install-McpServerDependencies {
-    $projectRoot = Get-ProjectRoot
-    $mcpPath = Join-Path $projectRoot "wps-office-mcp"
-
-    Write-Info ">>> 安装 MCP Server 依赖..."
-
+function Install-McpServer {
+    param([string]$ProjectRoot)
+    $mcpPath = Join-Path $ProjectRoot 'wps-office-mcp'
     if (-not (Test-Path $mcpPath)) {
-        Write-Err "✗ MCP Server 目录不存在: $mcpPath"
-        Write-Err "  你TM把项目文件删了？"
+        Write-Err2 "找不到 wps-office-mcp 目录: $mcpPath"
         return $false
+    }
+    if ($DryRun) {
+        Write-Step "DryRun：将执行 npm ci && npm run build（在 $mcpPath）"
+        return $true
     }
 
     Push-Location $mcpPath
     try {
-        # 第一步：npm install
-        Write-Info "  执行 npm install..."
-        $result = npm install 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "✗ npm install 失败，这憨批依赖出问题了"
-            Write-Err $result
-            return $false
-        }
-        Write-Success "✓ MCP Server 依赖安装完成"
+        Write-Step "安装依赖"
+        if (Test-Path 'package-lock.json') { npm ci --loglevel=error } else { npm install --loglevel=error }
+        if ($LASTEXITCODE -ne 0) { Write-Err2 "依赖安装失败"; return $false }
+        Write-Ok "依赖就绪"
 
-        # 第二步：编译 TypeScript
-        Write-Info "  编译 TypeScript..."
-        $result = npm run build 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "✗ TypeScript 编译失败"
-            Write-Err "  艹，编译都过不了，你写的什么SB代码？"
-            Write-Err $result
-            return $false
-        }
-        Write-Success "✓ TypeScript 编译完成"
-
+        Write-Step "编译 TypeScript"
+        npm run build
+        if ($LASTEXITCODE -ne 0) { Write-Err2 "编译失败"; return $false }
+        if (-not (Test-Path 'dist\index.js')) { Write-Err2 "编译产物 dist/index.js 不存在"; return $false }
+        Write-Ok "构建完成: dist/index.js"
         return $true
-    }
-    catch {
-        Write-Err "✗ 安装过程出错: $_"
-        Write-Err "  这什么憨批错误，老子从来没见过"
-        return $false
-    }
-    finally {
+    } finally {
         Pop-Location
     }
 }
 
 # ============================================================================
-# 复制 WPS 加载项到 WPS 加载项目录，并创建 publish.xml 注册文件
-# Windows路径: %APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_\
+# 部署 WPS 加载项（%APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_）
 # ============================================================================
-function Copy-WpsAddon {
-    $projectRoot = Get-ProjectRoot
-    $addonSource = Join-Path $projectRoot "wps-claude-addon"
+function Install-WpsAddon {
+    param([string]$ProjectRoot)
+    $src = Join-Path $ProjectRoot 'wps-claude-addon'
+    if (-not (Test-Path $src)) { Write-Err2 "找不到加载项目录: $src"; return $false }
 
-    Write-Info ">>> 复制 WPS 加载项到 WPS 目录..."
+    $addonsDir = Join-Path $env:APPDATA 'kingsoft\wps\jsaddons'
+    $target = Join-Path $addonsDir 'wps-claude-addon_'
 
-    if (-not (Test-Path $addonSource)) {
-        Write-Err "✗ WPS 加载项源目录不存在: $addonSource"
-        Write-Err "  你把加载项目录删了？脑子被门夹了？"
-        return $false
+    if ($DryRun) {
+        Write-Step "DryRun：将部署加载项 -> $target"
+        return $true
     }
 
-    # WPS 加载项目标目录 (Windows)
-    # 注意这个路径，是查 WPS 文档找到的
-    $wpsAddonsPath = Join-Path $env:APPDATA "kingsoft\wps\jsaddons"
-    $addonTarget = Join-Path $wpsAddonsPath "wps-claude-addon_"
-
-    # 创建目标目录（如果不存在）
-    if (-not (Test-Path $wpsAddonsPath)) {
-        Write-Info "  创建 WPS 加载项目录: $wpsAddonsPath"
-        New-Item -ItemType Directory -Path $wpsAddonsPath -Force | Out-Null
+    Write-Step "部署 WPS 加载项"
+    New-Item -ItemType Directory -Force -Path $addonsDir | Out-Null
+    if (Test-Path $target) {
+        Write-Hint "清理旧版本"
+        Remove-Item -Path $target -Recurse -Force
     }
 
-    # 如果目标已存在，先删除（避免残留文件搞事情）
-    if (Test-Path $addonTarget) {
-        Write-Info "  删除旧版本加载项..."
-        Remove-Item -Path $addonTarget -Recurse -Force
-    }
-
-    try {
-        if ($Dev) {
-            # 开发模式：创建符号链接（方便调试，改了源文件立即生效）
-            Write-Info "  开发模式：创建符号链接..."
-            # Windows创建目录符号链接需要管理员权限
-            $null = cmd /c mklink /D "`"$addonTarget`"" "`"$addonSource`"" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "  符号链接创建失败，可能需要管理员权限"
-                Write-Info "  降级为复制模式..."
-                Copy-Item -Path $addonSource -Destination $addonTarget -Recurse -Force
-            } else {
-                Write-Success "✓ 已创建符号链接: $addonTarget -> $addonSource"
-            }
+    if ($Dev) {
+        $null = cmd /c mklink /D "`"$target`"" "`"$src`"" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn2 "符号链接失败（需要管理员权限），降级为复制"
+            Copy-Item -Path $src -Destination $target -Recurse -Force
+        } else {
+            Write-Ok "已链接: $target -> $src"
         }
-        else {
-            # 正常模式：复制整个目录
-            Write-Info "  复制加载项文件..."
-            Copy-Item -Path $addonSource -Destination $addonTarget -Recurse -Force
-            Write-Success "✓ WPS 加载项已复制到: $addonTarget"
-        }
+    } else {
+        Copy-Item -Path $src -Destination $target -Recurse -Force
+        Write-Ok "已复制到: $target"
+    }
 
-        # 显示复制的文件数量，让用户安心
-        $fileCount = (Get-ChildItem -Path $addonTarget -Recurse -File).Count
-        Write-Info "  共复制 $fileCount 个文件"
-
-        # 创建/更新 publish.xml 注册文件 (Issue #9)
-        # WPS JS 插件加载器依赖此文件扫描并加载插件
-        $publishXmlPath = Join-Path $wpsAddonsPath "publish.xml"
-        $publishContent = @'
+    # publish.xml：WPS 靠它扫描加载项（目录名尾部 _ 是必须的）
+    $publishXml = Join-Path $addonsDir 'publish.xml'
+    @'
 <?xml version="1.0" encoding="UTF-8"?>
 <jsplugins>
   <jsplugin name="wps-claude-addon" type="wps,et,wpp" url="wps-claude-addon_/" enable="enable_dev"/>
 </jsplugins>
-'@
-        $publishContent | Out-File -FilePath $publishXmlPath -Encoding utf8
-        Write-Success "✓ publish.xml 已创建: $publishXmlPath"
-
-        return $true
-    }
-    catch {
-        Write-Err "✗ 复制加载项失败: $_"
-        Write-Err "  这什么鬼？复制文件都能失败？"
-        return $false
-    }
-}
-
-# ============================================================================
-# 生成 Claude Code MCP 配置示例
-# 告诉用户怎么配置Claude Code，省得他们来烦老子
-# ============================================================================
-function New-ClaudeConfig {
-    $projectRoot = Get-ProjectRoot
-    $mcpDistPath = Join-Path $projectRoot "wps-office-mcp\dist\index.js"
-
-    Write-Info ">>> 生成 Claude Code 配置..."
-
-    # 把Windows路径转成正斜杠，给Claude Code用
-    $mcpDistPathFormatted = $mcpDistPath.Replace('\', '/')
-
-    $claudeConfig = @{
-        mcpServers = @{
-            "wps-multitool" = @{
-                command = "node"
-                args = @($mcpDistPathFormatted)
-                env = @{
-                    WPS_ADDON_PORT = "58080"
-                }
-            }
-        }
-    }
-
-    $configJson = $claudeConfig | ConvertTo-Json -Depth 4
-
-    Write-Host ""
-    Write-Success "✓ Claude Code MCP 配置示例:"
-    Write-Host ""
-    Write-Host $configJson -ForegroundColor Yellow
-    Write-Host ""
-    Write-Info "  请将上述配置添加到 ~/.claude/settings.json 或者项目根目录的 .mcp.json"
-    Write-Info "  不会配置？去看README.md，都写好了！"
-
+'@ | Out-File -FilePath $publishXml -Encoding utf8
+    Write-Ok "publish.xml: $publishXml"
     return $true
 }
 
 # ============================================================================
-# 显示安装完成信息和使用说明
-# 告诉用户下一步该干嘛，省得他们抓瞎
+# 安装 skill（存在对应客户端的 skills 目录才装）
 # ============================================================================
-function Show-CompletionMessage {
-    Write-Host ""
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
-    Write-Success "   安装完成！赢容出品，必属精品！"
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Green
-    Write-Host ""
+function Install-Skill {
+    param([string]$ProjectRoot)
+    $src = Join-Path $ProjectRoot 'wps-office-mcp\skills\wps-multitool'
+    if (-not (Test-Path $src)) { Write-Warn2 "找不到 skill 源目录，跳过"; return $true }
 
-    Write-Info "下一步操作："
-    Write-Host "  1. 重启 WPS Office（必须重启才能加载新的加载项）" -ForegroundColor White
-    Write-Host "  2. 配置 Claude Code（参考上方配置示例）" -ForegroundColor White
-    Write-Host "  3. 启动 MCP Server（开发时用）:" -ForegroundColor White
-    Write-Host "       cd wps-office-mcp && npm start" -ForegroundColor Yellow
-    Write-Host "  4. 在 Claude Code 中使用:" -ForegroundColor White
-    Write-Host "       /wps-excel 帮我写个求和公式" -ForegroundColor Yellow
-    Write-Host ""
+    $targets = @(
+        (Join-Path $env:USERPROFILE '.claude\skills'),
+        (Join-Path $env:USERPROFILE '.workbuddy\skills')
+    )
+    $installed = @()
+    foreach ($base in $targets) {
+        if (-not (Test-Path $base)) { continue }
+        $dst = Join-Path $base 'wps-multitool'
+        if ($DryRun) { Write-Hint "DryRun：将安装 skill -> $dst"; $installed += $dst; continue }
+        if (Test-Path $dst) { Remove-Item -Path $dst -Recurse -Force }
+        Copy-Item -Path $src -Destination $dst -Recurse -Force
+        $installed += $dst
+    }
+    if ($installed.Count) {
+        $verb = if ($DryRun) { 'skill 将安装到' } else { 'skill 已安装' }
+        Write-Ok "${verb}: $($installed -join '; ')"
+    } else {
+        Write-Warn2 "未发现 .claude / .workbuddy skills 目录，跳过 skill 安装（用到再手动复制）"
+    }
+    return $true
+}
 
-    Write-Info "遇到问题？"
-    Write-Host "  - 检查WPS是否正确安装并重启" -ForegroundColor White
-    Write-Host "  - 检查Node.js版本是否 >= 18.0.0" -ForegroundColor White
-    Write-Host "  - 查看项目README.md获取更多帮助" -ForegroundColor White
-    Write-Host "  - 实在不行？到 GitHub 提 issue（开玩笑的）" -ForegroundColor White
+# ============================================================================
+# MCP 配置示例
+# ============================================================================
+function Show-McpConfig {
+    param([string]$ProjectRoot)
+    $dist = (Join-Path $ProjectRoot 'wps-office-mcp\dist\index.js').Replace('\', '/')
+    # 用 here-string 而不是 ConvertTo-Json：PS 5.1 输出的一层层缩进很难看，配置要能直接复制
+    $cfg = @"
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "node",
+      "args": ["$dist"]
+    }
+  }
+}
+"@
+
+    Write-Step "MCP 配置示例（复制到你的客户端配置里）"
+    Write-Host $cfg -ForegroundColor Yellow
+    Write-Hint "Claude Code: ~/.claude/settings.json"
+    Write-Hint "Cursor: <项目>/.cursor/mcp.json"
+    Write-Hint "CodeBuddy / WorkBuddy: 客户端设置里的 MCP 配置"
+}
+
+# ============================================================================
+# 完成信息
+# ============================================================================
+function Show-Completion {
+    param([string]$ProjectRoot)
+    $v = Get-McpVersion $ProjectRoot
+    Write-Host ""
+    Write-Host "  ============================================================" -ForegroundColor Green
+    Write-Host "   安装完成（wps-multitool-mcp v$v）" -ForegroundColor Green
+    Write-Host "  ============================================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  接下来：" -ForegroundColor White
+    Write-Host "   1. 重启 WPS Office（加载项只在启动时加载）" -ForegroundColor White
+    Write-Host "   2. 把上面的 MCP 配置写进你的 AI 客户端，重启客户端" -ForegroundColor White
+    Write-Host "   3. 验证：" -ForegroundColor White
+    Write-Host "        cd $(Join-Path $ProjectRoot 'wps-office-mcp')" -ForegroundColor DarkGray
+    Write-Host "        npm run verify" -ForegroundColor DarkGray
+    Write-Host "   4. 用法：在客户端里直接说任务，例如" -ForegroundColor White
+    Write-Host "        「在这份文档末尾加一段总结」" -ForegroundColor DarkGray
+    Write-Host "        「把这个表格按销售额降序并画柱状图」" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  遇到问题：" -ForegroundColor White
+    Write-Host "   - MCP 连不上：确认 dist/index.js 存在、客户端配置路径正确" -ForegroundColor DarkGray
+    Write-Host "   - WPS 面板不显示：确认 %APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_ 存在并重启 WPS" -ForegroundColor DarkGray
+    Write-Host "   - 其他：https://github.com/forkgo430/wps-multitool-mcp/issues" -ForegroundColor DarkGray
     Write-Host ""
 }
 
 # ============================================================================
-# 主安装流程
-# 把上面所有步骤串起来，一步一步执行
+# 主流程
 # ============================================================================
 function Start-Installation {
     Show-Banner
 
-    $allPassed = $true
-
-    # ========== 第一步：检查 Node.js 和 npm ==========
-    if (-not $SkipNodeCheck) {
-        if (-not (Test-NodeVersion)) {
-            $allPassed = $false
-        }
-        if (-not (Test-NpmAvailable)) {
-            $allPassed = $false
-        }
-    }
-    else {
-        Write-Warn ">>> 跳过 Node.js 检查（你最好知道自己在干嘛）"
-    }
-
-    # ========== 第二步：检查 WPS Office ==========
-    if (-not $SkipWpsCheck) {
-        if (-not (Test-WpsInstallation)) {
-            # WPS 检查失败不阻止安装，但要警告
-            Write-Warn "  没检测到WPS，但安装会继续"
-            Write-Warn "  安装完记得装WPS，不然加载项没地方用！"
-        }
-    }
-    else {
-        Write-Warn ">>> 跳过 WPS 检查"
-    }
-
-    # ========== 如果基础检查失败，询问是否继续 ==========
-    if (-not $allPassed) {
+    $ok = $true
+    if (-not (Test-NodeVersion)) { $ok = $false }
+    if ($ok -and -not (Test-NpmAvailable)) { $ok = $false }
+    if ($ok -and -not (Test-WpsInstallation)) { $ok = $false }
+    if (-not $ok) {
         Write-Host ""
-        $continue = Read-Host "基础环境检查未通过，是否继续安装? (y/N)"
-        if ($continue -ne 'y' -and $continue -ne 'Y') {
-            Write-Err "安装已取消，去把环境配好再来！"
-            exit 1
-        }
-        Write-Warn "好吧，你坚持继续，出问题别怪老子..."
+        Write-Err2 "环境检查未通过，已停止。修好上面的问题后重跑。"
+        return 1
     }
 
-    Write-Host ""
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Info "开始安装依赖和配置..."
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host ""
-
-    # ========== 第三步：安装 MCP Server 依赖并编译 ==========
-    if (-not (Install-McpServerDependencies)) {
-        Write-Err "MCP Server 依赖安装或编译失败"
-        Write-Err "艹，这一步都过不了，后面也别装了！"
-        exit 1
+    try {
+        $projectRoot = Resolve-ProjectRoot
+    } catch {
+        Write-Err2 $_.Exception.Message
+        return 1
+    }
+    if (-not $projectRoot) {
+        Write-Host ""
+        Write-Warn2 "DryRun 结束（未实际下载/构建/部署）"
+        return 0
     }
 
-    # ========== 第四步：复制 WPS 加载项 ==========
-    if (-not (Copy-WpsAddon)) {
-        Write-Err "WPS 加载项复制失败"
-        Write-Err "复制文件都能失败，检查一下权限问题！"
-        exit 1
-    }
+    if (-not (Install-McpServer $projectRoot)) { Write-Err2 "MCP Server 安装失败"; return 1 }
+    if (-not (Install-WpsAddon $projectRoot)) { Write-Err2 "加载项部署失败"; return 1 }
+    if (-not (Install-Skill $projectRoot)) { Write-Err2 "skill 安装失败"; return 1 }
 
-    # ========== 第五步：生成 Claude Code 配置示例 ==========
-    New-ClaudeConfig
-
-    # ========== 安装完成 ==========
-    Show-CompletionMessage
+    Show-McpConfig $projectRoot
+    Show-Completion $projectRoot
+    return 0
 }
 
-# ============================================================================
-# 脚本入口
-# 开始执行安装，出了问题别找老子（开玩笑的，有问题提Issue）
-# ============================================================================
-Start-Installation
+$code = Start-Installation
+if ($PSScriptRoot) { exit $code }

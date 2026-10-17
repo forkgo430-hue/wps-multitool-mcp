@@ -1,10 +1,10 @@
 # WPS Office Multitool MCP
 
+[简体中文](README.md) | **English**
+
 <!-- AUTO:badges:start -->
 [![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![version](https://img.shields.io/badge/version-1.0.1-green.svg)](CHANGELOG.md) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#quick-start)
 <!-- AUTO:badges:end -->
-
-[简体中文](README.md) | **English**
 
 > Let AI drive the WPS Office windows **you already have open** — real COM edits, not simulated clicks.
 
@@ -12,6 +12,85 @@ WPS COM automation is capable, but handing it straight to a model hits three wal
 half-finished writes cannot be described honestly, and look-alike tools silently edit the wrong place.
 This MCP turns those into **mechanisms**: only 40 tools listed by default, failures carry a retryability tag,
 and every tool exposes machine-readable read/write annotations.
+
+## Contents
+
+- [Quick start](#quick-start) · [Requirements](#requirements) · [What it does / doesn't](#what-it-does--doesnt)
+- [At a glance](#at-a-glance-measured) · [Architecture](#architecture) · [Capabilities](#capabilities)
+- [Design decisions](#design-decisions) · [Troubleshooting](#troubleshooting) · [License](#license)
+
+## Quick start
+
+**One command** (needs GitHub access; use a proxy if you're behind the GFW):
+
+```powershell
+irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
+```
+
+It will: check the environment → fetch the project → install deps and build → deploy the WPS add-in → install the skill →
+print the MCP config. Then **restart WPS and your AI client** and paste the printed config into your client.
+
+<details>
+<summary><b>Manual install (restricted network / want full control)</b></summary>
+
+```bash
+git clone https://github.com/forkgo430/wps-multitool-mcp.git
+cd wps-multitool-mcp
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1
+```
+
+Same steps as the one-liner. `scripts/install.ps1` also accepts `-DryRun` (check only, change nothing)
+and `-Dev` (deploy the add-in as a symlink so source edits apply immediately).
+
+</details>
+
+<details>
+<summary><b>Configure MCP only (the add-in only affects the side panel inside WPS)</b></summary>
+
+**Claude Code** — `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "node",
+      "args": ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+**Cursor** — `.cursor/mcp.json`; **OpenAI Codex CLI** — `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.wps-multitool-mcp]
+command = "node"
+args = ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
+```
+
+**Other MCP clients** — same `command` / `args`. Standard stdio server (spec 2025-11-25).
+
+</details>
+
+## Requirements
+
+| Requirement | Notes |
+|-------------|-------|
+| **Windows 10 / 11** | WPS COM automation is Windows-only; no macOS / Linux build |
+| **WPS Office 2019+** (tested on 12.1) | Required by both the add-in and the COM interface; any drive is fine |
+| **Node.js ≥ 18** | Builds and runs the MCP server |
+| **An MCP client** | Claude Code / Cursor / Codex CLI / CodeBuddy / WorkBuddy, etc. |
+| Network | The one-liner needs GitHub access; otherwise use manual install |
+
+## What it does / doesn't
+
+| Does | Doesn't |
+|------|---------|
+| Read/write **currently open** WPS documents (Writer, Spreadsheets, Presentation) | Never touches cloud documents; if nothing is open it asks you to open one instead of spawning windows |
+| Layout & formatting: styles, fonts, paragraphs, tables, charts, headers/footers, TOC | **No undo / rollback** — COM writes are not transactional; snapshot before big edits |
+| Table data, formulas, pivot tables, conditional formatting, image export | **No automatic retry** — "never ran" and "ran halfway" are indistinguishable; failure tags say whether a retry is safe |
+| Comments, bookmarks, revisions, cross-references, index, academic layout | Doesn't guarantee every COM property across every WPS version; unsupported bits surface as `warnings` |
+| Small composed operations of 1–3 steps (`wps_common_batch`) | No long-running background jobs, no cross-machine control |
 
 ## At a glance (measured)
 
@@ -22,8 +101,7 @@ and every tool exposes machine-readable read/write annotations.
 <!-- AUTO:tool-stats:end -->
 
 - Companion skill `wps-multitool`: encodes the default chain — probe → route → load group → pick with `notFor` → confirm before writing
-  (source in `wps-office-mcp/skills/wps-multitool/`)
-- Windows only (WPS COM automation is Windows-only)
+  (source in `wps-office-mcp/skills/wps-multitool/`; the installer copies it into your client's skills directory)
 - **Resident bridge**: ~5 s cold start, then 2–3 ms per call (one process per app, no head-of-line blocking)
 
 ## Architecture
@@ -70,97 +148,6 @@ Same scope as the stats block above: built-in tools are counted inside their app
 | Built-in | 12 (already counted above) | connection check, generic method, data cache |
 <!-- AUTO:tool-table:end -->
 
-## Quick start
-
-<details>
-<summary><b>6 steps (click to expand)</b></summary>
-
-### Step 1: Clone
-
-```bash
-git clone https://github.com/forkgo430/wps-multitool-mcp.git
-cd wps-multitool-mcp
-```
-
-### Step 2: Install dependencies and build
-
-```bash
-cd wps-office-mcp
-npm install
-npm run build
-cd ..
-```
-
-### Step 3: Register the MCP server
-
-Write the config below into the file for your client, replacing the path with the absolute path on your machine.
-
-**Claude Code** — `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-**Cursor** — `.cursor/mcp.json` in the project root:
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-    }
-  }
-}
-```
-
-**OpenAI Codex CLI** — `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.wps-multitool-mcp]
-command = "node"
-args = ["/your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js"]
-```
-
-Or: `codex mcp add wps-multitool-mcp -- node /your/path/wps-multitool-mcp/wps-office-mcp/dist/index.js`
-
-**Other MCP-capable IDEs** — use the same `command` / `args`. This is a standard stdio server
-(spec 2025-11-25) and works with any first-class MCP client (Claude Code / Cursor / Codex CLI / GitHub Copilot CLI / Windsurf).
-
-### Step 4: Install the WPS add-in
-
-⚠️ Manual step (an AI cannot click inside WPS):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install.ps1
-```
-
-⚠️ Restart WPS Office afterwards.
-
-### Step 5: Install the skill (Claude Code only)
-
-```bash
-mkdir -p ~/.claude/skills
-ln -sf "$(pwd)/wps-office-mcp/skills/wps-multitool" ~/.claude/skills/wps-multitool
-```
-
-### Step 6: Verify
-
-```powershell
-cd wps-office-mcp
-npm run verify
-# expect 14/14 gates green (includes real-machine Word/Excel capability probes)
-```
-
-</details>
-
 ## Design decisions
 
 These may look counter-intuitive, but each one exists to keep the model and the user out of a trap:
@@ -182,10 +169,10 @@ These may look counter-intuitive, but each one exists to keep the model and the 
 
 | Symptom | Fix |
 |---------|-----|
-| MCP fails to connect | Ensure `npm install && npm run build` ran; check `dist/index.js` exists |
-| WPS not responding | Restart WPS Office; confirm the add-in is installed |
-| "arguments error" | Re-run the install script, then restart WPS |
-| No add-in on Linux | Windows only (WPS COM automation is Windows-only) |
+| MCP fails to connect | Ensure the build ran (`wps-office-mcp/dist/index.js` exists) and the client path is correct |
+| WPS not responding | Restart WPS Office; confirm the add-in is installed (`%APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_`) |
+| "arguments error" | Re-run `scripts/install.ps1`, then restart WPS |
+| One-liner stuck downloading | GitHub unreachable; use a proxy or the manual install |
 | Tool returns null | Make sure a document of that type is open in WPS |
 | Anything else | Open an issue: https://github.com/forkgo430/wps-multitool-mcp/issues |
 
