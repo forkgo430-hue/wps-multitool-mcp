@@ -8,6 +8,8 @@
 
 > Let AI drive the WPS Office windows **you already have open** — real COM edits, not simulated clicks.
 
+<sub>Author & maintainer: **赢容** · [npm](https://www.npmjs.com/package/wps-multitool-mcp) · [Release](https://github.com/forkgo430/wps-multitool-mcp/releases)</sub>
+
 WPS COM automation is capable, but handing it straight to a model hits three walls: hundreds of tools blow up the context,
 half-finished writes cannot be described honestly, and look-alike tools silently edit the wrong place.
 This MCP turns those into **mechanisms**: only 40 tools listed by default, failures carry a retryability tag,
