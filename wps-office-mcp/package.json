@@ -1,0 +1,59 @@
+{
+  "name": "wps-multitool-mcp",
+  "version": "1.0.1",
+  "description": "WPS Office 多面手 MCP —— 让 AI 直接操控你正开着的 WPS 文字/表格/演示。306 个工具 · 常驻桥进程（每次调用 2~3ms）· Windows only · 作者赢容",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "wps-multitool-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "scripts/wps-com.ps1",
+    "scripts/wps-comd.ps1",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc -w",
+    "clean": "rimraf dist",
+    "lint": "eslint src/**/*.ts",
+    "verify": "node scripts/manual/verify-all.js",
+    "verify:all": "node scripts/manual/verify-all.js --all",
+    "gen:annotations": "node scripts/manual/gen-tool-annotations.js",
+    "test": "node scripts/manual/verify-all.js --all",
+    "test:jest": "jest",
+    "test:jest:watch": "jest --watch"
+  },
+  "keywords": [
+    "mcp",
+    "wps",
+    "office",
+    "ai",
+    "automation"
+  ],
+  "author": "赢容",
+  "contributors": [],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "axios": "^1.6.0",
+    "uuid": "^9.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.0",
+    "jest": "^29.7.0",
+    "rimraf": "^5.0.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

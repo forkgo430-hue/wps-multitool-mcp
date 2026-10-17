@@ -1,0 +1,135 @@
+/**
+ * Input: 无
+ * Output: 工具档位（基础 40 / 全量）+ 工具组加载 的断言结果
+ * Pos: 工具档位与工具组的手工验证脚本。一旦我被修改，请更新我的头部注释，以及所属目录的md。
+ *
+ * 用法（先 npm run build）：node scripts/manual/tool-groups-test.js
+ *
+ * 注意：除了 allTools，这里还给内置的 wps_execute_method 补了一个 stub ——
+ * 它在生产里由 mcp-server 注册，本脚本不起 server，补出来才和生产口径一致（正好 40）。
+ * 通知（notifications/tools/list_changed）不在这里测 —— 那需要真客户端，
+ * 这里只断言"变更事件确实被触发"。
+ */
+
+const path = require('path');
+const { execFileSync } = require('child_process');
+const ROOT = path.resolve(__dirname, '../..');
+const NODE = process.execPath;
+
+const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
+const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
+const { ToolCategory } = require(path.join(ROOT, 'dist', 'types', 'tools.js'));
+const { onToolGroupsChanged } = require(path.join(ROOT, 'dist', 'tools', 'common', 'toolgroups.js'));
+const { ESSENTIAL_TOOL_NAMES, findUnknownEssentialTools, isEssentialTier } = require(
+  path.join(ROOT, 'dist', 'server', 'tool-tiers.js')
+);
+
+const results = [];
+function check(name, cond, detail) {
+  results.push({ name, ok: !!cond });
+  console.log(`  ${cond ? '✅' : '❌'} ${name}${detail ? '  → ' + detail : ''}`);
+}
+
+toolRegistry.registerAll(allTools);
+if (!toolRegistry.hasTool('wps_execute_method')) {
+  toolRegistry.register(
+    {
+      name: 'wps_execute_method',
+      description: 'stub（生产里由 mcp-server 注册，这里补出来以对齐口径）',
+      inputSchema: { type: 'object', properties: {} },
+      category: ToolCategory.COMMON,
+    },
+    async () => ({ id: '', success: true, content: [{ type: 'text', text: 'stub' }] })
+  );
+}
+
+const registeredNames = new Set(toolRegistry.listAllTools().map((t) => t.name));
+
+console.log('=== 档位与默认列出数 ===');
+const groups0 = toolRegistry.getGroups();
+const coreGroup = groups0.find((g) => g.group === 'core');
+const pptGroup = groups0.find((g) => g.group === 'ppt');
+console.log(`  档位: ${toolRegistry.tier}（isEssentialTier=${isEssentialTier()}）`);
+console.log(
+  '  ' +
+    groups0
+      .map((g) => `${g.group} 列出${g.listed}/${g.total}${g.fullyLoaded ? '[整组]' : ''}`)
+      .join('  ')
+);
+const listed0 = toolRegistry.listTools().tools.length;
+const total0 = toolRegistry.listAllTools().length;
+const essentialTotal = ESSENTIAL_TOOL_NAMES.size + coreGroup.total;
+console.log(`  默认列出 ${listed0} / 共 ${total0}`);
+console.log(`  基础档计算值 = 白名单 ${ESSENTIAL_TOOL_NAMES.size} + core ${coreGroup.total} = ${essentialTotal}`);
+
+check('档位是 essential', toolRegistry.tier === 'essential');
+check('默认列出恰好 40 个', listed0 === 40, `${listed0}`);
+check('基础档计算值与实际一致', essentialTotal === listed0, `${essentialTotal} vs ${listed0}`);
+check('总工具数 > 250', total0 > 250, `${total0}`);
+
+console.log('\n=== 白名单自检（防手误）===');
+const unknown = findUnknownEssentialTools(registeredNames);
+check('基础档里没有"写了但不存在"的工具名', unknown.length === 0, unknown.length ? unknown.join(', ') : '无');
+
+const listedNames = new Set(toolRegistry.listTools().tools.map((t) => t.name));
+check('ppt 组里只列出基础档那 8 个（不整组列出）', pptGroup.listed === 8, `${pptGroup.listed}`);
+check('core 组全部列出', coreGroup.listed === coreGroup.total, `${coreGroup.listed}/${coreGroup.total}`);
+check('core 里有 route_intent（意图识别）', listedNames.has('wps_route_intent'));
+check('核心管理工具都在', listedNames.has('wps_load_tool_group') && listedNames.has('wps_search_tools'));
+
+console.log('\n=== 搜索（含未列出）===');
+const hits = toolRegistry.searchTools('ppt', { limit: 5 });
+check('搜得到 ppt 工具', hits.length > 0 && hits.some((h) => h.group === 'ppt'));
+check('搜到的 ppt 工具标记为未列出', hits.some((h) => h.group === 'ppt' && h.listed === false));
+
+console.log('\n=== 加载 ppt 组 ===');
+let notified = 0;
+onToolGroupsChanged(() => {
+  notified += 1;
+});
+
+const load = toolRegistry.loadGroup('ppt');
+const listed1 = toolRegistry.listTools().tools.length;
+check('loadGroup 返回 ok 且有变化', load.ok && load.changed);
+check('变更事件触发一次', notified === 1, `notified=${notified}`);
+check('列出数量 = 40 - 8 + 115 = 147', listed1 === 147, `${listed0} → ${listed1}`);
+check('ppt 整组 115 个都已列出', toolRegistry.getGroups().find((g) => g.group === 'ppt').listed === 115);
+
+const load2 = toolRegistry.loadGroup('ppt');
+check('重复 load 不再触发通知', load2.changed === false && notified === 1);
+
+console.log('\n=== 保护 core / 卸载 ppt ===');
+check('core 不允许卸载', toolRegistry.unloadGroup('core').ok === false);
+const un = toolRegistry.unloadGroup('ppt');
+check('卸载触发通知', notified === 2, `notified=${notified}`);
+check('卸载后回到 40（ppt 基础档那几个仍在列）', toolRegistry.listTools().tools.length === 40, `${toolRegistry.listTools().tools.length}`);
+check('不存在的组报错', toolRegistry.loadGroup('nope').ok === false && toolRegistry.unloadGroup('nope').ok === false);
+
+console.log('\n=== 全量档（子进程带 WPS_TOOL_TIER=full 跑一遍）===');
+let fullOut = '';
+try {
+  const code =
+    `const r=require(${JSON.stringify(path.join(ROOT, 'dist', 'server', 'tool-registry.js'))});` +
+    `const t=require(${JSON.stringify(path.join(ROOT, 'dist', 'tools', 'index.js'))});` +
+    `r.toolRegistry.registerAll(t.allTools);` +
+    `console.log(JSON.stringify({tier:r.toolRegistry.tier, listed:r.toolRegistry.listTools().tools.length}));`;
+  fullOut = execFileSync(NODE, ['-e', code], {
+    encoding: 'utf8',
+    env: { ...process.env, WPS_TOOL_TIER: 'full' },
+  }).trim();
+} catch (e) {
+  fullOut = 'ERR: ' + String(e.message).slice(0, 120);
+}
+console.log('  子进程输出:', fullOut);
+let full = null;
+try {
+  full = JSON.parse(fullOut);
+} catch {
+  /* 保持 null */
+}
+check('full 档位生效', !!full && full.tier === 'full', full ? `tier=${full.tier}` : fullOut);
+check('full 档列出数远大于 40（回到按组切）', !!full && full.listed > 100, full ? `${full.listed}` : 'n/a');
+
+const passed = results.filter((r) => r.ok).length;
+console.log(`\n汇总：${passed}/${results.length} 通过`);
+process.exit(passed === results.length ? 0 : 1);
