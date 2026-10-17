@@ -35,6 +35,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { log } from '../utils/logger';
 import { CancelError } from '../bridge/cancellable';
+import { RUNTIME_ID } from '../runtime-identity';
 
 /** 桥进程入口（与客户端同时随包分发） */
 const BRIDGE_ENTRY = path.join(__dirname, '..', 'bridge', 'index.js');
@@ -57,7 +58,7 @@ function defaultPipeName(): string {
     /* ignore */
   }
   const safe = user.replace(/[^A-Za-z0-9_.-]/g, '_');
-  return `\\\\.\\pipe\\wps-multitool-mcp-${safe}`;
+  return `\\\\.\\pipe\\${RUNTIME_ID}-${safe}`;
 }
 
 export const BRIDGE_PIPE = process.env.WPS_BRIDGE_PIPE || defaultPipeName();

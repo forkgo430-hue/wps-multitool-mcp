@@ -5,7 +5,7 @@
  *
  * 为什么需要它
  * ------------
- * 工具总数已经 266 个（PPT 单独就 115 个）。一次性全塞进 LLM 上下文很浪费，
+ * 工具总数已经几百个（PPT 单独就上百个）。一次性全塞进 LLM 上下文很浪费，
  * 而且真正用到的往往是少数。做法对标 bethington/ghidra-mcp 的 tool groups：
  *   - 默认只列出 core / common / word / excel
  *   - ppt（115 个）默认【不列出】，需要时 load

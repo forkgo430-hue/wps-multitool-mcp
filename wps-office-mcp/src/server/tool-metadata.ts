@@ -299,6 +299,51 @@ const CURATED: Record<
     notFor: ['不是目录（目录用 generate_toc）；不是交叉引用（用 cross_reference）'],
   },
 
+  // ===== Word 第 5 期缺口工具 =====
+  wps_word_get_document_stats: {
+    aliases: ['文档统计', '多少字', '多少页', '字数统计', '篇幅'],
+    examples: ['这篇文档多少字', '看看这篇有多长'],
+    notFor: ['只看当前文档基本信息（名字/路径/打开状态）用 wps_word_get_active_document'],
+  },
+  wps_word_get_comments: {
+    aliases: ['看批注', '批注列表', '有哪些批注', '审阅意见'],
+    examples: ['看看文档里有哪些批注'],
+    notFor: ['插入新批注用 wps_word_insert_comment；修订（track changes）用 wps_word_revisions'],
+  },
+  wps_word_delete_comment: {
+    aliases: ['删批注', '去掉批注', '清理批注'],
+    notFor: ['只能删一条；删前用 wps_word_get_comments 确认序号。批注删了不可恢复'],
+  },
+  wps_word_get_bookmarks: {
+    aliases: ['书签列表', '有哪些书签', '查看书签'],
+    notFor: ['插入书签用 wps_word_insert_bookmark；按名字填书签内容用 wps_word_replace_bookmark_content'],
+  },
+  wps_word_get_tables: {
+    aliases: ['有几个表', '表格列表', '文档里的表格'],
+    notFor: ['读整表内容用 wps_word_get_table_data；读单个格子用 wps_word_get_cell_text'],
+  },
+  wps_word_get_table_data: {
+    aliases: ['读表格', '表格内容', '表里有什么'],
+    notFor: ['先看有哪些表用 wps_word_get_tables；只读一个格子用 wps_word_get_cell_text'],
+  },
+  wps_word_create_document: {
+    aliases: ['新建文档', '建个Word', '创建文档', '开个新文档'],
+    examples: ['新建一个文档写周报'],
+    notFor: ['打开已有文件用 wps_word_open_document；新建后尚未保存，落盘用 wps_word_save_as'],
+  },
+  wps_word_close_document: {
+    aliases: ['关闭文档', '关掉这个Word'],
+    notFor: ['从未保存过的文档直接关会卡住通道，必须先 wps_word_save_as 或显式 save=false'],
+  },
+  wps_word_insert_hyperlink: {
+    aliases: ['超链接', '加链接', '插入链接', '网址'],
+    notFor: ['链到文档内位置用书签（insert_bookmark）+ cross_reference；这是链到 URL'],
+  },
+  wps_word_convert_table_to_text: {
+    aliases: ['表格转文本', '表格拆成文字', '去表格线'],
+    notFor: ['破坏性操作且不可恢复；先 wps_word_get_table_data 确认内容。只读表格用 get_tables'],
+  },
+
   // ===== Excel 近名/易混 =====
   wps_excel_zoom: {
     aliases: ['缩放', '显示比例'],

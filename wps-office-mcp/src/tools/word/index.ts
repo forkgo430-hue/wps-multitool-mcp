@@ -13,6 +13,7 @@ import { documentTools } from './document';
 import { proofreadTools } from './proofread';
 import { academicTools } from './academic';
 import { p01Tools } from './professional';
+import { gapTools } from './gaps';
 
 /**
  * 所有Word相关的Tools
@@ -24,6 +25,8 @@ import { p01Tools } from './professional';
  * - 长文档Tools（academic）: add_heading, get_outline, insert_paragraph, delete_paragraph, add_caption, add_footnote, insert_table_of_figures, update_fields, set_columns, set_default_font, set_heading_numbering, add_list, format_table
  * - 专业Tools（professional）: revisions, get_cell_text, merge_cells, split_cell, table_row_col,
  *   set_cell_borders, list_styles, add_style, modify_style, delete_style, cross_reference, index, page_number
+ * - 缺口Tools（gaps，第 5 期）: get_document_stats, get_comments, delete_comment, get_bookmarks,
+ *   get_tables, get_table_data, create_document, close_document, insert_hyperlink, convert_table_to_text
  */
 export const wordTools: RegisteredTool[] = [
   ...formatTools,
@@ -32,6 +35,7 @@ export const wordTools: RegisteredTool[] = [
   ...proofreadTools,
   ...academicTools,
   ...p01Tools,
+  ...gapTools,
 ];
 // 分别导出，方便按需使用
 export { formatTools } from './format';
@@ -39,6 +43,7 @@ export { contentTools } from './content';
 export { documentTools } from './document';
 export { proofreadTools } from './proofread';
 export { academicTools } from './academic';
+export { gapTools } from './gaps';
 
 // 导出单独的定义和处理器，方便测试
 export {

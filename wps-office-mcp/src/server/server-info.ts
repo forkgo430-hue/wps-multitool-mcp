@@ -32,7 +32,7 @@ export function setToolCount(n: number): void {
 export function serverInstructions(): string {
   return [
     `${MCP_NAME} v${MCP_VERSION} —— 操作本机 WPS Office（文字 / 表格 / 演示）的 MCP 工具集。`,
-    `作者：${MCP_AUTHOR}。上游：${MCP_BASED_ON}。`,
+    `作者：${MCP_AUTHOR}，本项目部分内容参考 ${MCP_BASED_ON}。`,
     toolCount ? `共 ${toolCount} 个工具，默认只列出 40 个基础工具，其余按需加载。` : '',
     '',
     '使用要点：',

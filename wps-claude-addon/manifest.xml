@@ -13,7 +13,7 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
     <id>wps-claude-addon</id>
-    <version>2.0.0</version>
+    <version>1.0.1</version>
     <name>MCP 工具</name>
     <description>MCP（Model Context Protocol）工具集：让 AI 助手通过 PowerShell COM 桥接直接操控 WPS Office 的文字、表格与演示。</description>
     <author>赢容</author>

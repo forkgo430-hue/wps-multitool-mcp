@@ -1112,7 +1112,9 @@ switch ($Action) {
             $warn = "文档已创建但 6 秒内未通过健康检查（可能是 WPS 正在初始化）。" +
                     "后续操作会自动遍历集合找健康文档；若报错请重试或检查对话框。"
         }
-        $data = @{ count = [int]$word.Documents.Count }
+        $name = ""
+        try { $name = [string]$word.Documents.Item($word.Documents.Count).Name } catch {}
+        $data = @{ count = [int]$word.Documents.Count; name = $name }
         if ($warn) { $data.warning = $warn }
         Output-Json @{ success = $true; data = $data }
     }
@@ -2793,27 +2795,6 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ message = "窗格冻结已取消" } }
     }
 
-    "findInSheet" {
-        $excel = Get-WpsExcel
-        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
-        $searchRange = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
-        $results = @()
-        $lookAt = if ($p.matchCase) { 1 } else { 2 }
-        $found = $searchRange.Find($p.searchText, $null, -4163, $lookAt)
-        if ($found) {
-            $firstAddr = $found.Address()
-            do {
-                $addr = $found.Address()
-                $results += @{ address = ($addr -replace "\$", ""); value = $found.Value2 }
-                $found = $searchRange.FindNext($found)
-                if ($null -eq $found) { break }
-                $currAddr = $found.Address()
-            } while ($currAddr -ne $firstAddr)
-        }
-        Output-Json @{ success = $true; data = @{ searchText = $p.searchText; results = $results; count = $results.Count } }
-    }
-
     "replaceInSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
@@ -3156,8 +3137,302 @@ switch ($Action) {
         if ($null -eq $docItem) { Output-Json @{ success = $false; error = "No document" }; return }
         $name = $docItem.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
+        # 未保存文档的【设计答案】：从未存过盘的文档 Close($true) 会弹「另存为」模态框，
+        # 而 COM 是 STA —— 弹框会把桥通道卡死（后续全部调用超时）。
+        # 所以这里不猜、不硬关：明确报错让调用方先 save_as，或显式 saveChanges=false。
+        if ($saveChanges) {
+            $hasPath = $false
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$docItem.FullName) } catch {}
+            if (-not $hasPath) {
+                Output-Json @{ success = $false; error = "文档「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道。请先另存为（wps_word_save_as），或显式传 saveChanges=false 放弃保存" }
+                return
+            }
+        }
         $docItem.Close($saveChanges)
         Output-Json @{ success = $true; data = @{ closed = $name } }
+    }
+
+    # ==================== Word 深水区补齐（第 5 期） ====================
+    # 补的是"读侧太弱、模型只能盲写"那批：统计/批注/书签/表格都只能写不能读，
+    # 加上 create/close_document（PS 动作早有，一直没有 TS 工具暴露）。
+    # 真机支持度由 __probeWordCaps 逐个验（在临时文档上探，探完删，不碰用户文档）。
+
+    "getDocumentStats" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $warnings = @()
+        $data = [ordered]@{ name = [string]$doc.Name; path = [string]$doc.FullName }
+        $data.paragraphs = 0
+        try { $data.paragraphs = [int]$doc.Paragraphs.Count } catch { $warnings += "段落数读取失败" }
+        $data.words = 0
+        try { $data.words = [int]$doc.Words.Count } catch { $warnings += "字数读取失败" }
+        $data.characters = 0
+        try { $data.characters = [int]$doc.Characters.Count } catch { $warnings += "字符数读取失败" }
+        $data.sections = 0
+        try { $data.sections = [int]$doc.Sections.Count } catch { $warnings += "节数读取失败" }
+        $data.pages = 0
+        # 页数两条路都试：ComputeStatistics 是正统接口，WPS 12.1 个别版本不认；
+        # Range.Information(4)=wdActiveEndPageNumber 是备用口径。
+        try { $data.pages = [int]$doc.ComputeStatistics(2) } catch {
+            try { $data.pages = [int]$doc.Range.Information(4) } catch { $warnings += "页数读取失败（ComputeStatistics 与 Information 均不支持）" }
+        }
+        # 长文档常见的"结构规模"指标，顺手一并给出（拿不到就跳过，不算失败）
+        foreach ($pair in @(@("lines", "Lines"), @("tables", "Tables"), @("inlineShapes", "InlineShapes"), @("footnotes", "Footnotes"), @("toc", "TablesOfContents"), @("tof", "TablesOfFigures"))) {
+            try { $data[$pair[0]] = [int]$doc.($pair[1]).Count } catch {}
+        }
+        if ($warnings.Count) { $data.warnings = $warnings }
+        Output-Json @{ success = $true; data = $data }
+    }
+
+    "getComments" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $list = @()
+        $n = 0
+        try { $n = [int]$doc.Comments.Count } catch {}
+        for ($i = 1; $i -le $n; $i++) {
+            $c = $null
+            try { $c = $doc.Comments.Item($i) } catch { continue }
+            $e = [ordered]@{ index = $i }
+            try { $e.author = [string]$c.Author } catch { $e.author = "" }
+            try { $e.date = [string]$c.Date } catch { $e.date = "" }
+            try { $e.text = ([string]$c.Range.Text) } catch { $e.text = "" }
+            if ($e.text.Length -gt 200) { $e.text = $e.text.Substring(0, 200) + "…" }
+            try { $e.reference = ([string]$c.Reference.Text) } catch { $e.reference = "" }
+            if ($e.reference.Length -gt 100) { $e.reference = $e.reference.Substring(0, 100) + "…" }
+            $list += $e
+        }
+        Output-Json @{ success = $true; data = @{ comments = $list; count = $list.Count } }
+    }
+
+    "deleteComment" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $n = 0
+        try { $n = [int]$doc.Comments.Count } catch {}
+        if ($n -le 0) { Output-Json @{ success = $false; error = "文档里没有批注" }; return }
+        $target = $null
+        if ($null -ne $p.index) {
+            $idx = [int]$p.index
+            if ($idx -lt 1 -or $idx -gt $n) { Output-Json @{ success = $false; error = "批注序号 $idx 不存在（共 $n 条，序号从 1 开始）" }; return }
+            try { $target = $doc.Comments.Item($idx) } catch { Output-Json @{ success = $false; error = "取不到序号 $idx 的批注" }; return }
+        } elseif ($p.text) {
+            for ($i = 1; $i -le $n; $i++) {
+                $c = $null
+                try { $c = $doc.Comments.Item($i) } catch { continue }
+                $t = ""
+                try { $t = [string]$c.Range.Text } catch {}
+                if ($t -like "*$($p.text)*") { $target = $c; break }
+            }
+            if ($null -eq $target) { Output-Json @{ success = $false; error = "没有找到包含「$($p.text)」的批注" }; return }
+        } else {
+            Output-Json @{ success = $false; error = "需要 index（序号）或 text（批注内容片段）之一" }; return
+        }
+        $before = ""
+        try { $before = [string]$target.Range.Text } catch {}
+        $target.Delete()
+        $n1 = 0
+        try { $n1 = [int]$doc.Comments.Count } catch {}
+        Output-Json @{ success = $true; data = @{ deleted = $before; remaining = $n1 } }
+    }
+
+    "getBookmarks" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $list = @()
+        foreach ($b in @($doc.Bookmarks)) {
+            $e = [ordered]@{ name = [string]$b.Name }
+            try { $e.start = [int]$b.Start } catch { $e.start = -1 }
+            try { $e.text = [string]$b.Range.Text } catch { $e.text = "" }
+            if ($e.text.Length -gt 100) { $e.text = $e.text.Substring(0, 100) + "…" }
+            $list += $e
+        }
+        Output-Json @{ success = $true; data = @{ bookmarks = $list; count = $list.Count } }
+    }
+
+    "getTables" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        $list = @()
+        for ($i = 1; $i -le $doc.Tables.Count; $i++) {
+            $t = $doc.Tables.Item($i)
+            $e = [ordered]@{ index = $i; rows = [int]$t.Rows.Count; columns = [int]$t.Columns.Count }
+            # 预览取第一行：够辨认是哪张表，又不把整表塞进上下文
+            $firstRow = ""
+            try {
+                $parts = @()
+                for ($c = 1; $c -le $t.Columns.Count; $c++) {
+                    $cell = ""
+                    try { $cell = ([string]$t.Cell(1, $c).Range.Text) -replace "[`r`n`a]", "" } catch {}
+                    $parts += $cell
+                }
+                $firstRow = $parts -join " | "
+            } catch {}
+            if ($firstRow.Length -gt 120) { $firstRow = $firstRow.Substring(0, 120) + "…" }
+            $e.firstRow = $firstRow
+            $list += $e
+        }
+        Output-Json @{ success = $true; data = @{ tables = $list; count = $doc.Tables.Count } }
+    }
+
+    "getTableData" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        $idx = [int](Get-IntParam $p "tableIndex" 1)
+        if ($idx -lt 1 -or $idx -gt $doc.Tables.Count) { Output-Json @{ success = $false; error = "表格序号 $idx 不存在（共 $($doc.Tables.Count) 张）" }; return }
+        $t = $doc.Tables.Item($idx)
+        $rows = [int]$t.Rows.Count
+        $cols = [int]$t.Columns.Count
+        # 上限保护：整表文本可能非常大（宽表 + 长段落），超了截断并在 warnings 里说清
+        $maxRows = 100; $maxCols = 20
+        $warnings = @()
+        $outRows = $rows; $outCols = $cols
+        if ($rows -gt $maxRows) { $outRows = $maxRows; $warnings += "表格共 $rows 行，只返回前 $maxRows 行" }
+        if ($cols -gt $maxCols) { $outCols = $maxCols; $warnings += "表格共 $cols 列，只返回前 $maxCols 列" }
+        $grid = @()
+        for ($r = 1; $r -le $outRows; $r++) {
+            $row = @()
+            for ($c = 1; $c -le $outCols; $c++) {
+                $cell = ""
+                try { $cell = ([string]$t.Cell($r, $c).Range.Text) -replace "[`r`n`a]", "" } catch {}
+                $row += $cell
+            }
+            $grid += ,$row
+        }
+        $data = [ordered]@{ tableIndex = $idx; rows = $rows; columns = $cols; returnedRows = $outRows; returnedColumns = $outCols; data = $grid }
+        if ($warnings.Count) { $data.warnings = $warnings }
+        Output-Json @{ success = $true; data = $data }
+    }
+
+    "insertHyperlink" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if (-not $p.url) { Output-Json @{ success = $false; error = "url required" }; return }
+        $url = [string]$p.url
+        $position = if ($p.position) { [string]$p.position } else { "cursor" }
+        $range = $null
+        switch ($position) {
+            "start" { $range = $doc.Range(0, 0) }
+            "end"   { $range = $doc.Range($doc.Content.End - 1, $doc.Content.End - 1) }
+            default { $range = $word.Selection.Range }
+        }
+        # 显示文字不传就用 url 本身（Hyperlinks.Add 的 TextToDisplay 传空会插个空链）
+        $display = if ($p.text) { [string]$p.text } else { $url }
+        $h = $null
+        try { $h = $doc.Hyperlinks.Add($range, $url, $null, $null, $display) } catch {}
+        if ($null -eq $h) {
+            # WPS 个别版本不认 5 参签名（报"值不在预期的范围内"，实测 12.1 命中）——
+            # 退回 2 参调用，并把显示文字先写进锚点（老实现就是这么干的，真机验过）。
+            try {
+                if ($range.Text -and $range.Text.Trim() -ne "") {
+                    $h = $doc.Hyperlinks.Add($range, $url)
+                } else {
+                    $range.Text = $display
+                    $h = $doc.Hyperlinks.Add($doc.Range($range.Start, $range.Start + $display.Length), $url)
+                }
+            } catch {
+                Output-Json @{ success = $false; error = "插入超链接失败: $(Get-CallError $_)" }; return
+            }
+        }
+        if ($null -eq $h) { Output-Json @{ success = $false; error = "Hyperlinks.Add 返回 null（5 参与 2 参签名都调不通）" }; return }
+        Output-Json @{ success = $true; data = @{ url = $url; text = $display; position = $position } }
+    }
+
+    "convertTableToText" {
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $(Resolve-Doc $word $p)
+        if ($null -eq $doc) { Output-Json @{ success = $false; error = "No active document" }; return }
+        if ($doc.Tables.Count -eq 0) { Output-Json @{ success = $false; error = "文档里没有表格" }; return }
+        $idx = [int](Get-IntParam $p "tableIndex" 1)
+        if ($idx -lt 1 -or $idx -gt $doc.Tables.Count) { Output-Json @{ success = $false; error = "表格序号 $idx 不存在（共 $($doc.Tables.Count) 张）" }; return }
+        $sep = if ($null -ne $p.separator) { [string]$p.separator } else { "," }
+        try { $doc.Tables.Item($idx).ConvertToText($sep) } catch {
+            Output-Json @{ success = $false; error = "表格转文本失败: $(Get-CallError $_)" }; return
+        }
+        $left = 0
+        try { $left = [int]$doc.Tables.Count } catch {}
+        Output-Json @{ success = $true; data = @{ tableIndex = $idx; separator = $sep; remainingTables = $left } }
+    }
+
+    "__probeWordCaps" {
+        # Word 侧真机能力探测（第 5 期新增接口）。
+        # 与 __probeCaps 的区别：那个探【用户当前文档】上的既有能力；
+        # 这个在【临时文档】上探新接口，探完原样关闭（不保存），不碰用户任何文档。
+        $word = Get-WpsWord
+        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
+        $doc = $null
+        try {
+            $doc = $word.Documents.Add()
+            # 等文档就绪（同 createDocument 的教训：零等待会拿到空壳）
+            for ($i = 0; $i -lt 20; $i++) {
+                Start-Sleep -Milliseconds 150
+                try { $cur = $word.Documents.Item($word.Documents.Count); if (Test-DocHealthy $cur) { $doc = $cur; break } } catch {}
+            }
+            # 铺探测素材：一段文字 + 一张 2x2 表 + 一个书签
+            try { $null = $doc.Content.InsertAfter("__probe__ 内容") } catch {}
+            try { $null = $doc.Tables.Add($doc.Range($doc.Content.End - 1, $doc.Content.End - 1), 2, 2) } catch {}
+            try { $null = $doc.Bookmarks.Add("__probe_bm__", $doc.Range(0, 1)) } catch {}
+
+            $caps = [ordered]@{}
+            $caps["stats.words"]        = { $null = $doc.Words.Count }
+            $caps["stats.pages"]        = { $null = $doc.ComputeStatistics(2) }
+            $caps["stats.paragraphs"]   = { $null = $doc.Paragraphs.Count }
+            $caps["comments.count"]     = { $null = $doc.Comments.Count }
+            $caps["comments.addDelete"] = { $c = $doc.Comments.Add($doc.Range(0, 1), "__probe__"); if ($null -eq $c) { throw "Comments.Add 返回 null" }; $c.Delete() }
+            $caps["bookmarks.count"]    = { $null = $doc.Bookmarks.Count }
+            $caps["tables.count"]       = { $null = $doc.Tables.Count }
+            $caps["tables.cellText"]    = { if ($doc.Tables.Count -gt 0) { $null = $doc.Tables.Item(1).Cell(1, 1).Range.Text } }
+            $caps["hyperlinks.add"]     = { $h = $null
+                                          try { $h = $doc.Hyperlinks.Add($doc.Range(0, 1), "https://example.invalid", $null, $null, "__probe_link__") } catch {}
+                                          if ($null -eq $h) { $r = $doc.Range(0, 1); $r.Text = "__probe_link__"; $h = $doc.Hyperlinks.Add($doc.Range($r.Start, $r.Start + 13), "https://example.invalid") }
+                                          if ($null -eq $h) { throw "5 参与 2 参签名都调不通" } }
+            $caps["tables.convertToText"] = { $t2 = $doc.Tables.Add($doc.Range($doc.Content.End - 1, $doc.Content.End - 1), 1, 2); $t2.ConvertToText(",") }
+
+            foreach ($k in @($caps.Keys)) {
+                $status = "unknown"; $err = $null
+                try {
+                    & $caps[$k] | Out-Null
+                    $status = "supported"
+                } catch {
+                    $status = "unsupported"
+                    $err = [string]$_.Exception.Message
+                    if ($err.Length -gt 160) { $err = $err.Substring(0, 160) }
+                }
+                $caps[$k] = @{ status = $status; error = $err }
+            }
+            $keys = @($caps.Keys)
+            $data = [ordered]@{
+                total = $keys.Count
+                supported = @($keys | Where-Object { $caps[$_].status -eq "supported" })
+                unsupported = @($keys | Where-Object { $caps[$_].status -ne "supported" })
+                caps = $caps
+                leaked = @()
+            }
+            Output-Json @{ success = $true; data = $data }
+        } catch {
+            Output-Json @{ success = $false; error = "探测失败: $(Get-CallError $_)" }
+        } finally {
+            # 探测不留垃圾：临时文档不保存直接关。新建文档 FullName 为空，
+            # 不能走 closeDocument 的 saveChanges 守卫（它会为从未保存的文档报错），
+            # 这里显式 Close($false) 正是"放弃保存"的语义。
+            if ($null -ne $doc) { try { $doc.Close($false) } catch {} }
+        }
     }
 
     "insertText" {
@@ -3328,22 +3603,6 @@ switch ($Action) {
         Output-Json @{ success = $true }
     }
 
-    "insertHyperlink" {
-        $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $(Resolve-Doc $word $p)
-        $range = $word.Selection.Range
-        $url = if ($p.url) { $p.url } else { $p.address }
-        $text = if ($p.text) { $p.text } elseif ($p.displayText) { $p.displayText } else { $url }
-        if ($range.Text -and $range.Text.Trim() -ne "") {
-            $doc.Hyperlinks.Add($range, $url)
-        } else {
-            $range.Text = $text
-            $doc.Hyperlinks.Add($doc.Range($range.Start, $range.Start + $text.Length), $url)
-        }
-        Output-Json @{ success = $true; data = @{ url = $url; text = $text } }
-    }
-
     "insertBookmark" {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
@@ -3352,18 +3611,6 @@ switch ($Action) {
         $range = $word.Selection.Range
         $doc.Bookmarks.Add($p.name, $range)
         Output-Json @{ success = $true; data = @{ name = $p.name } }
-    }
-
-    "getBookmarks" {
-        $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $(Resolve-Doc $word $p)
-        $bookmarks = @()
-        for ($i = 1; $i -le $doc.Bookmarks.Count; $i++) {
-            $bm = $doc.Bookmarks.Item($i)
-            $bookmarks += @{ name = $bm.Name; start = $bm.Start; end = $bm.End }
-        }
-        Output-Json @{ success = $true; data = @{ bookmarks = $bookmarks; count = $bookmarks.Count } }
     }
 
     "getDocumentParagraphs" {
@@ -3576,30 +3823,6 @@ switch ($Action) {
         $range = $word.Selection.Range
         $doc.Comments.Add($range, $text)
         Output-Json @{ success = $true }
-    }
-
-    "getComments" {
-        $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $(Resolve-Doc $word $p)
-        $comments = @()
-        for ($i = 1; $i -le $doc.Comments.Count; $i++) {
-            $c = $doc.Comments.Item($i)
-            $comments += @{ index = $i; text = $c.Range.Text; author = if ($c.Author) { $c.Author } else { "" }; date = if ($c.Date) { $c.Date.ToString() } else { "" } }
-        }
-        Output-Json @{ success = $true; data = @{ comments = $comments; count = $comments.Count } }
-    }
-
-    "getDocumentStats" {
-        $word = Get-WpsWord
-        if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
-        $doc = $(Resolve-Doc $word $p)
-        $stats = @{ name = $doc.Name; path = $doc.FullName; pages = $doc.ComputeStatistics(2); words = $doc.ComputeStatistics(0); characters = $doc.ComputeStatistics(3); paragraphs = $doc.ComputeStatistics(4); lines = $doc.ComputeStatistics(1) }
-        # 长文档常见的"结构规模"指标，顺手一并给出（拿不到就跳过，不报错）
-        foreach ($pair in @(@("sections", "Sections"), @("tables", "Tables"), @("inlineShapes", "InlineShapes"), @("footnotes", "Footnotes"), @("toc", "TablesOfContents"), @("tof", "TablesOfFigures"))) {
-            try { $stats[$pair[0]] = [int]$doc.($pair[1]).Count } catch {}
-        }
-        Output-Json @{ success = $true; data = $stats }
     }
 
     "insertImage" {
@@ -5936,95 +6159,6 @@ switch ($Action) {
         }
         $slideIndexOut = if ($slideIndex -eq "all") { "all" } else { ($slides | Select-Object -First 1).SlideIndex }
         Output-Json @{ success = $true; data = @{ slideIndex = $slideIndexOut; operations = $ops } }
-    }
-
-    "set3DRotation" {
-        $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $pres = Get-TargetPres $ppt $p
-        $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
-        $slide = $pres.Slides.Item($slideIndex)
-        $shape = $slide.Shapes.Item($(if ($p.shapeName) { $p.shapeName } elseif ($p.shapeIndex) { [int]$p.shapeIndex } else { 1 }))
-        $rotX = if ($null -ne $p.rotationX) { [double]$p.rotationX } else { 0 }
-        $rotY = if ($null -ne $p.rotationY) { [double]$p.rotationY } else { 0 }
-        $rotZ = if ($null -ne $p.rotationZ) { [double]$p.rotationZ } else { 0 }
-        if ($p.preset) {
-            $presets = @{
-                isometric   = @{ x = 45; y = 45; z = 0 }
-                perspective = @{ x = 30; y = 30; z = 0 }
-                oblique     = @{ x = 20; y = 60; z = 0 }
-                tiltLeft    = @{ x = 0;  y = -30; z = 0 }
-                tiltRight   = @{ x = 0;  y = 30; z = 0 }
-            }
-            $pr = $presets[$p.preset]
-            if ($null -ne $pr) { $rotX = $pr.x; $rotY = $pr.y; $rotZ = $pr.z }
-        }
-        $shape.ThreeD.RotationX = $rotX
-        $shape.ThreeD.RotationY = $rotY
-        $shape.ThreeD.RotationZ = $rotZ
-        Output-Json @{ success = $true; data = @{ shape = $shape.Name; rotationX = $rotX; rotationY = $rotY; rotationZ = $rotZ } }
-    }
-
-    "set3DDepth" {
-        $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $pres = Get-TargetPres $ppt $p
-        $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
-        $slide = $pres.Slides.Item($slideIndex)
-        $shape = $slide.Shapes.Item($(if ($p.shapeName) { $p.shapeName } elseif ($p.shapeIndex) { [int]$p.shapeIndex } else { 1 }))
-        $depth = if ($null -ne $p.depth) { [double]$p.depth } else { 20 }
-        $shape.ThreeD.Depth = $depth
-        if ($p.depthColor) {
-            $dc = Convert-HexColorToRgbInt([string]$p.depthColor)
-            if ($null -ne $dc) { $shape.ThreeD.ExtrusionColor.RGB = $dc }
-        }
-        if ($p.lighting) {
-            $lightingMap = @{ bright = 1; normal = 2; dim = 3; flat = 4 }
-            $lv = $lightingMap[$p.lighting]
-            if ($null -ne $lv) { $shape.ThreeD.PresetLighting = $lv }
-        }
-        Output-Json @{ success = $true; data = @{ shape = $shape.Name; depth = $depth } }
-    }
-
-    "set3DMaterial" {
-        $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $pres = Get-TargetPres $ppt $p
-        $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
-        $slide = $pres.Slides.Item($slideIndex)
-        $shape = $slide.Shapes.Item($(if ($p.shapeName) { $p.shapeName } elseif ($p.shapeIndex) { [int]$p.shapeIndex } else { 1 }))
-        $material = if ($p.material) { $p.material } else { "plastic" }
-        $materialMap = @{ matte = 1; plastic = 2; metal = 3; wireFrame = 4; glass = 5 }
-        $mv = $materialMap[$material]
-        if ($null -eq $mv) { $mv = 2 }
-        $shape.ThreeD.PresetMaterial = $mv
-        Output-Json @{ success = $true; data = @{ shape = $shape.Name; material = $material } }
-    }
-
-    "create3DText" {
-        $ppt = Get-WpsPpt
-        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $pres = Get-TargetPres $ppt $p
-        $slideIndex = if ($p.slideIndex) { [int]$p.slideIndex } else { 1 }
-        $slide = $pres.Slides.Item($slideIndex)
-        $text = if ($p.text) { $p.text } else { "3D文字" }
-        $left = if ($null -ne $p.left) { $p.left } else { 200 }
-        $top = if ($null -ne $p.top) { $p.top } else { 200 }
-        $width = if ($null -ne $p.width) { $p.width } else { 300 }
-        $height = if ($null -ne $p.height) { $p.height } else { 100 }
-        $tb = $slide.Shapes.AddTextbox(1, $left, $top, $width, $height)
-        $tb.TextFrame.TextRange.Text = $text
-        $tb.TextFrame.TextRange.Font.Size = if ($p.fontSize) { $p.fontSize } else { 36 }
-        $tb.TextFrame.TextRange.Font.Bold = $true
-        if ($p.fontColor) {
-            $fc = Convert-HexColorToRgbInt([string]$p.fontColor)
-            if ($null -ne $fc) { $tb.TextFrame.TextRange.Font.Color.RGB = $fc }
-        }
-        $tb.ThreeD.Depth = if ($null -ne $p.depth) { $p.depth } else { 20 }
-        $tb.ThreeD.RotationX = if ($null -ne $p.rotationX) { $p.rotationX } else { 30 }
-        $tb.ThreeD.RotationY = if ($null -ne $p.rotationY) { $p.rotationY } else { 30 }
-        $tb.ThreeD.PresetMaterial = 2
-        Output-Json @{ success = $true; data = @{ shape = $tb.Name; text = $text } }
     }
 
     "beautifySlide" {

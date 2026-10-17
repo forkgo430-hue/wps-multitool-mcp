@@ -20,7 +20,7 @@ import * as path from 'path';
 /** 读不到 package.json 时的兜底值 —— 与 package.json 保持一致 */
 const FALLBACK = {
   name: 'wps-multitool-mcp',
-  version: '2.0.1',
+  version: '1.0.1',
   author: '赢容',
   contributors: ['钱七 & 老王团队'],
 } as const;

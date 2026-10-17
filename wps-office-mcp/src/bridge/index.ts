@@ -39,8 +39,9 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PsChildDaemon, queueMax, queueTimeoutMs, exclusiveSet } from './ps-child';
+import { RUNTIME_ID } from '../runtime-identity';
 
-/** 默认管道名：按用户区分，避免多用户/多会话互相串 */
+/** 默认管道名：按用户区分，避免多用户/多会话互相串。前缀用 RUNTIME_ID（跨进程契约，见该文件） */
 function defaultPipeName(): string {
   let user = 'default';
   try {
@@ -49,7 +50,7 @@ function defaultPipeName(): string {
     /* 取不到就用 default */
   }
   const safe = user.replace(/[^A-Za-z0-9_.-]/g, '_');
-  return `\\\\.\\pipe\\wps-multitool-mcp-${safe}`;
+  return `\\\\.\\pipe\\${RUNTIME_ID}-${safe}`;
 }
 
 const PIPE_NAME = process.env.WPS_BRIDGE_PIPE || defaultPipeName();
@@ -67,10 +68,11 @@ function normalizeApp(v: unknown): AppKey {
   return 'common';
 }
 
-/** 确保日志目录存在 —— 桥是 detached 进程，stdio 被忽略，只能落文件 */
+/** 确保日志目录存在 —— 桥是 detached 进程，stdio 被忽略，只能落文件。
+ *  目录名用 RUNTIME_ID：与 logger.ts、ps-daemon.ts 的管道名是同一套约定（见该文件）。 */
 try {
   const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  fs.mkdirSync(path.join(home, '.wps-multitool-mcp', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(home, `.${RUNTIME_ID}`, 'logs'), { recursive: true });
 } catch {
   /* 建不了目录也不能拦住桥 */
 }

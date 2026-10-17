@@ -43,6 +43,15 @@ jobs:
         # 加了新工具却忘了重跑生成器 → 生成的表与提交的不一致 → 这一步红。
         # 这是今天那次三处数字漂移的直接防线。
 
+      - name: 文档统计与注册表一致（README / 面板）
+        working-directory: wps-office-mcp
+        run: |
+          node scripts/manual/gen-doc-stats.js
+          git diff --exit-code -- ../../README.md ../wps-claude-addon/panel.html
+        # README 的工具数/分布/清单表与面板数字全部由注册表生成（AUTO 区）。
+        # 加了工具忘了重跑 → diff 非空 → 红。和上面注解表同一套路：
+        # 数字只能有一个来源，忘了同步就让它失败。
+
       - name: 验证门禁（全量，含真跑 PowerShell 与端到端）
         working-directory: wps-office-mcp
         run: npm run verify:all
