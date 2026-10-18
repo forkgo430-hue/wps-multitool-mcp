@@ -37,6 +37,7 @@ import {
   ToolCallResult,
   ToolCategory,
   RegisteredTool,
+  ToolWarning,
 } from '../../types/tools';
 import { wpsClient } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
@@ -1284,94 +1285,226 @@ export const setAnimationHandler: ToolHandler = async (
 };
 
 // ============================================================
-// 17. wps_ppt_set_background - 设置幻灯片背景
+// 17. wps_ppt_set_background - 设置背景（第 5 轮：background 族 6→1 合并）
 // ============================================================
 
 export const setBackgroundDefinition: ToolDefinition = {
   name: 'wps_ppt_set_background',
-  description: `设置幻灯片的背景颜色或背景图片。
+  description: `设置背景：某一页、整份文稿、或幻灯片母版。
 
-使用场景：
-- "把第1页背景改成蓝色"
-- "设置幻灯片背景图片"
-- "修改背景颜色为#FF0000"`,
+**三个维度一次说清**（合并了原来 6 个背景工具，别再找 set_background_color / _image / _gradient / set_slide_background / set_master_background）：
+- \`target\`: slide（默认，单页）/ all（整份文稿）/ master（母版）
+- \`type\`: solid（纯色）/ image（图片）/ gradient（渐变）/ pattern
+- 具体的填充物：\`color\` / \`imagePath\` / \`gradient\`
+
+什么时候用：
+- "把这页背景改成深蓝" → { target:'slide', slideIndex:2, type:'solid', color:'#003366' }
+- "整份文稿统一白底" → { target:'all', type:'solid', color:'#FFFFFF' }
+- "用这张图做背景" → { target:'slide', slideIndex:1, type:'image', imagePath:'C:\\\\pics\\\\bg.png' }
+- "母版加渐变" → { target:'master', type:'gradient', gradient:{ type:'linear', colors:['#FF0000','#00FF00'] } }
+
+不填 \`type\` 也能用：按你给的 color / imagePath / gradient 自动推断（老名字走别名过来时就是这条路）。
+
+限制（真限制，不是没实现）：
+- \`target:'master'\` 只支持纯色与渐变 —— 母版背景换图片 WPS 不认，会明确报错而不是假装成功。
+- \`type:'pattern'\`（图案填充）WPS COM 没有对应接口，明确报错。`,
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
     properties: {
+      target: {
+        type: 'string',
+        enum: ['slide', 'all', 'master'],
+        description: '作用范围：slide 单页（默认）/ all 整份文稿 / master 母版',
+      },
       slideIndex: {
         type: 'number',
-        description: '幻灯片索引（从1开始）',
+        description: '页码（从1开始）；target=all/master 时忽略',
       },
-      color: {
+      type: {
         type: 'string',
-        description: '背景颜色，十六进制如 #FF0000（与imagePath二选一）',
+        enum: ['solid', 'gradient', 'image', 'pattern'],
+        description: '填充类型。不填则按 color→solid / imagePath→image / gradient→gradient 推断',
       },
-      imagePath: {
-        type: 'string',
-        description: '背景图片路径（与color二选一）',
+      color: { type: 'string', description: 'type=solid 时的颜色，十六进制如 #FF0000' },
+      imagePath: { type: 'string', description: 'type=image 时的图片路径' },
+      gradient: {
+        type: 'object',
+        description:
+          'type=gradient 时的渐变配置：{ type:"linear"|"radial", colors:["#FF0000","#00FF00"] }。' +
+          'WPS 只吃前两个颜色，多余的颜色会被忽略（会在提示里说明）',
+      },
+      pattern: { type: 'string', description: 'type=pattern 时的图案名（WPS 不支持，传了会明确报错）' },
+      // 老名字（别名）可能会带过来的历史参数，接受但不推荐
+      background: {
+        type: 'object',
+        description: '（历史形状）{type,color,colors,imagePath,pattern}，等价于把里面几项平铺到顶层',
       },
     },
-    required: ['slideIndex'],
+    // 刻意不 required['type']：草案里是必填，但那样 5 个旧名就没法走别名（别名不能注入参数），
+    // 而合并的目标恰恰是"旧名无损映射"。改为按参数推断，并在描述里写明。
+    required: [],
   },
 };
+
+/** 把老形状 background{} 摊平到顶层（只补缺失的键） */
+function flattenLegacyBackground(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...args };
+  const bg = args.background as Record<string, unknown> | undefined;
+  if (bg && typeof bg === 'object') {
+    for (const [k, v] of Object.entries(bg)) {
+      if (out[k] === undefined) out[k] = v;
+    }
+    // 老形状里 "colors" 是渐变色数组
+    if (out.gradient === undefined && Array.isArray(bg.colors)) {
+      out.gradient = { type: 'linear', colors: bg.colors };
+    }
+  }
+  return out;
+}
 
 export const setBackgroundHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { slideIndex, color, imagePath } = args as {
-    slideIndex: number;
-    color?: string;
-    imagePath?: string;
-  };
+  const a = flattenLegacyBackground(args);
+  const target = (a.target as string) || 'slide';
+  const slideIndex = a.slideIndex as number | undefined;
+  const color = a.color as string | undefined;
+  const imagePath = a.imagePath as string | undefined;
+  const pattern = a.pattern as string | undefined;
+  const gradient = a.gradient as { type?: string; colors?: string[]; angle?: number } | undefined;
+
+  // type 推断：草案要求必填，但旧名走别名时给不出 type（别名不能注入参数）。
+  // 按"给了什么填什么"推断 —— 唯一有歧义的情况是同时给了多个，那时按 image > gradient > color 取先。
+  const type =
+    (a.type as string) ||
+    (imagePath ? 'image' : gradient ? 'gradient' : pattern ? 'pattern' : color ? 'solid' : '');
+
+  const fail = (msg: string, err?: string): ToolCallResult => ({
+    id: uuidv4(),
+    success: false,
+    content: [{ type: 'text', text: msg }],
+    error: err ?? msg,
+  });
+  const ok = (text: string): ToolCallResult => ({
+    id: uuidv4(),
+    success: true,
+    content: [{ type: 'text', text }],
+  });
+
+  if (!type) {
+    return fail(
+      '要说清怎么填：给 color（纯色）/ imagePath（图片）/ gradient（渐变）之一，或显式传 type。' +
+        '示例：{ "target":"slide", "slideIndex":1, "type":"solid", "color":"#003366" }'
+    );
+  }
+  if (type === 'pattern') {
+    return fail('WPS COM 没有图案填充的接口，type:"pattern" 无法执行（这不是参数问题，换 solid/gradient/image）。');
+  }
+  if (type === 'solid' && !color) return fail('type=solid 需要 color，例如 "#003366"。');
+  if (type === 'image' && !imagePath) return fail('type=image 需要 imagePath（图片在本机的绝对路径）。');
+  if (type === 'gradient') {
+    const colors = (gradient && gradient.colors) || [];
+    if (!Array.isArray(colors) || colors.length < 2) {
+      return fail('type=gradient 需要 gradient.colors 至少两个颜色，例如 ["#FF0000","#00FF00"]。');
+    }
+  }
+  if (target === 'master' && type === 'image') {
+    return fail('母版背景不支持图片（WPS 的母版 Fill 只吃纯色/渐变）。要整份文稿用图片背景，用 target:"all"。');
+  }
+  if (target === 'slide' && !slideIndex) {
+    return fail('target=slide 需要 slideIndex（从 1 开始）。要改整份文稿用 target:"all"。');
+  }
+
+  // 一个内部小包装。注意：动作名走变量 → param-shape-audit（扫 executeMethod 的字面量）看不到这 4 个
+  // 调用点，属于那个脚本自己写明的"动态拼参数抓不到 = 漏报"。所以这里的参数是【手工对着 PS 的读法核过的】：
+  //   setMasterBackground 读 color / color1 / color2
+  //   setBackgroundColor  读 color / applyToAll
+  //   setSlideBackground  读 slideIndex / color / imagePath
+  //   getSlideCount       无参数
+  // 改这里的参数名时，请同步改上面这份清单（它就是这几个动作的"参数契约"）。
+  const exec = <T>(action: string, params: Record<string, unknown>) =>
+    wpsClient.executeMethod<T>(action, params, WpsAppType.PRESENTATION);
+
+  const warnings: ToolWarning[] = [];
+  const where = target === 'all' ? '整份文稿' : target === 'master' ? '母版' : `第 ${slideIndex} 页`;
 
   try {
-    // 参数对齐：setSlideBackground 读取 $p.imagePath；同时发送 path/filePath
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-    }>(
-      'setSlideBackground',
-      {
-        slideIndex,
-        color,
-        imagePath,
-        ...(imagePath ? { path: imagePath, filePath: imagePath } : {}),
-      },
-      WpsAppType.PRESENTATION
-    );
+    // ---- 母版 ----
+    if (target === 'master') {
+      const params: Record<string, unknown> =
+        type === 'gradient'
+          ? { color1: gradient!.colors![0], color2: gradient!.colors![1] }
+          : { color };
+      const r = await exec('setMasterBackground', params);
+      if (!r.success) return fail(`设置母版背景失败: ${r.error}`, r.error);
+      return ok(`母版背景已设置：${type === 'gradient' ? `渐变 ${gradient!.colors!.slice(0, 2).join(' → ')}` : color}`);
+    }
 
-    if (response.success) {
-      let detail = '';
-      if (color) detail = `背景颜色: ${color}`;
-      else if (imagePath) detail = `背景图片: ${imagePath}`;
-
+    // ---- 整份文稿 ----
+    if (target === 'all') {
+      if (type === 'solid') {
+        const r = await exec('setBackgroundColor', { color, applyToAll: true });
+        if (!r.success) return fail(`设置整份文稿背景失败: ${r.error}`, r.error);
+        return ok(`整份文稿背景已设为 ${color}（applyToAll）`);
+      }
+      // 渐变/图片没有"一次全设"的动作 → 逐页设。先问页数，别拿失败当终止条件。
+      const cnt = await exec<{ count?: number }>('getSlideCount', {});
+      const total = Number((cnt.data && cnt.data.count) || 0);
+      if (!total) return fail('拿不到页数，无法逐页设置背景。');
+      let done = 0;
+      const failedPages: number[] = [];
+      for (let i = 1; i <= total; i++) {
+        const r =
+          type === 'image'
+            ? await exec('setSlideBackground', { slideIndex: i, imagePath })
+            : await exec('setSlideBackground', {
+                slideIndex: i,
+                color1: gradient!.colors![0],
+                color2: gradient!.colors![1],
+              });
+        if (r.success) done++;
+        else failedPages.push(i);
+      }
+      if (done === 0) return fail(`整份文稿逐页设置背景全部失败（共 ${total} 页）。`);
+      if (failedPages.length) {
+        warnings.push({
+          step: 'set_background.all',
+          message: `第 ${failedPages.join('、')} 页没设置成功（共 ${total} 页，成功 ${done} 页）`,
+        });
+      }
       return {
         id: uuidv4(),
         success: true,
-        content: [
-          {
-            type: 'text',
-            text: `幻灯片背景设置成功！\n幻灯片: 第 ${slideIndex} 页\n${detail}`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `设置背景失败: ${response.error}` }],
-        error: response.error,
+        content: [{ type: 'text', text: `整份文稿背景已设置：${done}/${total} 页` }],
+        ...(warnings.length ? { warnings } : {}),
       };
     }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
+
+    // ---- 单页 ----
+    const params: Record<string, unknown> = { slideIndex };
+    if (type === 'solid') params.color = color;
+    else if (type === 'image') params.imagePath = imagePath;
+    else {
+      params.color1 = gradient!.colors![0];
+      params.color2 = gradient!.colors![1];
+    }
+    const r = await exec('setSlideBackground', params);
+    if (!r.success) return fail(`设置背景失败: ${r.error}`, r.error);
+    const detail =
+      type === 'solid' ? `颜色 ${color}` : type === 'image' ? `图片 ${imagePath}` : `渐变 ${gradient!.colors!.slice(0, 2).join(' → ')}`;
+    if (type === 'gradient' && gradient!.colors!.length > 2) {
+      warnings.push({ step: 'gradient', message: 'WPS 的渐变只支持两个色标，多余的颜色已忽略' });
+    }
     return {
       id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `设置背景出错: ${errMsg}` }],
-      error: errMsg,
+      success: true,
+      content: [{ type: 'text', text: `背景已设置：${where}，${detail}` }],
+      ...(warnings.length ? { warnings } : {}),
     };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return fail(`设置背景出错: ${errMsg}`);
   }
 };
 

@@ -56,7 +56,8 @@ console.log('=== A. 中文关键词：别名到底补上了什么 ===');
 const CN_CASES = [
   ['插入表格', 'wps_word_insert_table'],
   ['批注', 'wps_word_insert_comment'],
-  ['背景色', 'wps_ppt_set_background_color'],
+  // 第 5 轮 background 6→1：旧名 wps_ppt_set_background_color 已并入 wps_ppt_set_background（别名）
+  ['背景色', 'wps_ppt_set_background'],
   ['动画', 'wps_ppt_add_animation'],
   ['转PDF', 'wps_convert_to_pdf'],
   ['目录', 'wps_word_generate_toc'],
@@ -104,10 +105,11 @@ const AMBIG = [
   ['缩放', ['wps_excel_zoom', 'wps_excel_set_zoom']],
 ];
 // 第 2 轮别名收敛后，上面这些"旧名"已不在注册表里：wps_word_generate_doc_toc 与
-// wps_excel_zoom 降为别名，wps_ppt_set_animation / wps_ppt_set_slide_background 标了 DEPRECATED 仍在册。
+// wps_excel_zoom 降为别名；第 5 轮 background 6→1 之后，_color/_image/_gradient 也成了别名、
+// _master 下线 —— 所以"背景"这一族在册的只剩一个。
 // 这里按"当前在册的名字"重列，否则断言的是不存在的东西。
 const AMBIG_LIVE = [
-  ['背景', ['wps_ppt_set_background', 'wps_ppt_set_background_color', 'wps_ppt_set_master_background']],
+  ['背景', ['wps_ppt_set_background']],
   ['动画', ['wps_ppt_set_animation', 'wps_ppt_add_animation']],
   ['目录', ['wps_word_generate_toc']],
   ['缩放', ['wps_excel_set_zoom']],
@@ -117,9 +119,10 @@ for (const [kw, names] of AMBIG_LIVE) {
   const withNotFor = hits.filter((h) => h.notFor && h.notFor.length);
   ok(`搜"${kw}" 靠前命中带 notFor`, withNotFor.length > 0,
      `（${withNotFor.length} 条带反例：${withNotFor.map((h) => h.name).slice(0, 3).join('、')}）`);
-  // 目录/缩放两族的另一半已降为别名（不在注册表，靠别名层解析），所以只要求 >=1
+  // 目录/缩放/背景三族合并后只剩一个在册名字，覆盖断言改成"在册的都捞得到"
   const covered = names.filter((n) => hits.some((h) => h.name === n));
-  ok(`搜"${kw}" 能捞到在册的近名组（${names.length} 个中 ${covered.length} 个）`, covered.length >= 1);
+  ok(`搜"${kw}" 能捞到在册的全部（${names.length} 个中 ${covered.length} 个）`, covered.length === names.length,
+     names.filter((n) => !covered.includes(n)).join(','));
 }
 
 console.log('\n=== D. 命中字段 ===');

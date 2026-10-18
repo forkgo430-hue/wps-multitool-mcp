@@ -98,79 +98,10 @@ export const getSlideMasterHandler: ToolHandler = async (
   }
 };
 
-/**
- * 设置母版背景
- * 修改母版的背景样式
- */
-export const setMasterBackgroundDefinition: ToolDefinition = {
-  name: 'wps_ppt_set_master_background',
-  description: `设置母版背景样式。
-
-支持纯色、渐变、图片等背景类型。
-
-使用场景：
-- "修改母版背景为蓝色"
-- "设置母版背景渐变"
-- "给母版换个背景图片"`,
-  category: ToolCategory.PRESENTATION,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      background: {
-        type: 'object',
-        description: '背景配置对象，支持 {type:"solid",color:"#xxx"}, {type:"gradient",colors:[...]}, {type:"image",path:"..."}',
-      },
-    },
-    required: ['background'],
-  },
-};
-
-export const setMasterBackgroundHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { background } = args as {
-    background: Record<string, unknown>;
-  };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-    }>(
-      'setMasterBackground',
-      { background },
-      WpsAppType.PRESENTATION
-    );
-
-    if (response.success) {
-      return {
-        id: uuidv4(),
-        success: true,
-        content: [
-          {
-            type: 'text',
-            text: `母版背景设置成功！\n背景类型: ${(background as Record<string, unknown>).type || '自定义'}`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `设置母版背景失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `设置母版背景出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
+// 第 5 轮：wps_ppt_set_master_background 并入 wps_ppt_set_background（target:'master'）。
+// 为什么这个旧名【没进别名表】：别名只能把名字指到规范名，不能注入参数，
+// 而母版语义必须带 target='master' —— 靠别名过来会变成改单页背景，属于"静默改错地方"。
+// 能力保留在新工具的 target:'master' 里，旧名直接下线。
 
 /**
  * 添加母版元素
@@ -1024,7 +955,6 @@ export const startSlideShowHandler: ToolHandler = async (
 export const miscTools: RegisteredTool[] = [
   // 母版操作
   { definition: getSlideMasterDefinition, handler: getSlideMasterHandler },
-  { definition: setMasterBackgroundDefinition, handler: setMasterBackgroundHandler },
   { definition: addMasterElementDefinition, handler: addMasterElementHandler },
   // 3D操作
   { definition: set3DRotationDefinition, handler: set3DRotationHandler },

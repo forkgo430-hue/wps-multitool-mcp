@@ -906,7 +906,11 @@ switch ($Action) {
             try { $nm = [string]$d.Name } catch {}
             $full = ''
             try { $full = [string]$d.FullName } catch {}
-            $tag = "$i(nm=$nm saved=$([bool]$full))"
+            # 第 5 轮：判"存过盘没有"必须看 Path。未保存文档的 FullName 非空（等于文档名），
+            # 用 [bool]$full 判会把每份未保存文档都标成 saved=true —— 这个探针的输出就是在骗人。
+            $dirP = ''
+            try { $dirP = [string]$d.Path } catch {}
+            $tag = "$i(nm=$nm saved=$(-not [string]::IsNullOrEmpty($dirP)))"
             # 方式1：Close($false)
             try { $d.Close($false); $r["1_CloseFalse"] += "$tag:ok "; continue } catch { $r["1_CloseFalse"] += "$tag:FAIL($($_.Exception.Message.Substring(0,[Math]::Min(40,$_.Exception.Message.Length)))) " }
             # 方式2：先 SaveAs 到临时文件再关
@@ -951,14 +955,17 @@ switch ($Action) {
                 $entry.count = $docs.Count
                 foreach ($d in $docs) {
                     if ($null -eq $d) { continue }
-                    $nm = ''; $full = ''; $healthy = $false
+                    $nm = ''; $full = ''; $dirP = ''; $healthy = $false
                     try { $nm = [string]$d.Name } catch {}
                     try { $full = [string]$d.FullName } catch {}
+                    try { $dirP = [string]$d.Path } catch {}
                     if ($a.key -eq "word") { $healthy = Test-DocHealthy $d }
                     else { $healthy = Test-BookHealthy $d }
                     $entry.documents += @{
                         name = $nm
-                        saved = (-not [string]::IsNullOrWhiteSpace($full))
+                        # 第 5 轮修：saved 必须看 Path。原来用 FullName 判 —— 未保存文档的
+                        # FullName 非空（等于文档名），于是每份没存过的文档都报 saved=true。
+                        saved = (-not [string]::IsNullOrWhiteSpace($dirP))
                         healthy = $healthy
                     }
                     # 只关"无名"文档：没有标题也没有路径 —— 那是自动化残留的空壳。
@@ -967,6 +974,10 @@ switch ($Action) {
                     #   （RPC_E_CALL_REJECTED），而 $app.Documents.Close($false) 一次成功
                     #   （countBefore=2 → countAfter=0）。这是 WPS 12.1 的实际行为。
                     #   真正执行在下面循环结束后统一做（先收集，再一次关）。
+                    # 第 5 轮备注（刻意不改判据）：这里的 $full 仍是 FullName，而 Name 永远非空，
+                    # 所以本分支实际上【不会触发】—— 也就是 repair 从不自动关文档。
+                    # 这是偏安全的一侧：改成"没有 Path 就算空壳"会去关用户没存盘的活文档，
+                    # 那是比"少关几个空壳"严重得多的事故。要真修，得先定义"空壳"的可靠特征。
                     if ([string]::IsNullOrWhiteSpace($nm) -and [string]::IsNullOrWhiteSpace($full)) {
                         $unnamed += $a.key
                     }
@@ -1274,31 +1285,57 @@ switch ($Action) {
         $path = $p.path
         if (-not $path) { Output-Json @{ success = $false; error = "Path required" }; return }
         $appType = if ($p.appType) { $p.appType } else { Get-AppTypeByExtension $path }
+
+        # 第 5 轮：保存之后【读回真实路径】，而不是把自己传进去的 $path 原样回显。
+        # 为什么必须读回：SaveAs 可能被 WPS 改写落点（格式不符自动换扩展名、路径被规范化、
+        # 同名已存在时弹选择框）。回显 $path 等于替 WPS 担保"你给的路径就是落点"。
+        # 判据用 .Path（不是 .FullName —— 未保存文档的 FullName 就等于文档名，永远非空）。
+        # WPS 保存后 .Path 有极短延迟，读到空就退回用户给的路径并标 verified=false，
+        # 让调用方知道"这次没核实成功"，而不是假装核实了。
+        $resolveSavedPath = {
+            param($obj, $requested)
+            $actual = ''
+            try { $actual = [string]$obj.Path } catch {}
+            if ([string]::IsNullOrEmpty($actual)) {
+                return @{ path = $requested; requestedPath = $requested; verified = $false
+                          note = "保存后没读到文档路径（可能是 WPS 有延迟），按你给的路径回报；落盘前请自行确认" }
+            }
+            $same = $false
+            try { $same = ([IO.Path]::GetFullPath($actual) -ieq [IO.Path]::GetFullPath($requested)) } catch {}
+            return @{ path = $actual; requestedPath = $requested; verified = $same }
+        }
+
         if ($appType -eq 'excel') {
             $excel = Get-WpsExcel
-            if ($null -eq $excel -or $null -eq $(Resolve-Book $excel $p)) { Output-Json @{ success = $false; error = "No active workbook" }; return }
+            $wb = $(Resolve-Book $excel $p)
+            if ($null -eq $excel -or $null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
             $format = Get-ExcelFileFormat $p.format
-            if ($null -ne $format) { $(Resolve-Book $excel $p).SaveAs($path, $format) }
-            else { $(Resolve-Book $excel $p).SaveAs($path) }
-            Output-Json @{ success = $true; data = @{ path = $path; appType = "excel" } }
+            if ($null -ne $format) { $wb.SaveAs($path, $format) }
+            else { $wb.SaveAs($path) }
+            $r = & $resolveSavedPath $wb $path
+            Output-Json @{ success = $true; data = @{ path = $r.path; requestedPath = $r.requestedPath; verified = $r.verified; note = $r.note; appType = "excel" } }
             return
         }
         if ($appType -eq 'word') {
             $word = Get-WpsWord
-            if ($null -eq $word -or $null -eq $(Resolve-Doc $word $p)) { Output-Json @{ success = $false; error = "No active document" }; return }
+            $docItem = $(Resolve-Doc $word $p)
+            if ($null -eq $word -or $null -eq $docItem) { Output-Json @{ success = $false; error = "No active document" }; return }
             $format = Get-WordSaveFormat $p.format
-            if ($null -ne $format) { $(Resolve-Doc $word $p).SaveAs($path, $format) }
-            else { $(Resolve-Doc $word $p).SaveAs($path) }
-            Output-Json @{ success = $true; data = @{ path = $path; appType = "word" } }
+            if ($null -ne $format) { $docItem.SaveAs($path, $format) }
+            else { $docItem.SaveAs($path) }
+            $r = & $resolveSavedPath $docItem $path
+            Output-Json @{ success = $true; data = @{ path = $r.path; requestedPath = $r.requestedPath; verified = $r.verified; note = $r.note; appType = "word" } }
             return
         }
         if ($appType -eq 'ppt') {
             $ppt = Get-WpsPpt
             if ($null -eq $ppt -or $null -eq $ppt.ActivePresentation) { Output-Json @{ success = $false; error = "No active presentation" }; return }
+            $pres = $ppt.ActivePresentation
             $format = Get-PptSaveFormat $p.format
-            if ($null -ne $format) { $ppt.ActivePresentation.SaveAs($path, $format) }
-            else { $ppt.ActivePresentation.SaveAs($path) }
-            Output-Json @{ success = $true; data = @{ path = $path; appType = "ppt" } }
+            if ($null -ne $format) { $pres.SaveAs($path, $format) }
+            else { $pres.SaveAs($path) }
+            $r = & $resolveSavedPath $pres $path
+            Output-Json @{ success = $true; data = @{ path = $r.path; requestedPath = $r.requestedPath; verified = $r.verified; note = $r.note; appType = "ppt" } }
             return
         }
         Output-Json @{ success = $false; error = "Unknown app type" }
@@ -3748,9 +3785,11 @@ switch ($Action) {
         } catch {
             Output-Json @{ success = $false; error = "探测失败: $(Get-CallError $_)" }
         } finally {
-            # 探测不留垃圾：临时文档不保存直接关。新建文档 FullName 为空，
-            # 不能走 closeDocument 的 saveChanges 守卫（它会为从未保存的文档报错），
-            # 这里显式 Close($false) 正是"放弃保存"的语义。
+            # 探测不留垃圾：临时文档不保存直接关。
+            # 第 5 轮更正：原注释说"新建文档 FullName 为空"是错的 —— 实测未保存文档的
+            # FullName 非空（等于文档名），空的是 Path。判"存过盘没有"一律看 Path。
+            # 这里不能用 closeDocument 的 saveChanges 守卫（它会为从未保存的文档报错），
+            # 显式 Close($false) 正是"放弃保存"的语义。
             if ($null -ne $doc) { try { $doc.Close($false) } catch {} }
         }
     }

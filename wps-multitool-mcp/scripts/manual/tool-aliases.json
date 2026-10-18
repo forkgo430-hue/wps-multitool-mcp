@@ -29,7 +29,12 @@
     "  2) 参数集是另一个的超集时选超集（别名化不丢能力）；",
     "  3) 都不满足时选与 PS 动作名语义一致、且符合 wps_<组>_<动词>_<名词>（单复数跟动作走）的那个。",
     "",
-    "维护方式：只改本文件，然后 node scripts/manual/gen-tool-aliases.js。别手改 generated（CI 有 diff 门禁）。"
+    "维护方式：只改本文件，然后 node scripts/manual/gen-tool-aliases.js。别手改 generated（CI 有 diff 门禁）。",
+    "",
+    "第 5 轮补充：允许多个旧名指向同一个规范名 —— 那是【族合并】留下的（background 6→1：",
+    "set_slide_background / set_background_color / set_background_image / set_background_gradient 全指向 set_background）。",
+    "合并族里唯一没法走别名的是 wps_ppt_set_master_background：别名不能注入 target='master'，",
+    "靠别名过来会变成改单页背景（静默改错地方），所以它的旧名是直接下线、能力留在新工具的 target:'master'。"
   ],
   "aliases": {
     "wps_common_ping": "wps_check_connection",
@@ -44,6 +49,11 @@
     "wps_excel_delete_column": "wps_excel_delete_columns",
     "wps_word_generate_doc_toc": "wps_word_generate_toc",
     "wps_ppt_duplicate_slide": "wps_ppt_copy_slide",
-    "wps_ppt_add_chart": "wps_ppt_insert_ppt_chart"
+    "wps_ppt_add_chart": "wps_ppt_insert_ppt_chart",
+
+    "wps_ppt_set_slide_background": "wps_ppt_set_background",
+    "wps_ppt_set_background_color": "wps_ppt_set_background",
+    "wps_ppt_set_background_image": "wps_ppt_set_background",
+    "wps_ppt_set_background_gradient": "wps_ppt_set_background"
   }
 }

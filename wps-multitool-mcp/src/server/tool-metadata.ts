@@ -399,27 +399,17 @@ const CURATED: Record<
     notFor: ['这是【Word 表格】的；Excel 用 wps_excel_merge_cells'],
   },
 
-  // ===== PPT：6 个 background 是重灾区 =====
+  // ===== PPT：background 族已于第 5 轮 6→1 合并 =====
+  // 以前这里是重灾区：6 个背景工具名字高度重合，模型只能靠 notFor 猜。
+  // 合并后只有一个工具，三个维度（target / type / 填充物）写在参数里，
+  // 旧名（set_slide_background / _color / _image / _gradient）留在别名表里，
+  // set_master_background 下线（target:'master' 取代）。
   wps_ppt_set_background: {
-    aliases: ['设置背景', '换背景'],
-    notFor: ['纯色用 set_background_color；图片用 set_background_image；渐变用 set_background_gradient；当前页用 set_slide_background；母版用 set_master_background'],
-  },
-  wps_ppt_set_slide_background: {
-    aliases: ['设置当前页背景'],
-    notFor: ['所有页统一背景用 wps_ppt_set_background 或改母版 wps_ppt_set_master_background'],
-  },
-  wps_ppt_set_background_color: {
-    aliases: ['背景色', '背景颜色', '纯色背景'],
-  },
-  wps_ppt_set_background_image: {
-    aliases: ['背景图', '背景图片'],
-  },
-  wps_ppt_set_background_gradient: {
-    aliases: ['渐变背景'],
-  },
-  wps_ppt_set_master_background: {
-    aliases: ['母版背景'],
-    notFor: ['只改一页用 wps_ppt_set_slide_background'],
+    aliases: ['设置背景', '换背景', '背景色', '背景颜色', '纯色背景', '背景图', '背景图片', '渐变背景', '母版背景'],
+    notFor: [
+      '背景颜色/背景图/渐变/母版背景 都归这一个工具管：用 type 与 target 区分，别再找 _color/_image/_gradient/_master 那些旧名',
+      '给【形状】上色用 wps_ppt_set_shape_style（不是背景）',
+    ],
   },
   // PPT：5 个 animation
   wps_ppt_set_animation: {

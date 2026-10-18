@@ -80,8 +80,10 @@ for (const [from, to] of entries) {
   if (!NAME_RE.test(from)) problems.push(`${from}: 别名不合 wps_<组>_<动词>_<名词> 形状`);
   if (!NAME_RE.test(to)) problems.push(`${to}: 规范名不合 wps_<组>_<动词>_<名词> 形状（来自 ${from}）`);
   if (from === to) problems.push(`${from}: 自己别名自己`);
-  if (targets.has(to)) problems.push(`${to}: 被 ${targets.get(to)} 和 ${from} 同时指向（一个规范名只该吸收一组重复）`);
-  targets.set(to, from);
+  // 第 5 轮：允许多个旧名指向同一个规范名 —— 族合并就是"多个旧名 → 一个规范名"。
+  // 以前这里禁止是第 2 轮的口径（那时一条规范名只吸收一个重复），现在会挡住 background 那种 4→1。
+  // 真正要防的是"别名指向不存在的名字"，那条由 alias-verify.js 对着注册表查。
+  targets.set(to, (targets.get(to) || 0) + 1);
 }
 // 链式别名：a→b 且 b→c。解析只做一跳，链式会让 a 解析到不存在的 b。
 for (const [from, to] of entries) {

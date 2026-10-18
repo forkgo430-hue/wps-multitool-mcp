@@ -56,13 +56,18 @@ ok(
   entries.every(([a, c]) => a !== c),
   entries.filter(([a, c]) => a === c).join(',')
 );
+// 多个旧名指向同一规范名是【合法的】：族合并就是"多个旧名 → 一个规范名"
+// （background 6→1 有 4 个旧名指向 wps_ppt_set_background）。
+// 这里只统计分布，不做断言 —— 真正该拦的是"别名指向不存在的名字"，见下面 B 段。
 const targets = new Map();
-const dupTarget = [];
-for (const [a, c] of entries) {
-  if (targets.has(c)) dupTarget.push(c);
-  targets.set(c, a);
-}
-ok('一个规范名只被一组重复指向', dupTarget.length === 0, dupTarget.join(','));
+for (const [, c] of entries) targets.set(c, (targets.get(c) || 0) + 1);
+const merged = [...targets.entries()].filter(([, n]) => n > 1);
+ok(
+  '别名表结构可读：' + targets.size + ' 个规范名，其中 ' + merged.length + ' 个吸收了多个旧名（族合并）',
+  true,
+  merged.map(([c, n]) => `${c}×${n}`).join(',') || '(无合并族)'
+);
+ok('别名名本身不重复', new Set(aliasNames).size === aliasNames.length, `${aliasNames.length} 条`);
 // 链式别名（a→b 且 b 也是别名）：解析只做一跳，链式会让 a 落到不存在的名字上
 const chained = entries.filter(([, c]) => aliasNames.includes(c)).map(([a]) => a);
 ok('没有链式别名', chained.length === 0, chained.join(','));

@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**296 个工具**（8 内置 + 288 专业/组工具）· 默认列出 40 个 · 注解覆盖 296/296 · 真机验证 201/296
+**291 个工具**（8 内置 + 283 专业/组工具）· 默认列出 40 个 · 注解覆盖 291/291 · 真机验证 201/291
 
 | 标记 | 含义 |
 |---|---|
@@ -214,7 +214,7 @@
 | `wps_excel_update_pivot_table` |  | — | live | 更新已有透视表的配置，包括添加/移除字段、修改聚合方式等。<br><sub>别名：更新数据透视表表格 / 刷新数据透视表表格 / 数据透视表</sub> |
 | `wps_get_active_workbook` |  | R | live | 获取当前打开的WPS表格工作簿信息<br><sub>别名：当前工作簿 / 活动工作簿 / 打开的是哪个表格</sub> |
 
-## PPT（113）
+## PPT（108）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -291,13 +291,9 @@
 | `wps_ppt_set_active_target` |  | — | static | 锁定后续所有 PPT 操作的【目标演示文稿】（按文件名）。锁定后，本服务器会给所有演示类调用自动注入该文稿名，底层精确定位，彻…<br><sub>别名：设置当前目标 / 设定当前目标 / 当前</sub> |
 | `wps_ppt_set_animation` |  | N | static | [DEPRECATED·改用 wps_ppt_add_animation] 设置幻灯片中指定元素的动画效果。<br><sub>别名：设置动画 / 设定动画 / 动画</sub> |
 | `wps_ppt_set_animation_order` |  | — | static | 调整动画在时间线上的播放顺序。<br><sub>别名：设置动画顺序 / 设定动画顺序 / 动画</sub> |
-| `wps_ppt_set_background` |  | — | static | 设置幻灯片的背景颜色或背景图片。<br><sub>别名：设置背景 / 换背景 / 设定背景</sub> |
-| `wps_ppt_set_background_color` |  | — | static | 设置幻灯片背景为指定颜色。<br><sub>别名：背景色 / 背景颜色 / 纯色背景</sub> |
-| `wps_ppt_set_background_gradient` |  | — | static | 为幻灯片设置渐变色背景。<br><sub>别名：渐变背景 / 设置背景渐变 / 设定背景渐变</sub> |
-| `wps_ppt_set_background_image` |  | — | static | 设置幻灯片背景为指定图片。<br><sub>别名：背景图 / 背景图片 / 设置背景图片</sub> |
+| `wps_ppt_set_background` |  | — | static | 设置背景：某一页、整份文稿、或幻灯片母版。<br><sub>别名：设置背景 / 换背景 / 背景色</sub> |
 | `wps_ppt_set_font_color` |  | — | static | 设置幻灯片中指定形状的文字颜色。<br><sub>别名：设置字体颜色 / 设定字体颜色 / 字体</sub> |
 | `wps_ppt_set_image_style` |  | — | static | 设置幻灯片中指定图片的样式。<br><sub>别名：设置图片样式 / 设定图片样式 / 图片</sub> |
-| `wps_ppt_set_master_background` |  | — | static | 设置母版背景样式。<br><sub>别名：母版背景 / 设置母版背景 / 设定母版背景</sub> |
 | `wps_ppt_set_ppt_chart_data` |  | — | live | 更新幻灯片中已有图表的数据。<br><sub>别名：改图表数据 / 设置图表数据 / 设定图表数据</sub> |
 | `wps_ppt_set_ppt_chart_style` |  | — | live | 设置幻灯片中图表的样式属性。<br><sub>别名：设置图表样式 / 设定图表样式 / 图表</sub> |
 | `wps_ppt_set_ppt_date_time` |  | — | static | 设置演示文稿日期时间显示。<br><sub>别名：设置日期时间 / 设定日期时间 / 日期</sub> |
@@ -311,7 +307,6 @@
 | `wps_ppt_set_shape_text` |  | — | live | 设置幻灯片中指定形状的文字内容。<br><sub>别名：设置形状文本 / 设定形状文本 / 形状</sub> |
 | `wps_ppt_set_shape_transparency` |  | — | static | 设置幻灯片中指定形状的透明度。<br><sub>别名：设置形状透明度 / 设定形状透明度 / 形状</sub> |
 | `wps_ppt_set_shape_z_order` |  | — | static | 设置形状在幻灯片中的层级顺序（Z轴排列）。<br><sub>别名：设置形状z顺序 / 设定形状z顺序 / 形状</sub> |
-| `wps_ppt_set_slide_background` |  | — | static | [DEPRECATED·改用 wps_ppt_set_background] 设置幻灯片背景，支持多种背景类型。<br><sub>别名：设置当前页背景 / 设置幻灯片背景 / 设定幻灯片背景</sub> |
 | `wps_ppt_set_slide_content` |  | — | static | 设置幻灯片的正文内容区域。<br><sub>别名：设置幻灯片内容 / 设定幻灯片内容 / 幻灯片</sub> |
 | `wps_ppt_set_slide_layout` |  | — | static | 设置幻灯片的版式布局。<br><sub>别名：设置幻灯片版式 / 设定幻灯片版式 / 幻灯片</sub> |
 | `wps_ppt_set_slide_number` |  | — | static | 设置幻灯片页码的显示状态和起始编号。<br><sub>别名：设置幻灯片数字 / 设定幻灯片数字 / 幻灯片</sub> |

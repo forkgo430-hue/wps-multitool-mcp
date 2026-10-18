@@ -183,12 +183,6 @@ export {
 } from './textbox';
 
 export {
-  setSlideBackgroundDefinition,
-  setSlideBackgroundHandler,
-  setBackgroundColorDefinition,
-  setBackgroundColorHandler,
-  setBackgroundImageDefinition,
-  setBackgroundImageHandler,
   setSlideNumberDefinition,
   setSlideNumberHandler,
   setPptFooterDefinition,
@@ -276,8 +270,6 @@ export {
 export {
   getSlideMasterDefinition,
   getSlideMasterHandler,
-  setMasterBackgroundDefinition,
-  setMasterBackgroundHandler,
   addMasterElementDefinition,
   addMasterElementHandler,
   set3DRotationDefinition,
@@ -347,8 +339,6 @@ export {
   addTitleDecorationHandler,
   addPageIndicatorDefinition,
   addPageIndicatorHandler,
-  setBackgroundGradientDefinition,
-  setBackgroundGradientHandler,
 } from './beautify-advanced';
 
 export default pptTools;

@@ -4,7 +4,7 @@
  * Pos: 别名表【生成物】。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
  * 别手改这个文件：真相源是 scripts/manual/tool-aliases.json，
- * 生成器是 scripts/manual/gen-tool-aliases.js，共 13 条。
+ * 生成器是 scripts/manual/gen-tool-aliases.js，共 17 条。
  *
  * 别名不注册成工具：它不出现在 tools/list、不计入工具总数，只在 registry 的入口被解析成规范名。
  * 为什么只做一跳解析：链式别名（a→b→c）会让"到底谁是真的"变成谜，一份表里就该一步到位。
@@ -22,6 +22,10 @@ export const TOOL_ALIASES: Readonly<Record<string, string>> = {
   "wps_insert_text": "wps_word_insert_text",
   "wps_ppt_add_chart": "wps_ppt_insert_ppt_chart",
   "wps_ppt_duplicate_slide": "wps_ppt_copy_slide",
+  "wps_ppt_set_background_color": "wps_ppt_set_background",
+  "wps_ppt_set_background_gradient": "wps_ppt_set_background",
+  "wps_ppt_set_background_image": "wps_ppt_set_background",
+  "wps_ppt_set_slide_background": "wps_ppt_set_background",
   "wps_ppt_set_slide_notes": "wps_ppt_add_speaker_notes",
   "wps_set_cell_value": "wps_excel_set_cell_value",
   "wps_word_generate_doc_toc": "wps_word_generate_toc",
