@@ -97,6 +97,19 @@ const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
     idempotentHint: true,
     openWorldHint: false,
   },
+  /**
+   * 【四】动作名带点，观测器按"合法标识符"判定把它归成 unresolved，推不出来。
+   *   wps_ppt_unify_font 调的是 slide.unifyFont（带点的动作名），注解生成器的
+   *   /^[A-Za-z_][A-Za-z0-9_]*$/ 不收它 → 只能手写。
+   *   值是人工判定的：它把一页/整份文稿里所有文本框的字体名改掉 —— 写入、原地改格式，
+   *   但不改内容、不删东西（非破坏），重复执行结果一致（幂等），只碰本机（openWorld=false）。
+   */
+  wps_ppt_unify_font: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
 };
 
 /**

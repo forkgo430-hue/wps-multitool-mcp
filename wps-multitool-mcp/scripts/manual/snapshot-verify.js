@@ -19,7 +19,8 @@ const path = require('path');
 // 用独立管道 + 短空闲：bridge 是常驻的，它手里的 PS 子进程拿着【旧版】wps-com.ps1。
 // 共享管道会测到上一份脚本，改完动作库后必须换管道才能测到新的（与 p01-smoke 同一招）。
 // 这比"去 kill 掉用户的桥"温和：只多起一个临时桥，用完自己退出。
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-snapshot-verify';
+// 每次跑用全新管道名（固定名会连到上一轮还活着的桥，桥里是旧版 wps-com.ps1）
+process.env.WPS_BRIDGE_PIPE = `\\\\.\\pipe\\wps-multitool-mcp-snapshot-verify-${Date.now()}`;
 process.env.WPS_BRIDGE_EPHEMERAL = '1';
 process.env.WPS_BRIDGE_IDLE_MS = '30000';
 

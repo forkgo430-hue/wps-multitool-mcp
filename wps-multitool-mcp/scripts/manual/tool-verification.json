@@ -32,13 +32,17 @@
     "wps_ppt_align_objects": "live",
     "wps_ppt_insert_table": "live",
     "wps_ppt_set_table_cell": "live",
-    "wps_ppt_insert_ppt_chart": "live"
+    "wps_ppt_insert_ppt_chart": "live",
+    "wps_ppt_set_shape_fill": "live",
+    "wps_ppt_set_table_row_style": "live",
+    "wps_ppt_set_ppt_chart_style": "live",
+    "wps_ppt_set_ppt_chart_data": "live"
   },
   "evidence": {
     "core": "verify-all 快测档（tool-groups-test / search-meta-verify）真跑注册表",
     "common": "verify-all 的 annotation-e2e / warnings-batch-verify 真起 stdio server 跑通",
     "word": "scripts/manual/word-caps-probe.js + p01-smoke.js（真机，修订/表格/样式/交叉引用/索引）",
     "excel": "scripts/manual/excel-caps-probe.js（真机，公式/图表/透视表/格式）",
-    "ppt": "2026-10-18 scripts/manual/ppt-caps-probe.js 真机：基础档 8/8；第二批按域（形状/表格/图表）14/18 —— add_shape/set_shape_text/align_objects/insert_table/set_table_cell/add_chart 6 个有真机证据（写操作用 find_ppt_text / 裸调 getPptTableCell / 导出图差分验证，不只信 success）；set_shape_fill（PS 无 setShapeFill 动作）、set_table_row_style 与 set_ppt_chart_style（TS 传嵌套 style、PS 读扁平参数，返回成功但不生效）、set_ppt_chart_data（文档形状 {categories,series} 静默不写，数字值报 Int32→String）4 个仍为 static 且缺陷已记录；其余仍为 static"
+    "ppt": "2026-10-18 scripts/manual/ppt-caps-probe.js 真机 18/18 通过（基础档 8 + 形状/文字/填充 + 表格 2 + 图表 3）；其余 PPT 工具仍为 static"
   }
 }

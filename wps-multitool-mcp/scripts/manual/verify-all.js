@@ -33,6 +33,7 @@ const FAST = [
   ['verification-verify.js', '验证状态覆盖与默认档'],
   ['basic-tier-verify.js', '默认档 = 白名单 ∩ 真机验证'],
   ['alias-verify.js', '工具别名（旧名可解析/不列出/不计入）'],
+  ['param-shape-verify.js', '参数形状（TS 传了 PS 不读）'],
   ['tool-groups-test.js', '工具组加载'],
   ['intent-test.js', '意图识别词表'],
   ['annotation-verify.js', '工具注解与三方对账'],

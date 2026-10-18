@@ -266,6 +266,28 @@ function Resolve-Book($app, $p) {
     return $null
 }
 
+# 第 3 轮加：把 $p.sheet 解析成工作表对象，没传就退回活动表。
+# 为什么值得单开一个函数：审计（param-shape-audit.js）发现 30 多个 Excel 动作的 TS schema
+# 都承诺了 sheet（"工作表名，不填则当前活动表"），PS 侧却直接读 $excel.ActiveSheet ——
+# 于是"指定了表也没用，照样改活动表"，属于最坑的一类假成功（不报错、改错了地方）。
+# 收敛到这一个函数后：没传 sheet 时行为与原来完全一致（就是 ActiveSheet）；
+# 传了但表不存在时返回 $null，让调用方报错，而不是静默改错表。
+function Resolve-Sheet($app, $p) {
+    if ($null -eq $app) { return $null }
+    $wb = $(Resolve-Book $app $p)
+    if ($null -eq $wb) { return $null }
+    if ($p -and $p.sheet) {
+        $key = [string]$p.sheet
+        $idx = 0
+        if ([int]::TryParse($key, [ref]$idx)) {
+            try { return $wb.Sheets.Item($idx) } catch {}
+        }
+        try { return $wb.Sheets.Item($key) } catch {}
+        return $null
+    }
+    try { return $app.ActiveSheet } catch { return $null }
+}
+
 # ==================== 模态对话框探测（C）====================
 # 为什么需要
 # ----------
@@ -566,6 +588,161 @@ function Invoke-WpsAction {
 # 脚本级 $Params（守护进程模式下就是默认值 "{}"）把传进来的 $p 覆盖成空对象 ——
 # 表现为"所有带参数的动作都收不到参数"，而且不报错。实测于 ② 补参数化动作时发现。
 # 直跑模式的解析在文件末尾的入口段里做，那里才是它该待的地方。
+
+# ============================================================================
+# 入参归一化（第 3 轮：消灭"TS 传了、PS 不读"的静默丢弃）
+# ============================================================================
+# 为什么放在 switch 之前
+# ------------------
+# param-shape-audit.js 扫出来的 90 处候选，本质是一类病：TS 的 schema 承诺了一个参数名，
+# 而 PS 的 case 读的是另一个名字（或只读扁平键）。后果分两种：
+#   静默丢弃 —— "返回 success 但什么都没做"（最坏，用户以为改完了）；
+#   响亮失败 —— PS 缺必填键直接报错（用户至少知道自己没成功）。
+# 本块把【静默丢弃】那一类在入口就抹平：改名的改名、嵌套的摊平，case 体一行都不用动。
+# 值形态要转换的（比如 startRow/endRow → rows 数组）不在这里做，留在 case 里。
+#
+# 两条规则都是"只在对方没给时才补" —— 显式传扁平参数的调用方（wps_execute_method 裸调、
+# 历史脚本）行为完全不变。
+$ParamAlias = @{
+    'insertPptChart'       = @{ chartType = 'type' }
+    'addPptHyperlink'      = @{ url = 'address' }
+    'alignShapes'          = @{ shapeIndices = 'names' }
+    'distributeShapes'     = @{ shapeIndices = 'names' }
+    'groupShapes'          = @{ shapeIndices = 'names' }
+    'smartDistribute'      = @{ shapeIndices = 'shapes' }
+    'addAnimation'         = @{ shapeIndex = 'shapeName' }
+    'addAnimationPreset'   = @{ shapeIndex = 'shapeName' }
+    'applyTransitionToAll' = @{ effect = 'transition' }
+    'findReplace'          = @{ find = 'findText'; replace = 'replaceText' }
+    'deleteSheet'          = @{ name = 'sheet' }
+    'switchSheet'          = @{ name = 'sheet' }
+    'renameSheet'          = @{ oldName = 'sheet' }
+    'copySheet'            = @{ name = 'sheet' }
+    'moveSheet'            = @{ name = 'sheet' }
+    'deletePptImage'       = @{ imageIndex = 'shapeIndex' }
+    'deleteTextBox'        = @{ textboxIndex = 'shapeIndex' }
+    'setTextBoxText'       = @{ textboxIndex = 'shapeIndex' }
+    'setTextBoxStyle'      = @{ textboxIndex = 'shapeIndex' }
+    'setImageStyle'        = @{ imageIndex = 'shapeIndex' }
+    'removeAnimation'      = @{ animationIndex = 'index' }
+    'replacePptImage'      = @{ imagePath = 'filePath' }
+    'setBackgroundImage'   = @{ imagePath = 'path'; filePath = 'path' }
+    'insertPptImage'       = @{ filePath = 'path'; imagePath = 'path' }
+    'insertExcelImage'     = @{ filePath = 'path'; imagePath = 'path' }
+    'openPresentation'     = @{ filePath = 'path' }
+    'setHyperlink'         = @{ url = 'address'; text = 'textToDisplay' }
+    'setPageSetup'         = @{ marginTop = 'topMargin'; marginBottom = 'bottomMargin'; marginLeft = 'leftMargin'; marginRight = 'rightMargin' }
+    'setShapeZOrder'       = @{ order = 'zOrder' }
+    'setSlideNumber'       = @{ show = 'visible' }
+    'setPptDateTime'       = @{ show = 'visible'; autoUpdate = 'useFixed' }
+    'setBorder'            = @{ borderStyle = 'style' }
+    'setSlideTransition'   = @{ transition = 'effect' }
+    'set3DRotation'        = @{ rotation = 'rotationX' }
+    'autoFilter'           = @{ column = 'field' }
+    'createKpiCards'       = @{ data = 'cards' }
+    'createMiniCharts'     = @{ data = 'items' }
+    'createOrgChart'       = @{ data = 'nodes' }
+    'createProgressBar'    = @{ value = 'progress' }
+    'sortRange'            = @{ column = 'keyColumn' }
+    'subtotal'             = @{ columns = 'totalColumns' }
+    'transpose'            = @{ source = 'sourceRange' }
+    'setAnimationOrder'    = @{ animationIndex = 'from'; newOrder = 'to' }
+    'insertImage'          = @{ imagePath = 'path' }
+    'addDataValidation'    = @{ type = 'validationType'; formula = 'formula1' }
+}
+
+# 嵌套对象摊平：TS 传 style:{...}/format:{...}/shadow:{...}，PS 读扁平键。
+# 把嵌套对象的每个属性提升成 $p 的同名键（已存在的绝不覆盖）。
+$StyleFlatten = @(
+    'setPptTableStyle', 'setPptTableCellStyle', 'setPptTableRowStyle', 'setPptChartStyle',
+    'setCellStyle', 'setCellFormat', 'setShapeBorder', 'setShapeGradient', 'setShapeShadow',
+    'setTextBoxStyle', 'setImageStyle', 'setMasterBackground', 'setBackgroundGradient',
+    'setSlideBackground', 'addConditionalFormat', 'addMasterElement', 'addPageIndicator',
+    'addTitleDecoration', 'protectSheet', 'protectWorkbook'
+)
+# 这些动作的嵌套键不叫 style，单独点名
+$FlattenKeys = @{
+    'setCellFormat'         = @('format')
+    'setShapeBorder'        = @('border')
+    'setShapeGradient'      = @('gradient')
+    'setShapeShadow'        = @('shadow')
+    'setBackgroundGradient' = @('gradient')
+    'setMasterBackground'   = @('background')
+    'setSlideBackground'    = @('background')
+    'addConditionalFormat'  = @('condition', 'format')
+    'addMasterElement'      = @('element')
+    'addPageIndicator'      = @('position')
+    'addTitleDecoration'    = @('style')
+    'protectSheet'          = @('protect')
+    'protectWorkbook'       = @('protect')
+}
+
+
+    # openAfterExport：TS 的 schema 承诺"导出后顺便打开"，以前 PS 压根不读这个键 ——
+    # 用户勾了没反应，也没有任何提示。放在回包之前统一做，失败只记 warnings 不影响导出结果。
+    function Open-Exported($path, $flag) {
+        if (-not $flag) { return }
+        try {
+            if ($path -and (Test-Path -LiteralPath $path)) { Start-Process -FilePath $path | Out-Null }
+        } catch { }
+    }
+
+if ($null -ne $p -and $p -is [psobject]) {
+    $have = @($p.PSObject.Properties.Name)
+    # 1) 改名：TS 的文档名 → PS 实际读的名
+    if ($ParamAlias.ContainsKey($Action)) {
+        foreach ($from in @($ParamAlias[$Action].Keys)) {
+            $to = $ParamAlias[$Action][$from]
+            if (($have -contains $from) -and -not ($have -contains $to)) {
+                $p | Add-Member -NotePropertyName $to -NotePropertyValue $p.$from -Force
+                $have = @($p.PSObject.Properties.Name)
+            }
+        }
+    }
+    # 2) 摊平：嵌套对象的属性提升成 $p 的扁平键
+    if ($StyleFlatten -contains $Action) {
+        $objKeys = if ($FlattenKeys.ContainsKey($Action)) { $FlattenKeys[$Action] } else { @('style') }
+        foreach ($ok in $objKeys) {
+            $obj = $p.$ok
+            if ($null -eq $obj) { continue }
+            foreach ($prop in @($obj.PSObject.Properties)) {
+                if (-not ($have -contains $prop.Name)) {
+                    $p | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value -Force
+                    $have = @($p.PSObject.Properties.Name)
+                }
+            }
+        }
+    }
+    # 3) 值形态转换：这几个不是"换个名字"能解决的 —— PS 要数组/枚举，TS 给的是起止行或布尔。
+    #    同样放入口统一做，case 体一行不动。
+    if ($Action -eq 'sortRange' -and ($have -contains 'ascending') -and -not ($have -contains 'order')) {
+        # PS 读 $p.order（xlAscending=1 / xlDescending=2），TS 给的是 ascending 布尔
+        $p | Add-Member -NotePropertyName order -NotePropertyValue $(if ([bool]$p.ascending) { 1 } else { 2 }) -Force
+        $have = @($p.PSObject.Properties.Name)
+    }
+    if (@('hideRows', 'showRows') -contains $Action -and ($have -contains 'startRow') -and -not ($have -contains 'rows')) {
+        # TS 的 startRow/endRow（闭区间）→ PS 的 rows 数组。
+        # 修之前 PS 只认 row/rows，于是 wps_excel_hide_rows / show_rows 必然报
+        # "row/rows required" —— 工具等于坏的（响亮失败，不算假成功，但一样不可用）。
+        $from = [int]$p.startRow
+        $to = if (($have -contains 'endRow') -and $p.endRow) { [int]$p.endRow } else { $from }
+        $list = @()
+        for ($r = $from; $r -le $to; $r++) { $list += $r }
+        $p | Add-Member -NotePropertyName rows -NotePropertyValue $list -Force
+        $have = @($p.PSObject.Properties.Name)
+    }
+    if (@('hideColumns', 'showColumns') -contains $Action -and ($have -contains 'startColumn') -and -not ($have -contains 'columns')) {
+        # 列号可能是数字也可能是字母；PS 只认数字，统一在这里转
+        $fi = 0
+        $ti = 0
+        if (-not [int]::TryParse([string]$p.startColumn, [ref]$fi)) { $fi = Convert-ColumnLetterToNumber([string]$p.startColumn) }
+        if (-not [int]::TryParse([string]$p.endColumn, [ref]$ti)) { $ti = Convert-ColumnLetterToNumber([string]$p.endColumn) }
+        $list = @()
+        for ($c = $fi; $c -le $ti; $c++) { $list += $c }
+        $p | Add-Member -NotePropertyName columns -NotePropertyValue $list -Force
+        $have = @($p.PSObject.Properties.Name)
+    }
+}
 
 switch ($Action) {
 
@@ -1204,7 +1381,8 @@ switch ($Action) {
             $sourcePath = $wb.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $wb.ExportAsFixedFormat(0, $outputPath)
-            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "excel" } }
+            Open-Exported $outputPath $p.openAfterExport
+            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "excel"; opened = [bool]$p.openAfterExport } }
             return
         }
         $word = Get-WpsWord
@@ -1213,7 +1391,8 @@ switch ($Action) {
             $sourcePath = $doc.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $doc.ExportAsFixedFormat($outputPath, 17)
-            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "word" } }
+            Open-Exported $outputPath $p.openAfterExport
+            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "word"; opened = [bool]$p.openAfterExport } }
             return
         }
         $ppt = Get-WpsPpt
@@ -1222,7 +1401,8 @@ switch ($Action) {
             $sourcePath = $pres.FullName
             $outputPath = if ($p.outputPath) { $p.outputPath } else { [System.IO.Path]::ChangeExtension($sourcePath, 'pdf') }
             $pres.SaveAs($outputPath, 32)
-            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "ppt" } }
+            Open-Exported $outputPath $p.openAfterExport
+            Output-Json @{ success = $true; data = @{ sourcePath = $sourcePath; outputPath = $outputPath; appType = "ppt"; opened = [bool]$p.openAfterExport } }
             return
         }
         Output-Json @{ success = $false; error = "No active document" }
@@ -1326,7 +1506,7 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cell = $sheet.Range($p.cell)
         $value = $cell.Value2
         $formula = $cell.Formula
@@ -1453,7 +1633,7 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $table = $null
         if ($p.pivotTableName) {
             try { $table = $sheet.PivotTables($p.pivotTableName) } catch {}
@@ -1542,7 +1722,7 @@ switch ($Action) {
     "setCellFormat" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         if ($p.numberFormat) { $range.NumberFormat = $p.numberFormat }
         Output-Json @{ success = $true; data = @{ range = $p.range; format = $p.numberFormat } }
@@ -1551,7 +1731,7 @@ switch ($Action) {
     "setCellStyle" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         if ($p.fontSize) { $range.Font.Size = $p.fontSize }
         if ($null -ne $p.bold) { $range.Font.Bold = [bool]$p.bold }
@@ -1588,7 +1768,7 @@ switch ($Action) {
     "setBorder" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $styleMap = @{ thin = 1; medium = 2; thick = 4; double = 6; none = 0 }
         $style = $styleMap[$p.style]
@@ -1619,7 +1799,7 @@ switch ($Action) {
     "copyFormat" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $sourceRange = $sheet.Range($p.source)
         $targetRange = $sheet.Range($p.target)
         $sourceRange.Copy()
@@ -1631,7 +1811,7 @@ switch ($Action) {
     "clearFormats" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $range.ClearFormats()
         Output-Json @{ success = $true; data = @{ range = $p.range } }
@@ -1640,7 +1820,7 @@ switch ($Action) {
     "addConditionalFormat" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $formatType = if ($p.type) { $p.type } else { "cellValue" }
         if ($formatType -eq "cellValue") {
@@ -1670,7 +1850,7 @@ switch ($Action) {
     "removeConditionalFormat" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         if ($p.index) {
             $range.FormatConditions.Item([int]$p.index).Delete()
@@ -1683,7 +1863,7 @@ switch ($Action) {
     "getConditionalFormats" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $formats = @()
         $count = $range.FormatConditions.Count
@@ -1697,7 +1877,7 @@ switch ($Action) {
     "addDataValidation" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $typeMap = @{ list = 3; whole = 1; decimal = 2; date = 4; time = 5; textLength = 6; custom = 7 }
         $validationType = $typeMap[$p.validationType]
@@ -1731,7 +1911,7 @@ switch ($Action) {
     "removeDataValidation" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $range.Validation.Delete()
         Output-Json @{ success = $true; data = @{ range = $p.range } }
@@ -1740,7 +1920,7 @@ switch ($Action) {
     "getDataValidations" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $validation = $range.Validation
         Output-Json @{ success = $true; data = @{ range = $p.range; type = $validation.Type; formula1 = $validation.Formula1; formula2 = $validation.Formula2; inputTitle = $validation.InputTitle; inputMessage = $validation.InputMessage } }
@@ -1749,7 +1929,7 @@ switch ($Action) {
     "getFormula" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cell = $sheet.Range($p.cell)
         $formula = if ($cell.Formula) { $cell.Formula } else { "" }
         $formulaLocal = ""
@@ -1760,7 +1940,7 @@ switch ($Action) {
     "setArrayFormula" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $range.FormulaArray = $p.formula
         Output-Json @{ success = $true; data = @{ range = $p.range; formula = $p.formula } }
@@ -1769,7 +1949,7 @@ switch ($Action) {
     "getCellInfo" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cell = $sheet.Range($p.cell)
         $value = $cell.Value2
         $formula = if ($cell.Formula) { $cell.Formula } else { "" }
@@ -1800,7 +1980,7 @@ switch ($Action) {
     "consolidate" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $destRange = $sheet.Range($p.destination)
         $funcMap = @{ sum = 9; count = 2; average = 1; max = 4; min = 5 }
         $func = $funcMap[$p.function]
@@ -1828,7 +2008,7 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $usedRange = $sheet.UsedRange
         $headers = @()
         if ($usedRange.Rows.Count -gt 0) {
@@ -1849,7 +2029,7 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $usedRange = $sheet.UsedRange
         $headers = @()
         if ($usedRange.Rows.Count -gt 0) {
@@ -1868,7 +2048,7 @@ switch ($Action) {
     "sortRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $keyCol = $sheet.Range($p.keyColumn)
         $order = if ($p.order -eq "desc") { 2 } else { 1 }
@@ -1879,7 +2059,7 @@ switch ($Action) {
     "autoFilter" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         if ($p.criteria) {
             $range.AutoFilter($p.field, $p.criteria)
@@ -1892,7 +2072,7 @@ switch ($Action) {
     "createChart" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.dataRange)
         $chartType = $p.chartType
         if ($null -eq $chartType) {
@@ -2040,7 +2220,7 @@ switch ($Action) {
     "removeDuplicates" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $originalCount = $range.Rows.Count
         $cols = @()
@@ -2595,7 +2775,7 @@ switch ($Action) {
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $across = if ($null -ne $p.across) { [bool]$p.across } else { $false }
         $range.Merge($across)
@@ -2605,7 +2785,7 @@ switch ($Action) {
     "unmergeCells" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $range.UnMerge()
         Output-Json @{ success = $true; data = @{ range = $p.range } }
@@ -2614,7 +2794,7 @@ switch ($Action) {
     "setColumnWidth" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $col = $p.column
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
         $sheet.Range("${col}:${col}").ColumnWidth = $p.width
@@ -2624,7 +2804,7 @@ switch ($Action) {
     "setRowHeight" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $sheet.Range("$($p.row):$($p.row)").RowHeight = $p.height
         Output-Json @{ success = $true; data = @{ row = $p.row; height = $p.height } }
     }
@@ -2632,7 +2812,7 @@ switch ($Action) {
     "autoFitColumn" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if ($p.range) {
             $sheet.Range($p.range).Columns.AutoFit()
         } elseif ($p.column) {
@@ -2648,7 +2828,7 @@ switch ($Action) {
     "autoFitRow" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if ($p.range) {
             $sheet.Range($p.range).Rows.AutoFit()
         } elseif ($p.row) {
@@ -2662,7 +2842,7 @@ switch ($Action) {
     "autoFitAll" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
         $range.Columns.AutoFit()
         $range.Rows.AutoFit()
@@ -2672,7 +2852,7 @@ switch ($Action) {
     "setNumberFormat" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         if ($p.format) { $range.NumberFormat = $p.format }
         Output-Json @{ success = $true; data = @{ range = $p.range; format = $p.format } }
@@ -2681,7 +2861,7 @@ switch ($Action) {
     "wrapText" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $wrap = if ($null -ne $p.wrap) { [bool]$p.wrap } else { $true }
         $range.WrapText = $wrap
@@ -2691,7 +2871,7 @@ switch ($Action) {
     "setPrintArea" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if ($p.range) { $sheet.PageSetup.PrintArea = $p.range } else { $sheet.PageSetup.PrintArea = "" }
         Output-Json @{ success = $true; data = @{ printArea = if ($p.range) { $p.range } else { "cleared" } } }
     }
@@ -2708,7 +2888,7 @@ switch ($Action) {
     "clearRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $clearType = if ($p.type) { $p.type } else { "all" }
         if ($clearType -eq "contents") { $range.ClearContents() }
@@ -2721,7 +2901,7 @@ switch ($Action) {
     "insertRows" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $startRow = if ($p.row) { [int]$p.row } elseif ($p.startRow) { [int]$p.startRow } else { $null }
         if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; return }
         $count = if ($p.count) { [int]$p.count } else { 1 }
@@ -2733,7 +2913,7 @@ switch ($Action) {
     "insertColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $col = if ($p.column) { $p.column } elseif ($p.startColumn) { $p.startColumn } else { $null }
         if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; return }
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
@@ -2747,7 +2927,7 @@ switch ($Action) {
     "deleteRows" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $startRow = if ($p.row) { [int]$p.row } elseif ($p.startRow) { [int]$p.startRow } else { $null }
         if ($null -eq $startRow) { Output-Json @{ success = $false; error = "row/startRow required" }; return }
         $count = if ($p.count) { [int]$p.count } else { 1 }
@@ -2759,7 +2939,7 @@ switch ($Action) {
     "deleteColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $col = if ($p.column) { $p.column } elseif ($p.startColumn) { $p.startColumn } else { $null }
         if ($null -eq $col) { Output-Json @{ success = $false; error = "column/startColumn required" }; return }
         if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
@@ -2773,7 +2953,7 @@ switch ($Action) {
     "hideRows" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $rows = if ($p.rows) { $p.rows } elseif ($p.row) { @($p.row) } else { @() }
         if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; return }
         foreach ($r in $rows) { $sheet.Range("${r}:${r}").Hidden = $true }
@@ -2783,7 +2963,7 @@ switch ($Action) {
     "hideColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cols = if ($p.columns) { $p.columns } elseif ($p.column) { @($p.column) } else { @() }
         if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; return }
         $hidden = @()
@@ -2799,7 +2979,7 @@ switch ($Action) {
     "showRows" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $rows = if ($p.rows) { $p.rows } elseif ($p.row) { @($p.row) } else { @() }
         if ($rows.Count -eq 0) { Output-Json @{ success = $false; error = "row/rows required" }; return }
         foreach ($r in $rows) { $sheet.Range("${r}:${r}").Hidden = $false }
@@ -2809,7 +2989,7 @@ switch ($Action) {
     "showColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cols = if ($p.columns) { $p.columns } elseif ($p.column) { @($p.column) } else { @() }
         if ($cols.Count -eq 0) { Output-Json @{ success = $false; error = "column/columns required" }; return }
         $shown = @()
@@ -2825,7 +3005,7 @@ switch ($Action) {
     "groupRows" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if (-not $p.startRow -or -not $p.endRow) { Output-Json @{ success = $false; error = "startRow/endRow required" }; return }
         $sheet.Range("$($p.startRow):$($p.endRow)").Group()
         Output-Json @{ success = $true; data = @{ grouped = "$($p.startRow):$($p.endRow)" } }
@@ -2834,7 +3014,7 @@ switch ($Action) {
     "groupColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if (-not $p.startColumn -or -not $p.endColumn) { Output-Json @{ success = $false; error = "startColumn/endColumn required" }; return }
         $startCol = $p.startColumn
         $endCol = $p.endColumn
@@ -2847,7 +3027,7 @@ switch ($Action) {
     "freezePanes" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         if ($p.cell) {
             $sheet.Range($p.cell).Select()
         } elseif ($p.row -and $p.column) {
@@ -2869,7 +3049,7 @@ switch ($Action) {
     "replaceInSheet" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $searchRange = if ($p.range) { $sheet.Range($p.range) } else { $sheet.UsedRange }
         $lookAt = if ($p.matchCase) { 1 } else { 2 }
         $replaced = $searchRange.Replace($p.searchText, $p.replaceText, $lookAt)
@@ -2879,7 +3059,7 @@ switch ($Action) {
     "copyRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $range.Copy()
         Output-Json @{ success = $true; data = @{ range = $p.range; message = "已复制到剪贴板" } }
@@ -2888,7 +3068,7 @@ switch ($Action) {
     "pasteRange" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $destRange = $sheet.Range($p.destination)
         if ($p.pasteType -eq "values") {
             $destRange.PasteSpecial(-4163)
@@ -2905,7 +3085,7 @@ switch ($Action) {
     "fillSeries" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $startCell = $range.Cells.Item(1, 1)
         $startCell.Value2 = if ($null -ne $p.startValue) { $p.startValue } else { 1 }
@@ -2920,7 +3100,7 @@ switch ($Action) {
     "transpose" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $sourceRange = $sheet.Range($p.sourceRange)
         $destCell = if ($p.destinationCell) { $p.destinationCell } elseif ($p.targetCell) { $p.targetCell } else { $null }
         if ($null -eq $destCell) { Output-Json @{ success = $false; error = "destinationCell/targetCell required" }; return }
@@ -2934,7 +3114,7 @@ switch ($Action) {
     "textToColumns" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $delimiter = if ($p.delimiter) { $p.delimiter } else { "," }
         $tab = $false; $semicolon = $false; $comma = $false; $space = $false; $other = $false; $otherChar = $null
@@ -2950,7 +3130,7 @@ switch ($Action) {
     "subtotal" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $funcMap = @{ sum = 9; count = 2; average = 1; max = 4; min = 5 }
         $func = $funcMap[$p.function]
@@ -2968,7 +3148,7 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $addr = $range.Address()
         $wb.Names.Add($p.name, "=" + $sheet.Name + "!" + $addr)
@@ -3000,7 +3180,7 @@ switch ($Action) {
     "addCellComment" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cell = $sheet.Range($p.cell)
         if ($cell.Comment) { $cell.Comment.Delete() }
         $cell.AddComment($p.text)
@@ -3011,7 +3191,7 @@ switch ($Action) {
     "deleteCellComment" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $cell = $sheet.Range($p.cell)
         if ($cell.Comment) { $cell.Comment.Delete() }
         Output-Json @{ success = $true; data = @{ cell = $p.cell } }
@@ -3020,7 +3200,7 @@ switch ($Action) {
     "getCellComments" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $comments = @()
         for ($i = 1; $i -le $sheet.Comments.Count; $i++) {
             $c = $sheet.Comments.Item($i)
@@ -3062,7 +3242,7 @@ switch ($Action) {
     "insertExcelImage" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $left = if ($null -ne $p.left) { $p.left } else { 100 }
         $top = if ($null -ne $p.top) { $p.top } else { 100 }
         $width = if ($null -ne $p.width) { $p.width } else { -1 }
@@ -3074,7 +3254,7 @@ switch ($Action) {
     "setHyperlink" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.cell)
         $address = if ($p.address) { $p.address } else { "" }
         $subAddress = if ($p.subAddress) { $p.subAddress } else { "" }
@@ -3087,7 +3267,7 @@ switch ($Action) {
     "lockCells" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $sheet = $excel.ActiveSheet
+        $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
         $locked = if ($null -ne $p.locked) { [bool]$p.locked } else { $true }
         $range.Locked = $locked
@@ -3127,6 +3307,18 @@ switch ($Action) {
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No workbook" }; return }
         $name = $wb.Name
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
+        # 未保存工作簿的护栏（第 3 轮补，照 Word 侧 closeDocument 的同一套设计答案）：
+        # 从未存过盘的工作簿 Close($true) 会弹「另存为」模态框，COM 是 STA ——
+        # 弹框会把桥通道卡死（实测卡 120 秒，后续全部调用超时）。
+        # 所以这里不猜、不硬关：明确报错让调用方先 save_as，或显式 saveChanges=false。
+        if ($saveChanges) {
+            $hasPath = $false
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$wb.FullName) } catch {}
+            if (-not $hasPath) {
+                Output-Json @{ success = $false; error = "[勿重试·先另存为] 工作簿「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道（120 秒）。请先另存为（wps_excel_save_as），或显式传 save=false 放弃保存" }
+                return
+            }
+        }
         $wb.Close($saveChanges)
         Output-Json @{ success = $true; data = @{ closed = $name } }
     }
@@ -3998,7 +4190,19 @@ switch ($Action) {
         $pres = if ($p.name) { $ppt.Presentations.Item($p.name) } else { $ppt.ActivePresentation }
         if ($null -eq $pres) { Output-Json @{ success = $false; error = "No presentation" }; return }
         $name = $pres.Name
-        $pres.Close()
+        # 第 3 轮修：原来 $pres.Close() 不带参数，TS 传的 save 被整个丢掉 ——
+        # 既"没保存就关了"，未保存文稿还会弹「另存为」卡死通道。与 closeDocument /
+        # closeWorkbook 同一套设计答案：读 saveChanges，未保存 + 要求保存就明确报错。
+        $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
+        if ($saveChanges) {
+            $hasPath = $false
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$pres.FullName) } catch {}
+            if (-not $hasPath) {
+                Output-Json @{ success = $false; error = "[勿重试·先另存为] 演示文稿「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道（120 秒）。请先另存为（wps_ppt_save_as），或显式传 save=false 放弃保存" }
+                return
+            }
+        }
+        $pres.Close($saveChanges)
         Output-Json @{ success = $true; data = @{ closed = $name } }
     }
 
@@ -4428,6 +4632,27 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ name = $shape.Name } }
     }
 
+    # 第 3 轮补：TS 侧 wps_ppt_set_shape_fill 早就在调这个动作，但 PS 里没有这个 case，
+    # 于是每次都报 Unknown action（表现为"工具坏了"而不是"参数丢了"）。
+    # 写法照 setShapeStyle 的 fillColor 分支，只是参数名叫 color（schema 承诺的就是 color）。
+    "setShapeFill" {
+        $ppt = Get-WpsPpt
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
+        $pres = Get-TargetPres $ppt $p
+        $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
+        $slide = $pres.Slides.Item($slideIndex)
+        $shape = $slide.Shapes.Item($(if ($p.name) { $p.name } else { $p.shapeIndex }))
+        if ($p.color) {
+            $fillColor = Convert-HexColorToRgbInt([string]$p.color)
+            if ($null -ne $fillColor) {
+                $shape.Fill.Visible = $true
+                $shape.Fill.Solid()
+                $shape.Fill.ForeColor.RGB = $fillColor
+            }
+        }
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; color = $p.color } }
+    }
+
     "setShapeText" {
         $ppt = Get-WpsPpt
         if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
@@ -4561,7 +4786,19 @@ switch ($Action) {
         $width = if ($p.width) { $p.width } else { 400 }
         $height = if ($p.height) { $p.height } else { 200 }
         $table = $slide.Shapes.AddTable($rows, $cols, $left, $top, $width, $height)
-        Output-Json @{ success = $true; data = @{ name = $table.Name; rows = $rows; cols = $cols } }
+        # 第 3 轮补 tableIndex：原来只回 name，TS 侧读 tableIndex 于是永远打印
+        # "表格索引: undefined"。而 set_table_cell / set_table_row_style / get_table_cell
+        # 全都按"第 N 个表格"定位 —— 不给序号，调用方建完表没法接着操作。
+        # 算法与 setPptTableCellStyle 的定位算法一致：数本页 HasTable 的形状，新表排第几就是几。
+        $tableIndex = 0
+        for ($i = 1; $i -le $slide.Shapes.Count; $i++) {
+            $s = $slide.Shapes.Item($i)
+            if ($s.HasTable) {
+                $tableIndex++
+                if ($s.Name -eq $table.Name) { break }
+            }
+        }
+        Output-Json @{ success = $true; data = @{ name = $table.Name; tableIndex = $tableIndex; rows = $rows; cols = $cols } }
     }
 
     "setPptTableCell" {
@@ -4695,18 +4932,38 @@ switch ($Action) {
         if ($null -eq $shape -or -not $shape.HasTable) { Output-Json @{ success = $false; error = "Table not found" }; return }
         $rowIndex = if ($p.row) { $p.row } else { 1 }
         $row = $shape.Table.Rows.Item($rowIndex)
+        # 参数形状归一化（第 3 轮修"假成功"）：
+        # TS 侧 schema 承诺 style:{backgroundColor,fontColor,fontSize,bold,italic,fontName,alignment,height}，
+        # 而历史裸调用（wps_execute_method 直穿）用的是扁平 $p.backgroundColor。
+        # 两个形状都接：扁平优先（显式传来的），嵌套补位。只认一个，另一半调用方就是
+        # "返回 success 但一个格子都没变"—— 那正是本轮要消灭的假成功。
+        $st = @{}
+        if ($p.style) {
+            foreach ($k in $p.style.PSObject.Properties.Name) { $st[$k] = $p.style.$k }
+        }
+        foreach ($k in @('backgroundColor', 'fontColor', 'fontSize', 'bold', 'italic', 'fontName', 'alignment', 'height')) {
+            if ($p.PSObject.Properties.Name -contains $k -and -not $st.ContainsKey($k)) { $st[$k] = $p.$k }
+        }
+        if ($null -ne $st.height) { $row.Height = $st.height }
         for ($c = 1; $c -le $row.Cells.Count; $c++) {
             $cellShape = $row.Cells.Item($c).Shape
-            if ($p.backgroundColor) {
-                $bg = Convert-HexColorToRgbInt([string]$p.backgroundColor)
+            if ($st.backgroundColor) {
+                $bg = Convert-HexColorToRgbInt([string]$st.backgroundColor)
                 if ($null -ne $bg) { $cellShape.Fill.Visible = $true; $cellShape.Fill.Solid(); $cellShape.Fill.ForeColor.RGB = $bg }
             }
-            if ($p.fontColor) {
-                $fc = Convert-HexColorToRgbInt([string]$p.fontColor)
+            if ($st.fontColor) {
+                $fc = Convert-HexColorToRgbInt([string]$st.fontColor)
                 if ($null -ne $fc) { $cellShape.TextFrame.TextRange.Font.Color.RGB = $fc }
             }
-            if ($p.fontSize) { $cellShape.TextFrame.TextRange.Font.Size = $p.fontSize }
-            if ($null -ne $p.bold) { $cellShape.TextFrame.TextRange.Font.Bold = $p.bold }
+            if ($st.fontSize) { $cellShape.TextFrame.TextRange.Font.Size = $st.fontSize }
+            if ($null -ne $st.bold) { $cellShape.TextFrame.TextRange.Font.Bold = $st.bold }
+            if ($null -ne $st.italic) { $cellShape.TextFrame.TextRange.Font.Italic = $st.italic }
+            if ($st.fontName) { $cellShape.TextFrame.TextRange.Font.Name = $st.fontName }
+            if ($st.alignment) {
+                $alignMap = @{ left = 1; center = 2; right = 3 }
+                $al = $alignMap[[string]$st.alignment]
+                if ($null -ne $al) { $cellShape.TextFrame.TextRange.ParagraphFormat.Alignment = $al }
+            }
         }
         Output-Json @{ success = $true; data = @{ row = $rowIndex } }
     }
@@ -4894,8 +5151,29 @@ switch ($Action) {
         $top = if ($p.top) { $p.top } else { 100 }
         $width = if ($p.width) { $p.width } else { 400 }
         $height = if ($p.height) { $p.height } else { 300 }
-        $shape = $slide.Shapes.AddChart($p.type, $left, $top, $width, $height)
-        Output-Json @{ success = $true; data = @{ name = $shape.Name } }
+        # AddChart 的第一个参数是 xlChartType 枚举（数字），不是类型名字符串。
+        # 之前这里直接把 $p.type 丢进去：TS 传 chartType 时它是 $null（靠 COM 兜默认值蒙混过去），
+        # 入口归一化把 chartType 映射成 type 之后，"bar" 这个字符串就撞上来了 ——
+        # 报"无法将类型 string 的 bar 值转换为类型"。根因是这张枚举表从来没写过。
+        # 现在显式翻译：名字 → 数字；已经是数字的照用；认不出来的退回柱状图（Excel 侧同一套表，见 addChart）。
+        $chartTypeEnum = @{
+            column = 51; column_clustered = 51; column_stacked = 52
+            bar = 57; bar_clustered = 57; bar_stacked = 58
+            line = 4; line_markers = 65; line_stacked = 63
+            pie = 5; doughnut = -4120
+            area = 1; area_stacked = 76
+            scatter = -4169; bubble = 15; radar = -4151
+        }
+        $rawType = if ($null -ne $p.type) { $p.type } elseif ($null -ne $p.chartType) { $p.chartType } else { $null }
+        $chartType = if ($rawType -is [int] -or $rawType -is [long] -or $rawType -is [double]) {
+            [int]$rawType
+        } elseif ($null -ne $rawType -and $chartTypeEnum.ContainsKey([string]$rawType)) {
+            $chartTypeEnum[[string]$rawType]
+        } else {
+            51
+        }
+        $shape = $slide.Shapes.AddChart($chartType, $left, $top, $width, $height)
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; chartType = $chartType } }
     }
 
     "addAnimation" {
@@ -5926,10 +6204,45 @@ switch ($Action) {
         $chart.ChartData.Activate()
         $dataSheet = $chart.ChartData.Workbook.Worksheets.Item(1)
         if ($p.data) {
-            for ($r = 0; $r -lt $p.data.Count; $r++) {
-                $rowData = $p.data[$r]
+            # 参数形状归一化（第 3 轮修"假成功"）：
+            # TS 侧 schema 承诺 {categories:[...], series:[{name, values:[...]}]}（文档是给用户看的承诺），
+            # 历史裸调用（wps_execute_method 直穿）传的是二维数组。两个形状都接。
+            # 第 4 个坑：数字从 JSON 过来是 Int32，直接塞 Value2 会报 Int32→String 类型错 ——
+            # 数值统一转 [double]，字符串才按字符串写。
+            $rows = @()
+            if ($p.data -is [System.Array]) {
+                # 二维数组（历史形状）：原样逐格写
+                foreach ($r in $p.data) { $rows += ,@($r) }
+            } elseif ($p.data.PSObject.Properties.Name -contains 'categories' -or $p.data.PSObject.Properties.Name -contains 'series') {
+                # 文档承诺的形状：摊成"表头行 + 每类别一行"
+                $cats = @()
+                if ($p.data.categories) { $cats = @($p.data.categories) }
+                $seriesList = @()
+                if ($p.data.series) { $seriesList = @($p.data.series) }
+                $header = @('类别')
+                foreach ($s in $seriesList) { $header += [string]$s.name }
+                $rows += ,@($header)
+                for ($i = 0; $i -lt $cats.Count; $i++) {
+                    $line = @([string]$cats[$i])
+                    foreach ($s in $seriesList) {
+                        $vals = @($s.values)
+                        $v = if ($i -lt $vals.Count) { $vals[$i] } else { $null }
+                        $line += $v
+                    }
+                    $rows += ,$line
+                }
+            }
+            for ($r = 0; $r -lt $rows.Count; $r++) {
+                $rowData = $rows[$r]
                 for ($c = 0; $c -lt $rowData.Count; $c++) {
-                    $dataSheet.Cells.Item($r + 1, $c + 1).Value2 = $rowData[$c]
+                    $cell = $dataSheet.Cells.Item($r + 1, $c + 1)
+                    $v = $rowData[$c]
+                    if ($null -eq $v) { continue }
+                    if ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) {
+                        $cell.Value2 = [double]$v
+                    } else {
+                        $cell.Value2 = [string]$v
+                    }
                 }
             }
         }
@@ -5944,14 +6257,61 @@ switch ($Action) {
         $slide = $pres.Slides.Item($slideIndex)
         $shape = $slide.Shapes.Item($(if ($p.chartName) { $p.chartName } else { $p.chartIndex }))
         $chart = $shape.Chart
-        if ($p.title) {
-            $chart.HasTitle = $true
-            $chart.ChartTitle.Text = $p.title
+        # 参数形状归一化（第 3 轮修"假成功"）：
+        # TS 侧 schema 承诺 style:{title,showLegend,legendPosition,showDataLabels,fontSize}，
+        # 历史裸调用用扁平 $p.title / $p.hasLegend。两个都接，扁平优先。
+        # 注意 schema 写的是 showLegend，PS 老代码读的是 hasLegend —— 两个键都认。
+        $st = @{}
+        if ($p.style) {
+            foreach ($k in $p.style.PSObject.Properties.Name) { $st[$k] = $p.style.$k }
         }
-        if ($null -ne $p.hasLegend) {
-            $chart.HasLegend = $p.hasLegend
+        foreach ($k in @('title', 'hasLegend', 'showLegend', 'legendPosition', 'showDataLabels', 'fontSize', 'colorScheme')) {
+            if ($p.PSObject.Properties.Name -contains $k -and -not $st.ContainsKey($k)) { $st[$k] = $p.$k }
         }
-        Output-Json @{ success = $true; data = @{ chartName = $shape.Name } }
+        $applied = @()
+        if ($st.title) {
+            try {
+                $chart.HasTitle = $true
+                $chart.ChartTitle.Text = [string]$st.title
+                $applied += 'title'
+            } catch { }
+        }
+        $legendFlag = $null
+        if ($null -ne $st.showLegend) { $legendFlag = $st.showLegend }
+        elseif ($null -ne $st.hasLegend) { $legendFlag = $st.hasLegend }
+        if ($null -ne $legendFlag) {
+            try {
+                $chart.HasLegend = [bool]$legendFlag
+                $applied += 'legend'
+            } catch { }
+        }
+        if ($st.legendPosition) {
+            # 图例位置枚举与 Excel 侧 updateChart（wps-com.ps1 的 updateChart case）保持一致
+            $legMap = @{ bottom = -4107; top = -4160; left = -4131; right = -4152 }
+            $lp = $legMap[[string]$st.legendPosition]
+            if ($null -ne $lp) {
+                try {
+                    $chart.Legend.Position = $lp
+                    $applied += 'legendPosition'
+                } catch { }
+            }
+        }
+        if ($null -ne $st.showDataLabels) {
+            # 只开不关：关标签要逐系列 Delete，失败率高；调用方要关就别传这个键
+            if ([bool]$st.showDataLabels) {
+                try {
+                    $chart.ApplyDataLabels()
+                    $applied += 'dataLabels'
+                } catch { }
+            }
+        }
+        if ($st.fontSize) {
+            try {
+                $chart.ChartArea.Font.Size = $st.fontSize
+                $applied += 'fontSize'
+            } catch { }
+        }
+        Output-Json @{ success = $true; data = @{ chartName = $shape.Name; applied = $applied } }
     }
 
     "removeAnimation" {

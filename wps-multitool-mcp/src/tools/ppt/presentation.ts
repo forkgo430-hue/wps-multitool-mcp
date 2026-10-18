@@ -214,7 +214,9 @@ export const closePresentationHandler: ToolHandler = async (
       'closePresentation',
       {
         name,
-        save: save !== false,
+        // 线上参数名是 saveChanges（PS 侧 closePresentation case 的读法）。曾在这里发 save，
+        // 而 PS 的 Close() 压根不接参数 → save 被整个丢掉，未保存文稿直接关还会弹框卡死通道。
+        saveChanges: save !== false,
       },
       WpsAppType.PRESENTATION
     );

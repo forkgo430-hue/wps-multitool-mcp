@@ -147,7 +147,11 @@ export const switchWorkbookHandler: ToolHandler = async (
  */
 export const closeWorkbookDefinition: ToolDefinition = {
   name: 'wps_excel_close_workbook',
-  description: '关闭指定的Excel工作簿，可选是否保存。',
+  description:
+    '关闭指定的Excel工作簿，可选是否保存。\n\n' +
+    '**未保存怎么办（重要）**：从未保存过的工作簿，要求保存时直接关会弹「另存为」对话框，' +
+    '而对话框会把自动化通道卡死 120 秒。所以：从未保存的工作簿必须先 wps_excel_save_as，' +
+    '或者显式 save=false 放弃保存（改动全部丢失）。存过盘的工作簿按 save 参数正常关。',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
@@ -158,7 +162,7 @@ export const closeWorkbookDefinition: ToolDefinition = {
       },
       save: {
         type: 'boolean',
-        description: '是否保存，默认true',
+        description: '是否保存，默认true（从未保存过的工作簿会要求先另存为）',
       },
     },
     required: [],
@@ -170,9 +174,11 @@ export const closeWorkbookHandler: ToolHandler = async (
 ): Promise<ToolCallResult> => {
   const { name, save } = args as { name?: string; save?: boolean };
   try {
+    // 线上参数名是 saveChanges（与 PS 侧 closeWorkbook case 的读法、Word 侧 closeDocument 一致）。
+    // 曾经这里发的是 save，PS 读 saveChanges → save 永远为 true → 关未保存工作簿弹框卡死通道。
     const response = await wpsClient.executeMethod<{ message: string }>(
       'closeWorkbook',
-      { name, save: save !== false },
+      { name, saveChanges: save !== false },
       WpsAppType.SPREADSHEET
     );
     if (!response.success) {

@@ -17,6 +17,10 @@
  *   3) 副作用不在 COM 里（快照系列：只调只读的 getActiveDocumentState，
  *      真正写盘的是 Node 侧的 fs 复制 —— 按动作名推断会得出"只读"，是错的）
  * 这三类都不该靠工具名猜。
+ *
+ * 第 3 轮新增一条（第 4 类）：动作名【带点】，观测器的合法标识符判定直接把它归成 unresolved。
+ *   wps_ppt_unify_font → slide.unifyFont。
+ * 注解值是人工判定的，写在 tool-annotations.ts 的 EXTRA_ANNOTATIONS 里（改那边记得同步这里）。
  */
 module.exports = {
   EXTRA_ANNOTATIONS_KEYS: [
@@ -25,5 +29,6 @@ module.exports = {
     'wps_common_snapshot_create',
     'wps_common_snapshot_restore',
     'wps_common_snapshot_list',
+    'wps_ppt_unify_font',
   ],
 };

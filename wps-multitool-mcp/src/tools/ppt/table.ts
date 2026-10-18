@@ -85,7 +85,10 @@ export const insertPptTableHandler: ToolHandler = async (
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
-      tableIndex: number;
+      // PS 侧回 name 与本页表格序号 tableIndex（第 3 轮补的 tableIndex）。
+      // 历史 TS 只读 tableIndex，而 PS 当时没回这个键 → 永远打印"表格索引: undefined"。
+      name?: string;
+      tableIndex?: number;
     }>(
       'insertPptTable',
       { slideIndex, rows, cols, left, top },
@@ -93,13 +96,14 @@ export const insertPptTableHandler: ToolHandler = async (
     );
 
     if (response.success && response.data) {
+      const idx = response.data.tableIndex ?? '?';
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `表格插入成功！\n幻灯片: 第 ${slideIndex} 页\n规格: ${rows} 行 × ${cols} 列\n表格索引: ${response.data.tableIndex}`,
+            text: `表格插入成功！\n幻灯片: 第 ${slideIndex} 页\n规格: ${rows} 行 × ${cols} 列\n表格索引: ${idx}${response.data.name ? `\n对象名: ${response.data.name}` : ''}`,
           },
         ],
       };
@@ -265,7 +269,10 @@ export const getPptTableCellHandler: ToolHandler = async (
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
-      text: string;
+      // PS 侧 getPptTableCell 的 Output-Json 给的是 value（单元格的值），
+      // 历史 TS 读的是 text → 永远 undefined，读回形同虚设。两个键都接，value 优先。
+      value?: string;
+      text?: string;
     }>(
       'getPptTableCell',
       { slideIndex, tableIndex, row, col },
@@ -273,13 +280,14 @@ export const getPptTableCellHandler: ToolHandler = async (
     );
 
     if (response.success && response.data) {
+      const cellText = response.data.value ?? response.data.text ?? '';
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `单元格内容获取成功！\n幻灯片: 第 ${slideIndex} 页\n表格: 第 ${tableIndex} 个\n位置: 第 ${row} 行第 ${col} 列\n内容: ${response.data.text}`,
+            text: `单元格内容获取成功！\n幻灯片: 第 ${slideIndex} 页\n表格: 第 ${tableIndex} 个\n位置: 第 ${row} 行第 ${col} 列\n内容: ${cellText}`,
           },
         ],
       };

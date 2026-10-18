@@ -28,7 +28,10 @@ const path = require('path');
 
 // 独立管道：桥是常驻的，共享管道会拿到旧脚本/旧状态（与 snapshot-verify 同一招）
 // -b2 后缀：第 2 轮按域扩展后可能与别处并发跑基础档，错开管道名免得互等
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-ppt-probe-b2';
+// 每次跑都用【全新】的管道名：固定名字会连上上一轮还活着的桥，而那个桥的内存里是
+// 改过的旧 wps-com.ps1 —— 症状是"我明明改了 ps1，脚本行为却没变"，白排查半小时。
+//（这个坑本轮踩过：修完 AddChart 枚举转换重跑，报错一字不变。）
+process.env.WPS_BRIDGE_PIPE = `\\\\.\\pipe\\wps-multitool-mcp-ppt-probe-${Date.now()}`;
 process.env.WPS_BRIDGE_EPHEMERAL = '1';
 process.env.WPS_BRIDGE_IDLE_MS = '120000';
 // PPT 首次被 COM 拉起比 Word 慢，给足时间
@@ -54,14 +57,9 @@ let skipped = false;
  *   - 本清单里的工具某天通过了 → 打印"请移出清单并把 manifest 升 live"，退出码 0
  */
 const EXPECTED_FAILURES = [
-  // PS 动作根本不存在（TS 调 setShapeFill，wps-com.ps1 里没有）
-  'wps_ppt_set_shape_fill',
-  // TS 传嵌套 style{}，PS 读扁平 $p.backgroundColor 等 → 假成功
-  'wps_ppt_set_table_row_style',
-  // 同上：TS 传 style{title}，PS 读扁平 $p.title
-  'wps_ppt_set_ppt_chart_style',
-  // schema 承诺 {categories,series}，PS 按二维数组逐格写 → 文档形状静默不生效
-  'wps_ppt_set_ppt_chart_data',
+  // 目前为空。上一轮的 4 个假成功（set_shape_fill 动作缺失 / set_table_row_style 与
+  // set_ppt_chart_style 传嵌套 style / set_ppt_chart_data 形状不符）已于 2026-10-18 修复并真机复验 18/18。
+  // 机制留着：以后再冒出已知坏工具，加进来，别让 CI 长期红着 —— 红了就没人看真回归了。
 ];
 const results = [];
 const check = (tool, ok, detail = '') => {

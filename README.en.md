@@ -78,7 +78,7 @@ on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MC
 - **296 tools** (8 built-in + 288 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
 - Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 113
 - Annotations (measured): read-only 51 / destructive 34 / non-idempotent 110 — coverage 296/296
-- Live-verified 197/296 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
+- Live-verified 201/296 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
 <!-- AUTO:tool-stats:end -->
 
 ## Architecture

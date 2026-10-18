@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**296 个工具**（8 内置 + 288 专业/组工具）· 默认列出 40 个 · 注解覆盖 296/296 · 真机验证 197/296
+**296 个工具**（8 内置 + 288 专业/组工具）· 默认列出 40 个 · 注解覆盖 296/296 · 真机验证 201/296
 
 | 标记 | 含义 |
 |---|---|
@@ -300,12 +300,12 @@
 | `wps_ppt_set_font_color` |  | — | static | 设置幻灯片中指定形状的文字颜色。<br><sub>别名：设置字体颜色 / 设定字体颜色 / 字体</sub> |
 | `wps_ppt_set_image_style` |  | — | static | 设置幻灯片中指定图片的样式。<br><sub>别名：设置图片样式 / 设定图片样式 / 图片</sub> |
 | `wps_ppt_set_master_background` |  | — | static | 设置母版背景样式。<br><sub>别名：母版背景 / 设置母版背景 / 设定母版背景</sub> |
-| `wps_ppt_set_ppt_chart_data` |  | — | static | 更新幻灯片中已有图表的数据。<br><sub>别名：改图表数据 / 设置图表数据 / 设定图表数据</sub> |
-| `wps_ppt_set_ppt_chart_style` |  | — | static | 设置幻灯片中图表的样式属性。<br><sub>别名：设置图表样式 / 设定图表样式 / 图表</sub> |
+| `wps_ppt_set_ppt_chart_data` |  | — | live | 更新幻灯片中已有图表的数据。<br><sub>别名：改图表数据 / 设置图表数据 / 设定图表数据</sub> |
+| `wps_ppt_set_ppt_chart_style` |  | — | live | 设置幻灯片中图表的样式属性。<br><sub>别名：设置图表样式 / 设定图表样式 / 图表</sub> |
 | `wps_ppt_set_ppt_date_time` |  | — | static | 设置演示文稿日期时间显示。<br><sub>别名：设置日期时间 / 设定日期时间 / 日期</sub> |
 | `wps_ppt_set_ppt_footer` |  | — | static | 设置演示文稿页脚文本。<br><sub>别名：设置页脚 / 设定页脚 / 页脚</sub> |
 | `wps_ppt_set_shape_border` |  | — | static | 设置幻灯片中指定形状的边框样式。<br><sub>别名：设置形状边框 / 设定形状边框 / 形状</sub> |
-| `wps_ppt_set_shape_fill` |  | — | static | 设置幻灯片中指定形状的填充颜色。<br><sub>别名：设置形状填充 / 设定形状填充 / 形状</sub> |
+| `wps_ppt_set_shape_fill` |  | — | live | 设置幻灯片中指定形状的填充颜色。<br><sub>别名：设置形状填充 / 设定形状填充 / 形状</sub> |
 | `wps_ppt_set_shape_gradient` |  | — | static | 设置幻灯片中指定形状的渐变填充效果。<br><sub>别名：设置形状渐变 / 设定形状渐变 / 形状</sub> |
 | `wps_ppt_set_shape_position` |  | — | static | 设置幻灯片中指定形状的位置和大小。<br><sub>别名：设置形状位置 / 设定形状位置 / 形状</sub> |
 | `wps_ppt_set_shape_shadow` |  | — | static | 设置幻灯片中指定形状的阴影效果。<br><sub>别名：设置形状阴影 / 设定形状阴影 / 形状</sub> |
@@ -323,7 +323,7 @@
 | `wps_ppt_set_slide_transition` |  | — | static | 设置幻灯片的页面切换效果。<br><sub>别名：当前页切换效果 / 设置幻灯片切换效果 / 设定幻灯片切换效果</sub> |
 | `wps_ppt_set_table_cell` |  | — | live | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
 | `wps_ppt_set_table_cell_style` |  | — | static | 设置PPT表格中指定单元格的样式。<br><sub>别名：设置表格单元格样式 / 设定表格单元格样式 / 表格</sub> |
-| `wps_ppt_set_table_row_style` |  | — | static | 设置PPT表格中指定行的样式。<br><sub>别名：设置表格行样式 / 设定表格行样式 / 表格</sub> |
+| `wps_ppt_set_table_row_style` |  | — | live | 设置PPT表格中指定行的样式。<br><sub>别名：设置表格行样式 / 设定表格行样式 / 表格</sub> |
 | `wps_ppt_set_table_style` |  | — | static | 设置PPT表格的整体样式。<br><sub>别名：设置表格样式 / 设定表格样式 / 表格</sub> |
 | `wps_ppt_set_textbox_style` |  | — | static | 设置文本框样式（字体大小、颜色、粗体等）。<br><sub>别名：设置文本框样式 / 设定文本框样式 / 文本框</sub> |
 | `wps_ppt_set_textbox_text` |  | — | static | 设置指定文本框的文本内容。<br><sub>别名：设置文本框文本 / 设定文本框文本 / 文本框</sub> |

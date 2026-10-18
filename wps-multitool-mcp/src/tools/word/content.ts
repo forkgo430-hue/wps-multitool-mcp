@@ -215,7 +215,10 @@ export const findReplaceHandler: ToolHandler = async (
       message: string;
       findText: string;
       replaceText: string;
-      count: number;
+      // PS 的 Find.Execute 返回的是【布尔】（替换有没有发生），不是次数。
+      // 历史代码读 result.count，于是每次都打印"替换了 undefined 处"。
+      replaced?: boolean;
+      count?: number;
     }>(
       'findReplace',
       {
@@ -231,9 +234,12 @@ export const findReplaceHandler: ToolHandler = async (
 
     if (response.success && response.data) {
       const result = response.data;
+      // PS 只回布尔（Find.Execute 的返回值），没有次数。
+      // 所以"替换了几处"改成如实说"是否替换成功"—— 宁可少说，不能编一个数字。
+      const didReplace = result.replaced === true;
 
       if (isReplaceMode) {
-        if (result.count === 0) {
+        if (!didReplace) {
           return {
             id: uuidv4(),
             success: true,
@@ -251,7 +257,7 @@ export const findReplaceHandler: ToolHandler = async (
           content: [
             {
               type: 'text',
-              text: `替换完成！\n查找: "${find_text}"\n替换为: "${replace_text}"\n替换了 ${result.count} 处`,
+              text: `替换完成！\n查找: "${find_text}"\n替换为: "${replace_text}"\n（COM 只返回"是否替换成功"，不返回次数）`,
             },
           ],
         };
@@ -262,7 +268,7 @@ export const findReplaceHandler: ToolHandler = async (
           content: [
             {
               type: 'text',
-              text: `查找完成！\n"${find_text}" 在文档中出现了 ${result.count} 次`,
+              text: `查找完成！\n"${find_text}" ${didReplace ? '存在并已执行替换' : '未找到可替换的内容'}`,
             },
           ],
         };

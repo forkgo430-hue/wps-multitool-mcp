@@ -202,12 +202,12 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_set_font_color": "static",
   "wps_ppt_set_image_style": "static",
   "wps_ppt_set_master_background": "static",
-  "wps_ppt_set_ppt_chart_data": "static",
-  "wps_ppt_set_ppt_chart_style": "static",
+  "wps_ppt_set_ppt_chart_data": "live",
+  "wps_ppt_set_ppt_chart_style": "live",
   "wps_ppt_set_ppt_date_time": "static",
   "wps_ppt_set_ppt_footer": "static",
   "wps_ppt_set_shape_border": "static",
-  "wps_ppt_set_shape_fill": "static",
+  "wps_ppt_set_shape_fill": "live",
   "wps_ppt_set_shape_gradient": "static",
   "wps_ppt_set_shape_position": "static",
   "wps_ppt_set_shape_shadow": "static",
@@ -226,7 +226,7 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_set_slide_transition": "static",
   "wps_ppt_set_table_cell": "live",
   "wps_ppt_set_table_cell_style": "static",
-  "wps_ppt_set_table_row_style": "static",
+  "wps_ppt_set_table_row_style": "live",
   "wps_ppt_set_table_style": "static",
   "wps_ppt_set_textbox_style": "static",
   "wps_ppt_set_textbox_text": "static",
@@ -309,4 +309,4 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
 };
 
 /** 生成时的总量，供自检/文档使用（别手写这些数字） */
-export const VERIFICATION_TOTALS = { live: 197, static: 99, total: 296 } as const;
+export const VERIFICATION_TOTALS = { live: 201, static: 95, total: 296 } as const;

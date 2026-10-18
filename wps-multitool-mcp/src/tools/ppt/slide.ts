@@ -326,7 +326,11 @@ export const unifyFontHandler: ToolHandler = async (
       count: number;
       slideCount: number;
     }>(
-      'unifyFont',
+      // 调 slide.unifyFont 而不是 unifyFont（第 3 轮修）：
+      // PS 里 unifyFont 这个 case 会遍历【所有页、所有文本框】，压根不读
+      // slideIndex / includeTitle / includeBody —— 工具描述承诺的三个开关全是摆设。
+      // 认这三个参数的是另一个 case：slide.unifyFont。
+      'slide.unifyFont',
       {
         fontName: font_name,
         slideIndex: slide_index,
