@@ -35,6 +35,14 @@ jobs:
         working-directory: wps-multitool-mcp
         run: npm run build
 
+      - name: 动作路由表与 wps-com.ps1 一致
+        working-directory: wps-multitool-mcp
+        run: |
+          node scripts/gen-action-routes.js
+          git diff --exit-code -- src/client/action-routes.generated.ts
+        # 补上这个洞：改了 wps-com.ps1 忘了重跑路由表，之前全部门禁照绿。
+        # 后果是静默的——没传 appType 的调用会回落到 common 进程，动作在别处执行或直接 Unknown action。
+
       - name: 注解映射表与注册表一致性
         working-directory: wps-multitool-mcp
         run: |
