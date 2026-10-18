@@ -34,7 +34,16 @@
     "第 5 轮补充：允许多个旧名指向同一个规范名 —— 那是【族合并】留下的（background 6→1：",
     "set_slide_background / set_background_color / set_background_image / set_background_gradient 全指向 set_background）。",
     "合并族里唯一没法走别名的是 wps_ppt_set_master_background：别名不能注入 target='master'，",
-    "靠别名过来会变成改单页背景（静默改错地方），所以它的旧名是直接下线、能力留在新工具的 target:'master'。"
+    "靠别名过来会变成改单页背景（静默改错地方），所以它的旧名是直接下线、能力留在新工具的 target:'master'。",
+    "",
+    "第 8 轮补充：value 除了字符串，还可以写成对象，给别名带上【参数映射】：",
+    "  { to, rename: {旧参数名: 新参数名}, set: {固定值} }",
+    "为什么需要：族合并里最容易被忽略的失效方式是【名字换了但参数没换】——",
+    "旧调用传 preset，新工具必填 effect，光改名字会让旧名直接报 Missing required parameter；",
+    "更糟的是 set_animation_order 的 newOrder → order 这种改名，参数被静默忽略后工具会按默认值乱改。",
+    "rename 在调用方没给新键时才搬（不覆盖规范名自己收的参数），set 是【缺了才补】（调用方显式给了就听调用方的）。",
+    "合并时必须写 set 的场景：族里每个旧工具的\"默认值\"不同 —— preset 固定 category='entrance'、",
+    "emphasis 固定 category='emphasis'、order 固定 op='reorder'，少了这一步 3 个旧名会打同一个动作的不同分支。"
   ],
   "aliases": {
     "wps_common_ping": "wps_check_connection",
@@ -54,6 +63,37 @@
     "wps_ppt_set_slide_background": "wps_ppt_set_background",
     "wps_ppt_set_background_color": "wps_ppt_set_background",
     "wps_ppt_set_background_image": "wps_ppt_set_background",
-    "wps_ppt_set_background_gradient": "wps_ppt_set_background"
+    "wps_ppt_set_background_gradient": "wps_ppt_set_background",
+
+    "wps_ppt_add_animation": {
+      "to": "wps_ppt_set_animation",
+      "set": { "op": "add", "category": "entrance" }
+    },
+    "wps_ppt_add_animation_preset": {
+      "to": "wps_ppt_set_animation",
+      "rename": { "preset": "effect" },
+      "set": { "op": "add", "category": "entrance" }
+    },
+    "wps_ppt_add_emphasis_animation": {
+      "to": "wps_ppt_set_animation",
+      "set": { "op": "add", "category": "emphasis" }
+    },
+    "wps_ppt_set_animation_order": {
+      "to": "wps_ppt_set_animation",
+      "rename": { "newOrder": "order" },
+      "set": { "op": "reorder" }
+    },
+    "wps_ppt_set_slide_transition": {
+      "to": "wps_ppt_set_transition",
+      "set": { "target": "slide" }
+    },
+    "wps_ppt_apply_transition_to_all": {
+      "to": "wps_ppt_set_transition",
+      "set": { "target": "all" }
+    },
+    "wps_ppt_remove_slide_transition": {
+      "to": "wps_ppt_set_transition",
+      "set": { "target": "slide", "effect": "none" }
+    }
   }
 }

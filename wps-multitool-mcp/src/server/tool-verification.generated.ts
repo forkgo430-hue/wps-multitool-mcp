@@ -8,7 +8,7 @@
  */
 export type ToolVerification = 'live' | 'static';
 
-/** 每个注册工具的验证状态（覆盖 291/291） */
+/** 每个注册工具的验证状态（覆盖 284/284） */
 export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_cache_data": "live",
   "wps_check_connection": "live",
@@ -124,9 +124,6 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_list_cache": "live",
   "wps_list_tool_groups": "live",
   "wps_load_tool_group": "live",
-  "wps_ppt_add_animation": "static",
-  "wps_ppt_add_animation_preset": "static",
-  "wps_ppt_add_emphasis_animation": "static",
   "wps_ppt_add_master_element": "static",
   "wps_ppt_add_page_indicator": "static",
   "wps_ppt_add_ppt_hyperlink": "static",
@@ -138,7 +135,6 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_align_objects": "live",
   "wps_ppt_align_shapes": "static",
   "wps_ppt_apply_color_scheme": "static",
-  "wps_ppt_apply_transition_to_all": "static",
   "wps_ppt_auto_beautify_slide": "static",
   "wps_ppt_auto_layout": "static",
   "wps_ppt_beautify": "static",
@@ -186,7 +182,6 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_open_presentation": "static",
   "wps_ppt_remove_animation": "static",
   "wps_ppt_remove_ppt_hyperlink": "static",
-  "wps_ppt_remove_slide_transition": "static",
   "wps_ppt_replace_ppt_image": "static",
   "wps_ppt_replace_ppt_text": "static",
   "wps_ppt_set_3d_depth": "static",
@@ -194,7 +189,6 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_set_3d_rotation": "static",
   "wps_ppt_set_active_target": "static",
   "wps_ppt_set_animation": "static",
-  "wps_ppt_set_animation_order": "static",
   "wps_ppt_set_background": "static",
   "wps_ppt_set_font_color": "static",
   "wps_ppt_set_image_style": "static",
@@ -218,7 +212,6 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_ppt_set_slide_subtitle": "static",
   "wps_ppt_set_slide_theme": "static",
   "wps_ppt_set_slide_title": "live",
-  "wps_ppt_set_slide_transition": "static",
   "wps_ppt_set_table_cell": "live",
   "wps_ppt_set_table_cell_style": "static",
   "wps_ppt_set_table_row_style": "live",
@@ -304,4 +297,4 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
 };
 
 /** 生成时的总量，供自检/文档使用（别手写这些数字） */
-export const VERIFICATION_TOTALS = { live: 201, static: 90, total: 291 } as const;
+export const VERIFICATION_TOTALS = { live: 201, static: 83, total: 284 } as const;

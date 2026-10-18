@@ -37,7 +37,7 @@ const { toolRegistry } = require(path.join(ROOT, 'dist/server/tool-registry.js')
 const { allTools } = require(path.join(ROOT, 'dist/tools/index.js'));
 const { WpsMcpServer } = require(path.join(ROOT, 'dist/server/mcp-server.js'));
 const { getToolAnnotations } = require(path.join(ROOT, 'dist/server/tool-annotations.js'));
-const { TOOL_ALIASES } = require(path.join(ROOT, 'dist/server/tool-aliases.generated.js'));
+const { TOOL_ALIASES, TOOL_ALIAS_PARAMS } = require(path.join(ROOT, 'dist/server/tool-aliases.generated.js'));
 
 // 走真实注册路径：registerBuiltinTools() 的内置 + registerAll(allTools) 的专业工具。
 // 漏一个都会让"目标存在"的断言变成假的。
@@ -105,16 +105,52 @@ const unique = new Set([...registered, ...aliasNames]).size;
 ok('注册表大小 = 真实工具数（别名不计入）', size === registered.size, `${size} vs ${registered.size}`);
 
 console.log('\n=== D. 生成物与真相源一致 ===');
-// 真相源 scripts/manual/tool-aliases.json 的 aliases 键值集合必须与 generated 完全一致
+// 真相源 scripts/manual/tool-aliases.json 的 aliases 键值集合必须与 generated 完全一致。
+// value 有两种形态：字符串（纯改名）或 { to, rename, set }（带参数映射，第 8 轮加的），两种都要比。
 const fs = require('fs');
 const SRC_JSON = path.join(ROOT, 'scripts/manual/tool-aliases.json');
 const truth = JSON.parse(fs.readFileSync(SRC_JSON, 'utf8')).aliases || {};
 const truthKeys = Object.keys(truth).sort();
 const genKeys = aliasNames.slice().sort();
 const sameKeys = JSON.stringify(truthKeys) === JSON.stringify(genKeys);
-const sameVals = truthKeys.every((k) => truth[k] === TOOL_ALIASES[k]);
+const sameVals = truthKeys.every((k) => {
+  const t = truth[k];
+  return (typeof t === 'string' ? t : t && t.to) === TOOL_ALIASES[k];
+});
 ok('generated 与 tool-aliases.json 一致（改了 JSON 要重跑生成器）', sameKeys && sameVals,
   sameKeys && sameVals ? `${genKeys.length} 条` : `JSON ${truthKeys.length} / generated ${genKeys.length}`);
+
+console.log('\n=== E. 参数映射不许指向不存在的参数 ===');
+// 参数映射是新的失效面：rename/set 里的键如果目标工具 schema 不认，
+// 旧调用会"看起来成功了"但参数被忽略 —— 比直接报错更难查，所以在这里挡掉。
+const params = Object.entries(TOOL_ALIAS_PARAMS || {});
+const unknownKeys = [];
+for (const [alias, map] of params) {
+  const canonical = TOOL_ALIASES[alias];
+  const props = (toolRegistry.getTool(canonical) || { definition: { inputSchema: { properties: {} } } })
+    .definition.inputSchema.properties || {};
+  const wanted = [
+    ...Object.values(map.rename || {}),
+    ...Object.keys(map.set || {}),
+  ];
+  for (const key of wanted) {
+    if (!(key in props)) unknownKeys.push(`${alias}:${key}→${canonical}`);
+  }
+}
+ok(
+  '映射到的参数名都在目标工具的 schema 里',
+  unknownKeys.length === 0,
+  unknownKeys.length ? unknownKeys.join(',') : `${params.length} 个旧名带映射`
+);
+
+const oldSideGone = Object.entries(TOOL_ALIASES).filter(([a]) =>
+  toolRegistry.listAllTools().some((d) => d.name === a)
+);
+ok(
+  '映射表的旧名自己都没被注册（旧名必须在映射生效的一侧）',
+  oldSideGone.length === 0,
+  oldSideGone.map(([a]) => a).join(',')
+);
 
 console.log(`\n汇总：${pass}/${pass + fail} 通过`);
 if (fail) {

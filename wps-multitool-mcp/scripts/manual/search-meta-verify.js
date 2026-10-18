@@ -58,7 +58,9 @@ const CN_CASES = [
   ['批注', 'wps_word_insert_comment'],
   // 第 5 轮 background 6→1：旧名 wps_ppt_set_background_color 已并入 wps_ppt_set_background（别名）
   ['背景色', 'wps_ppt_set_background'],
-  ['动画', 'wps_ppt_add_animation'],
+  // 第 8 轮 animation/transition 两族合并：加动画进 wps_ppt_set_animation（op='add'），旧名成别名
+  ['动画', 'wps_ppt_set_animation'],
+  ['切换', 'wps_ppt_set_transition'],
   ['转PDF', 'wps_convert_to_pdf'],
   ['目录', 'wps_word_generate_toc'],
   ['合并单元格', 'wps_excel_merge_cells'],
@@ -110,7 +112,10 @@ const AMBIG = [
 // 这里按"当前在册的名字"重列，否则断言的是不存在的东西。
 const AMBIG_LIVE = [
   ['背景', ['wps_ppt_set_background']],
-  ['动画', ['wps_ppt_set_animation', 'wps_ppt_add_animation']],
+  // 第 8 轮动画族 5→1 后，在册的是三个：设置（含 add/reorder）+ 查询 + 删除。
+  // 覆盖断言要按"在册的"列，否则断言的是已经下线成别名的名字。
+  ['动画', ['wps_ppt_set_animation', 'wps_ppt_get_animations', 'wps_ppt_remove_animation']],
+  ['切换', ['wps_ppt_set_transition']],
   ['目录', ['wps_word_generate_toc']],
   ['缩放', ['wps_excel_set_zoom']],
 ];

@@ -1205,74 +1205,237 @@ export const setShapeTextHandler: ToolHandler = async (
 
 export const setAnimationDefinition: ToolDefinition = {
   name: 'wps_ppt_set_animation',
-  description:
-    '[DEPRECATED·改用 wps_ppt_add_animation] 设置幻灯片中指定元素的动画效果。\n\n' +
-    '什么时候用：已被 wps_ppt_add_animation 取代（同一个 addAnimation 动作），' +
-    '旧参数是 animationType，新工具必填 effect，且多了 trigger —— 别两个混着用。',
+  description: `给形状加动画，或调整已有动画的播放顺序（第 8 轮合并了动画族 5 个工具）。
+
+**两个分支用 \`op\` 选**：
+- \`op:'add'\`（默认）：给形状加动画，要 \`shapeIndex\` + \`category\` + \`effect\`
+- \`op:'reorder'\`：把已有动画挪位置，要 \`animationIndex\` + \`order\`
+
+\`category\` 决定动作落在哪个动画窗格：
+- entrance 入场（appear / fadeIn / flyIn / wipeIn / zoomIn / bounceIn / spinIn）
+- emphasis 强调（pulse / grow / teeter / colorPulse）
+- exit 退场（fadeOut / flyOut / wipeOut / zoomOut / disappear）
+
+什么时候用：
+- "给第1页第2个形状加个淡入" → { op:'add', slideIndex:1, shapeIndex:2, category:'entrance', effect:'fadeIn' }
+- "让这个元素闪一下强调" → { op:'add', slideIndex:1, shapeIndex:2, category:'emphasis', effect:'pulse' }
+- "把第3个动画移到最前面" → { op:'reorder', slideIndex:1, animationIndex:3, order:1 }
+
+限制：\`.add\` 是【累加】的 —— 同一形状重复加会叠出多条动画，不会替换。
+想看现在有哪些动画用 wps_ppt_get_animations，删掉某一条用 wps_ppt_remove_animation。`,
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
     properties: {
+      op: {
+        type: 'string',
+        enum: ['add', 'reorder'],
+        description: '操作：add 加动画（默认）/ reorder 调顺序',
+      },
       slideIndex: {
         type: 'number',
         description: '幻灯片索引（从1开始）',
       },
       shapeIndex: {
         type: 'number',
-        description: '形状索引（从1开始）',
+        description: '形状索引（从1开始）；op=add 时必填',
       },
-      animationType: {
+      category: {
         type: 'string',
-        description: '动画类型，如 fadeIn, flyIn, wipeIn, zoomIn, bounceIn, spinIn, fadeOut, flyOut',
+        enum: ['entrance', 'emphasis', 'exit'],
+        description: '动画类别；op=add 时必填',
+      },
+      effect: {
+        type: 'string',
+        description: '具体效果名。entrance: fadeIn/flyIn/wipeIn/zoomIn/bounceIn/spinIn；emphasis: pulse/spin/grow/teeter/colorPulse；exit: fadeOut/flyOut/wipeOut/zoomOut/disappear',
+      },
+      trigger: {
+        type: 'string',
+        enum: ['onClick', 'withPrevious', 'afterPrevious'],
+        description: '触发方式，默认 onClick（单击时）',
+      },
+      animationIndex: {
+        type: 'number',
+        description: '已有动画的序号（从1开始）；op=reorder 时必填',
+      },
+      order: {
+        type: 'number',
+        description: '新的播放位置（从1开始）；op=reorder 时必填',
       },
     },
-    required: ['slideIndex', 'shapeIndex', 'animationType'],
+    required: ['slideIndex'],
   },
 };
+
+/** 旧 animationType → { category, effect }。旧名 wps_ppt_set_animation 只收一个字符串，
+ *  收尾先按 Out/Exit 结尾判退场，其余按入场；未知名默认入场（宁可多加一个也别不加）。 */
+function splitLegacyAnimationType(animationType: string): {
+  category: 'entrance' | 'exit';
+  effect: string;
+} {
+  return {
+    category: /(out|exit)$/i.test(animationType) ? 'exit' : 'entrance',
+    effect: animationType,
+  };
+}
+
+const ANIM_NAME_MAP: Record<string, string> = {
+  fadeIn: '淡入', flyIn: '飞入', wipeIn: '擦除', zoomIn: '缩放进入',
+  bounceIn: '弹跳进入', spinIn: '旋转进入', fadeOut: '淡出', flyOut: '飞出',
+  wipeOut: '擦除退场', zoomOut: '缩小退场', disappear: '消失',
+  pulse: '脉冲', grow: '放大缩小', teeter: '跷跷板', colorPulse: '颜色脉冲',
+};
+
+const TRIGGER_NAME_MAP: Record<string, string> = {
+  onClick: '单击时',
+  withPrevious: '与上一动画同时',
+  afterPrevious: '上一动画之后',
+};
+
+const CATEGORY_NAME_MAP: Record<string, string> = {
+  entrance: '入场', emphasis: '强调', exit: '退场',
+};
+
+/**
+ * category + effect → PS 真正认的效果名。
+ * 为什么要在 TS 侧合成：WPS COM 的 AddEffect 只吃一个效果 ID，不认"入场/强调/退场"这个维度。
+ * 不做这层合成的话，category 就是一个装饰参数（PS 收不到、进不了动画窗格对应格），
+ * 那才是真的骗人 —— 用户以为加了退场动画，实际加的还是入场。
+ */
+function resolveEffectId(category: string, effect: string): string {
+  const normalized = String(effect || '').trim();
+  const lower = normalized.toLowerCase();
+  if (category === 'exit') {
+    const outMap: Record<string, string> = {
+      fade: 'fadeOut', fly: 'flyOut', wipe: 'wipeOut', zoom: 'zoomOut',
+      vanish: 'vanish', disappear: 'disappear', dissolve: 'dissolveOut',
+    };
+    // 已经带 Out 尾名的（fadeOut）原样送下去，不重复拼
+    if (lower.endsWith('out') || lower === 'disappear' || lower === 'vanish') return normalized;
+    return outMap[lower] || normalized;
+  }
+  const inMap: Record<string, string> = {
+    fade: 'fadeIn', fly: 'flyIn', wipe: 'wipeIn', zoom: 'zoomIn',
+    dissolve: 'dissolveIn', appear: 'appear',
+  };
+  if (lower.endsWith('in') || lower === 'appear') return normalized;
+  return inMap[lower] || normalized;
+}
 
 export const setAnimationHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { slideIndex, shapeIndex, animationType } = args as {
-    slideIndex: number;
-    shapeIndex: number;
-    animationType: string;
-  };
+  const op = (args.op as string) || 'add';
 
   try {
+    if (op === 'reorder') {
+      const { slideIndex, animationIndex, order } = args as {
+        slideIndex: number;
+        animationIndex: number;
+        order: number;
+      };
+      if (!animationIndex || !order) {
+        return {
+          id: uuidv4(),
+          success: false,
+          content: [{ type: 'text', text: `op=reorder 时必须同时给 animationIndex 和 order` }],
+          error: 'Missing required parameter: animationIndex / order',
+        };
+      }
+      const response = await wpsClient.executeMethod<{ success: boolean }>(
+        'setAnimationOrder',
+        { slideIndex, animationIndex, newOrder: order },
+        WpsAppType.PRESENTATION
+      );
+      if (response.success) {
+        return {
+          id: uuidv4(),
+          success: true,
+          content: [
+            {
+              type: 'text',
+              text: `动画顺序调整成功！\n幻灯片: 第 ${slideIndex} 页\n动画 ${animationIndex} → 新位置 ${order}`,
+            },
+          ],
+        };
+      }
+      return {
+        id: uuidv4(),
+        success: false,
+        content: [{ type: 'text', text: `调整动画顺序失败: ${response.error}` }],
+        error: response.error,
+      };
+    }
+
+    // op=add：effect 缺失时兜住旧的 animationType（第 2 轮起这个参数就叫 animationType）
+    const raw = args as {
+      slideIndex: number;
+      shapeIndex?: number;
+      category?: string;
+      effect?: string;
+      trigger?: string;
+      animationType?: string;
+    };
+    const legacy = !raw.effect && raw.animationType
+      ? splitLegacyAnimationType(String(raw.animationType))
+      : null;
+    const category = raw.category || (legacy ? legacy.category : undefined);
+    const effect = raw.effect || (legacy ? legacy.effect : undefined);
+
+    if (!raw.shapeIndex || !category || !effect) {
+      return {
+        id: uuidv4(),
+        success: false,
+        content: [
+          {
+            type: 'text',
+            text: `op=add 时必须同时给 shapeIndex、category（entrance/emphasis/exit）和 effect`,
+          },
+        ],
+        error: 'Missing required parameter: shapeIndex / category / effect',
+      };
+    }
+
+    // category 在这里落地成真正的效果名（exit+fade → fadeOut），PS 侧只认效果 ID
+    const effectId = resolveEffectId(category as string, effect as string);
+
     const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
+      animationIndex?: number;
     }>(
       'addAnimation',
-      { slideIndex, shapeIndex, animationType },
+      {
+        slideIndex: raw.slideIndex,
+        shapeIndex: raw.shapeIndex,
+        effect: effectId,
+        trigger: raw.trigger || 'onClick',
+      },
       WpsAppType.PRESENTATION
     );
 
     if (response.success) {
-      const animNameMap: Record<string, string> = {
-        fadeIn: '淡入', flyIn: '飞入', wipeIn: '擦除', zoomIn: '缩放进入',
-        bounceIn: '弹跳进入', spinIn: '旋转进入', fadeOut: '淡出', flyOut: '飞出',
-      };
-
+      const lines = [
+        `动画设置成功！`,
+        `幻灯片: 第 ${raw.slideIndex} 页`,
+        `形状: 第 ${raw.shapeIndex} 个`,
+        `类别: ${CATEGORY_NAME_MAP[category as string] || category}`,
+        `动画: ${ANIM_NAME_MAP[effect as string] || effect}（${effectId}）`,
+        `触发: ${TRIGGER_NAME_MAP[raw.trigger || 'onClick'] || raw.trigger || 'onClick'}`,
+      ];
+      if (response.data && response.data.animationIndex) {
+        lines.push(`动画序号: ${response.data.animationIndex}`);
+      }
       return {
         id: uuidv4(),
         success: true,
-        content: [
-          {
-            type: 'text',
-            text: `动画设置成功！\n幻灯片: 第 ${slideIndex} 页\n形状: 第 ${shapeIndex} 个\n动画: ${animNameMap[animationType] || animationType}`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `设置动画失败: ${response.error}` }],
-        error: response.error,
+        content: [{ type: 'text', text: lines.join('\n') }],
       };
     }
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `设置动画失败: ${response.error}` }],
+      error: response.error,
+    };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return {
@@ -1600,69 +1763,119 @@ export const setSlideSizeHandler: ToolHandler = async (
 
 export const setTransitionDefinition: ToolDefinition = {
   name: 'wps_ppt_set_transition',
-  description:
-    '[DEPRECATED·改用 wps_ppt_set_slide_transition] 设置幻灯片切换效果。\n\n' +
-    '什么时候用：已被 wps_ppt_set_slide_transition 取代（同一个 setSlideTransition 动作），' +
-    '旧参数是 transition，新工具必填 effect，且多了 duration/sound —— 别两个混着用。',
+  description: `设置幻灯片切换效果：单页 or 整份文稿（第 8 轮合并了切换族 3 个工具）。
+
+- \`target\`: slide（默认，只改 \`slideIndex\` 那一页）/ all（整份文稿统一）
+- \`effect\`（**必填**）: fade 淡出 / push 推入 / wipe 擦除 / split 拆分 / reveal 揭开 / cover 覆盖 / dissolve 溶解 / curtains 帷幕 / **none 取消切换**
+
+什么时候用：
+- "给第1页加个淡出切换" → { target:'slide', slideIndex:1, effect:'fade', duration:1 }
+- "所有页统一用推入" → { target:'all', effect:'push' }
+- "第2页不要切换效果" → { target:'slide', slideIndex:2, effect:'none' }
+
+取消切换用 \`effect:'none'\`，不要去找"删除切换"的工具 —— 切换本来就是"切走时播放的东西"，
+把它设成没有就等价于删掉，而且这样不会因为名字里有"删/删掉"而弹破坏性确认框。
+
+真限制：没有"切换音效"参数。WPS 的 COM 接口里没有"切走时播一段音频"这个能力
+（那是 PowerPoint 的 AddMediaObject2），所以本工具不提供该参数 —— 要音效得先在 WPS 里录进切换设置。`,
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
     properties: {
+      target: {
+        type: 'string',
+        enum: ['slide', 'all'],
+        description: '作用范围：slide 单页（默认）/ all 整份文稿',
+      },
       slideIndex: {
         type: 'number',
-        description: '幻灯片索引（从1开始）',
+        description: '幻灯片索引（从1开始）；target=all 时忽略',
       },
-      transition: {
+      effect: {
         type: 'string',
-        description: '切换效果类型，如 fade, push, wipe, split, reveal, cover, dissolve, curtains',
+        description: '切换效果：fade / push / wipe / split / reveal / cover / dissolve / curtains；none = 取消切换',
+      },
+      duration: {
+        type: 'number',
+        description: '切换持续时间（秒），默认1秒',
       },
     },
-    required: ['slideIndex', 'transition'],
+    required: [],
   },
+};
+
+const TRANS_NAME_MAP: Record<string, string> = {
+  fade: '淡出', push: '推入', wipe: '擦除', split: '拆分',
+  reveal: '揭开', cover: '覆盖', dissolve: '溶解', curtains: '帷幕',
+  none: '取消切换',
 };
 
 export const setTransitionHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { slideIndex, transition } = args as {
-    slideIndex: number;
-    transition: string;
+  const { slideIndex, duration } = args as {
+    slideIndex?: number;
+    duration?: number;
   };
+  const target = ((args.target as string) || 'slide') as 'slide' | 'all';
+  // 第 2 轮起的旧参数名是 transition；旧名调用经别名进来时带的是它
+  const effect = (args.effect as string) || (args.transition as string);
+
+  if (!effect) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `必须给 effect（切换效果名，或 none 表示取消切换）` }],
+      error: 'Missing required parameter: effect',
+    };
+  }
+  if (target === 'slide' && !slideIndex) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `target='slide' 时必须给 slideIndex` }],
+      error: 'Missing required parameter: slideIndex',
+    };
+  }
 
   try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-    }>(
-      'setSlideTransition',
-      { slideIndex, transition },
-      WpsAppType.PRESENTATION
-    );
+    // 整份文稿走 PS 侧的 applyTransitionToAll：它是独立的动作，
+    // 而 setSlideTransition 的循环版不在这个 case 里，硬塞 all 进去等于让 PS 认一个它不认的键。
+    const response =
+      target === 'all'
+        ? await wpsClient.executeMethod<{ slideCount?: number }>(
+            'applyTransitionToAll',
+            { effect, duration: duration || 1 },
+            WpsAppType.PRESENTATION
+          )
+        : await wpsClient.executeMethod<{ slideCount?: number }>(
+            'setSlideTransition',
+            { slideIndex, effect, duration: duration || 1 },
+            WpsAppType.PRESENTATION
+          );
 
     if (response.success) {
-      const transNameMap: Record<string, string> = {
-        fade: '淡出', push: '推入', wipe: '擦除', split: '拆分',
-        reveal: '揭开', cover: '覆盖', dissolve: '溶解', curtains: '帷幕',
-      };
-
+      const lines = [
+        `切换效果设置成功！`,
+        target === 'all' ? `范围: 全部幻灯片` : `幻灯片: 第 ${slideIndex} 页`,
+        `切换效果: ${TRANS_NAME_MAP[effect] || effect}`,
+        `持续时间: ${duration || 1} 秒`,
+      ];
+      if (response.data && response.data.slideCount) {
+        lines.push(`已应用: ${response.data.slideCount} 页`);
+      }
       return {
         id: uuidv4(),
         success: true,
-        content: [
-          {
-            type: 'text',
-            text: `切换效果设置成功！\n幻灯片: 第 ${slideIndex} 页\n切换效果: ${transNameMap[transition] || transition}`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `设置切换效果失败: ${response.error}` }],
-        error: response.error,
+        content: [{ type: 'text', text: lines.join('\n') }],
       };
     }
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `设置切换效果失败: ${response.error}` }],
+      error: response.error,
+    };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return {

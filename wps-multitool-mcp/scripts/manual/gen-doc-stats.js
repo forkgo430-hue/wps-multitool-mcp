@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Input: 真实注册路径（dist 里的注册表 + 注解计算）
- * Output: README.md 的两处 AUTO 区 + wps-claude-addon/panel.html 的数字/版本
+ * Output: README.md 的两处 AUTO 区 + wps-multitool-addon/panel.html 的数字/版本
  * Pos: 文档统计的单一真相源。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
  * 要解决的问题
@@ -33,7 +33,7 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const REPO_ROOT = path.resolve(ROOT, '..');
 const README = path.join(REPO_ROOT, 'README.md');
 const README_EN = path.join(REPO_ROOT, 'README.en.md');
-const PANEL = path.join(REPO_ROOT, 'wps-claude-addon', 'panel.html');
+const PANEL = path.join(REPO_ROOT, 'wps-multitool-addon', 'panel.html');
 
 const { WpsMcpServer } = require(path.join(ROOT, 'dist', 'server', 'mcp-server.js'));
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));

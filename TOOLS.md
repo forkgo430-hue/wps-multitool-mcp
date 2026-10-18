@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**291 个工具**（8 内置 + 283 专业/组工具）· 默认列出 40 个 · 注解覆盖 291/291 · 真机验证 201/291
+**284 个工具**（8 内置 + 276 专业/组工具）· 默认列出 40 个 · 注解覆盖 284/284 · 真机验证 201/284
 
 | 标记 | 含义 |
 |---|---|
@@ -214,7 +214,7 @@
 | `wps_excel_update_pivot_table` |  | — | live | 更新已有透视表的配置，包括添加/移除字段、修改聚合方式等。<br><sub>别名：更新数据透视表表格 / 刷新数据透视表表格 / 数据透视表</sub> |
 | `wps_get_active_workbook` |  | R | live | 获取当前打开的WPS表格工作簿信息<br><sub>别名：当前工作簿 / 活动工作簿 / 打开的是哪个表格</sub> |
 
-## PPT（108）
+## PPT（101）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -227,9 +227,6 @@
 | `wps_ppt_insert_image` | 是 | N | live | 在幻灯片中插入图片。<br><sub>别名：插入图片 / 加图片 / 新增图片</sub> |
 | `wps_ppt_set_slide_title` | 是 | — | live | 设置幻灯片的标题文本。<br><sub>别名：设置标题 / 改标题 / 设置幻灯片标题</sub> |
 | `wps_get_active_presentation` |  | R | static | 获取当前打开的WPS演示文稿信息<br><sub>别名：当前演示文稿 / 活动演示 / 打开的是哪个PPT</sub> |
-| `wps_ppt_add_animation` |  | N | static | 为幻灯片中的形状添加动画效果。<br><sub>别名：添加动画 / 加动画 / 新增动画</sub> |
-| `wps_ppt_add_animation_preset` |  | N | static | 为形状添加预设入场动画效果。<br><sub>别名：添加动画预设 / 新增动画预设 / 加动画预设</sub> |
-| `wps_ppt_add_emphasis_animation` |  | N | static | 为形状添加强调动画效果，用于在演示时突出显示元素。<br><sub>别名：强调动画 / 添加强调动画 / 新增强调动画</sub> |
 | `wps_ppt_add_master_element` |  | N | static | 向母版中添加新元素。<br><sub>别名：添加母版element / 新增母版element / 加母版element</sub> |
 | `wps_ppt_add_page_indicator` |  | N | static | 为演示文稿添加页码指示器。<br><sub>别名：添加页面指示器 / 新增页面指示器 / 加页面指示器</sub> |
 | `wps_ppt_add_ppt_hyperlink` |  | N | static | 为幻灯片中的形状添加超链接。<br><sub>别名：添加超链接 / 新增超链接 / 加超链接</sub> |
@@ -239,7 +236,6 @@
 | `wps_ppt_align_objects` |  | — | live | [DEPRECATED·改用 wps_ppt_align_shapes] 对齐幻灯片中的对象。<br><sub>别名：对齐objects</sub> |
 | `wps_ppt_align_shapes` |  | — | static | 对齐幻灯片中的多个形状。<br><sub>别名：对齐形状 / 形状</sub> |
 | `wps_ppt_apply_color_scheme` |  | — | static | 为幻灯片应用统一配色方案。<br><sub>别名：应用颜色scheme / 套用颜色scheme / 颜色</sub> |
-| `wps_ppt_apply_transition_to_all` |  | — | static | 为所有幻灯片应用统一的切换效果。<br><sub>别名：全部应用切换 / 所有页切换效果 / 应用切换效果toall</sub> |
 | `wps_ppt_auto_beautify_slide` |  | — | static | 自动美化指定的单页幻灯片。<br><sub>别名：自动美化幻灯片 / 美化 / 幻灯片</sub> |
 | `wps_ppt_auto_layout` |  | — | static | 自动调整幻灯片中所有元素的布局。<br><sub>别名：自动版式 / 版式 / 布局</sub> |
 | `wps_ppt_beautify` |  | — | static | 一键美化幻灯片，优化排版、配色、字体和间距。<br><sub>别名：美化 / 美化单页</sub> |
@@ -282,15 +278,13 @@
 | `wps_ppt_open_presentation` |  | — | static | 打开指定路径的演示文稿文件。<br><sub>别名：打开演示文稿 / 演示文稿 / PPT</sub> |
 | `wps_ppt_remove_animation` |  | DN | static | 移除幻灯片中指定的动画效果。<br><sub>别名：删除动画 / 移除动画 / 去掉动画</sub> |
 | `wps_ppt_remove_ppt_hyperlink` |  | DN | static | 移除幻灯片中形状的超链接。<br><sub>别名：删除超链接 / 移除超链接 / 去掉超链接</sub> |
-| `wps_ppt_remove_slide_transition` |  | DN | static | 移除幻灯片的切换效果。<br><sub>别名：删除幻灯片切换效果 / 移除幻灯片切换效果 / 去掉幻灯片切换效果</sub> |
 | `wps_ppt_replace_ppt_image` |  | DN | static | 原位替换幻灯片中的某张图片：保留原图的位置、尺寸、旋转角度，删除旧图后在同一矩形内插入新图。用于在保持版式不变的前提下把模板里…<br><sub>别名：替换图片 / 换图 / 图片</sub> |
 | `wps_ppt_replace_ppt_text` |  | DN | static | 在演示文稿中查找并替换文本。<br><sub>别名：替换文本 / 文本 / 文字</sub> |
 | `wps_ppt_set_3d_depth` |  | — | static | 设置幻灯片中形状的3D挤出深度。<br><sub>别名：设置3d深度 / 设定3d深度 / 深度</sub> |
 | `wps_ppt_set_3d_material` |  | — | static | 设置幻灯片中形状的3D材质效果。<br><sub>别名：设置3d材质 / 设定3d材质 / 材质</sub> |
 | `wps_ppt_set_3d_rotation` |  | — | static | 设置幻灯片中形状的3D旋转效果。<br><sub>别名：设置3d旋转 / 设定3d旋转 / 旋转</sub> |
 | `wps_ppt_set_active_target` |  | — | static | 锁定后续所有 PPT 操作的【目标演示文稿】（按文件名）。锁定后，本服务器会给所有演示类调用自动注入该文稿名，底层精确定位，彻…<br><sub>别名：设置当前目标 / 设定当前目标 / 当前</sub> |
-| `wps_ppt_set_animation` |  | N | static | [DEPRECATED·改用 wps_ppt_add_animation] 设置幻灯片中指定元素的动画效果。<br><sub>别名：设置动画 / 设定动画 / 动画</sub> |
-| `wps_ppt_set_animation_order` |  | — | static | 调整动画在时间线上的播放顺序。<br><sub>别名：设置动画顺序 / 设定动画顺序 / 动画</sub> |
+| `wps_ppt_set_animation` |  | — | static | 给形状加动画，或调整已有动画的播放顺序（第 8 轮合并了动画族 5 个工具）。<br><sub>别名：设置动画 / 添加动画 / 加动画</sub> |
 | `wps_ppt_set_background` |  | — | static | 设置背景：某一页、整份文稿、或幻灯片母版。<br><sub>别名：设置背景 / 换背景 / 背景色</sub> |
 | `wps_ppt_set_font_color` |  | — | static | 设置幻灯片中指定形状的文字颜色。<br><sub>别名：设置字体颜色 / 设定字体颜色 / 字体</sub> |
 | `wps_ppt_set_image_style` |  | — | static | 设置幻灯片中指定图片的样式。<br><sub>别名：设置图片样式 / 设定图片样式 / 图片</sub> |
@@ -313,14 +307,13 @@
 | `wps_ppt_set_slide_size` |  | — | static | 设置演示文稿的幻灯片尺寸（按像素给，内部换算成 WPS 的磅）。<br><sub>别名：设置幻灯片size / 设定幻灯片size / 幻灯片</sub> |
 | `wps_ppt_set_slide_subtitle` |  | — | static | 设置幻灯片的副标题。<br><sub>别名：设置幻灯片副标题 / 设定幻灯片副标题 / 幻灯片</sub> |
 | `wps_ppt_set_slide_theme` |  | — | static | 应用主题模板（换整套配色/字体/版式）。<br><sub>别名：设置幻灯片主题 / 设定幻灯片主题 / 幻灯片</sub> |
-| `wps_ppt_set_slide_transition` |  | — | static | 设置幻灯片的页面切换效果。<br><sub>别名：当前页切换效果 / 设置幻灯片切换效果 / 设定幻灯片切换效果</sub> |
 | `wps_ppt_set_table_cell` |  | — | live | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
 | `wps_ppt_set_table_cell_style` |  | — | static | 设置PPT表格中指定单元格的样式。<br><sub>别名：设置表格单元格样式 / 设定表格单元格样式 / 表格</sub> |
 | `wps_ppt_set_table_row_style` |  | — | live | 设置PPT表格中指定行的样式。<br><sub>别名：设置表格行样式 / 设定表格行样式 / 表格</sub> |
 | `wps_ppt_set_table_style` |  | — | static | 设置PPT表格的整体样式。<br><sub>别名：设置表格样式 / 设定表格样式 / 表格</sub> |
 | `wps_ppt_set_textbox_style` |  | — | static | 设置文本框样式（字体大小、颜色、粗体等）。<br><sub>别名：设置文本框样式 / 设定文本框样式 / 文本框</sub> |
 | `wps_ppt_set_textbox_text` |  | — | static | 设置指定文本框的文本内容。<br><sub>别名：设置文本框文本 / 设定文本框文本 / 文本框</sub> |
-| `wps_ppt_set_transition` |  | — | static | [DEPRECATED·改用 wps_ppt_set_slide_transition] 设置幻灯片切换效果。<br><sub>别名：切换效果 / 切换动画 / 翻页效果</sub> |
+| `wps_ppt_set_transition` |  | — | static | 设置幻灯片切换效果：单页 or 整份文稿（第 8 轮合并了切换族 3 个工具）。<br><sub>别名：切换效果 / 切换动画 / 翻页效果</sub> |
 | `wps_ppt_smart_distribute` |  | — | static | 将指定形状进行等距分布排列。<br><sub>别名：智能分布 / 分布 / 等距分布</sub> |
 | `wps_ppt_start_slide_show` |  | N | static | 开始幻灯片放映。<br><sub>别名：开始幻灯片显示 / 启动幻灯片显示 / 幻灯片</sub> |
 | `wps_ppt_switch_presentation` |  | — | static | 切换到指定名称的演示文稿。<br><sub>别名：切换演示文稿 / 演示文稿 / PPT</sub> |

@@ -232,24 +232,10 @@ export {
 } from './image';
 
 export {
-  addAnimationDefinition,
-  addAnimationHandler,
   removeAnimationDefinition,
   removeAnimationHandler,
   getAnimationsDefinition,
   getAnimationsHandler,
-  setAnimationOrderDefinition,
-  setAnimationOrderHandler,
-  addAnimationPresetDefinition,
-  addAnimationPresetHandler,
-  addEmphasisAnimationDefinition,
-  addEmphasisAnimationHandler,
-  setSlideTransitionDefinition,
-  setSlideTransitionHandler,
-  removeSlideTransitionDefinition,
-  removeSlideTransitionHandler,
-  applyTransitionToAllDefinition,
-  applyTransitionToAllHandler,
 } from './animation';
 
 export {

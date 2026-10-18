@@ -411,28 +411,24 @@ const CURATED: Record<
       '给【形状】上色用 wps_ppt_set_shape_style（不是背景）',
     ],
   },
-  // PPT：5 个 animation
+  // PPT：animation（合并后只剩设置 + 两个只读/删除的）
   wps_ppt_set_animation: {
-    aliases: ['设置动画'],
-    notFor: ['新增动画用 add_animation / add_animation_preset；强调动画用 add_emphasis_animation；调整播放顺序用 set_animation_order；查看用 get_animations'],
+    aliases: ['设置动画', '添加动画', '加动画', '强调动画', '入场动画', '退场动画', '动画顺序', '调整播放顺序'],
+    examples: ['给第1页第2个形状加淡入', '让这个元素脉冲强调一下', '把第3个动画移到最前面'],
+    notFor: [
+      '加动画用 op=add（要 shapeIndex+category+effect），调顺序用 op=reorder（要 animationIndex+order）',
+      '入场/强调/退场靠 category 区分，preset 那些名字塞 effect 即可，别再找 add_animation / add_animation_preset / add_emphasis_animation / set_animation_order',
+      '看有哪些动画用 wps_ppt_get_animations，删某一条用 wps_ppt_remove_animation',
+    ],
   },
-  wps_ppt_add_animation: {
-    aliases: ['添加动画', '加动画'],
-    notFor: ['改已有动画用 wps_ppt_set_animation'],
-  },
-  wps_ppt_add_emphasis_animation: {
-    aliases: ['强调动画'],
-  },
-  // PPT：4 个 transition
+  // PPT：transition（合并后只剩设置一个）
   wps_ppt_set_transition: {
-    aliases: ['切换效果', '切换动画', '翻页效果'],
-    notFor: ['只改当前页用 set_slide_transition；一键套全部用 apply_transition_to_all；删掉用 remove_slide_transition'],
-  },
-  wps_ppt_set_slide_transition: {
-    aliases: ['当前页切换效果'],
-  },
-  wps_ppt_apply_transition_to_all: {
-    aliases: ['全部应用切换', '所有页切换效果'],
+    aliases: ['切换效果', '切换动画', '翻页效果', '当前页切换效果', '全部应用切换', '所有页切换效果'],
+    examples: ['给第1页加淡出切换', '所有页统一用推入', '第2页不要切换效果'],
+    notFor: [
+      '单页用 target=slide（要 slideIndex），整份用 target=all',
+      '取消切换用 effect=none，不要找"删除切换"的工具（旧名 remove_slide_transition 仍可调用）',
+    ],
   },
   // PPT：3 个 image 插入
   wps_ppt_insert_image: {
