@@ -210,11 +210,42 @@ async function pushHistory({ owner, repo, token }) {
   const treeOf = new Map(); // 旧 sha → 新 tree sha
   const uploaded = new Set(); // 已上传过的 blob sha（同一内容只传一次）
   let uploadedCount = 0;
+  let reused = 0;
+
+  // 远端已有的提交按 tree 建索引：内容一模一样就复用。
+  // 没有这一步，每次推送都得把整条链重传一遍（54 个提交 / 400 个 blob / 8 分钟），
+  // 而绝大多数提交其实上次已经推过了 —— 只该补新的那几条。
+  const remoteByTree = new Map();
+  try {
+    const res = await withRetry('读远端提交', () =>
+      api('GET', `${base}/commits?sha=${branch}&per_page=100`, token));
+    for (const c of res.json || []) {
+      remoteByTree.set(c.commit.tree.sha, { sha: c.sha, parents: c.parents.map((p) => p.sha) });
+    }
+    console.log(`远端已有 ${remoteByTree.size} 个提交可按 tree 复用`);
+  } catch (e) {
+    console.log(`读远端提交失败（${e.message.slice(0, 60)}），将全量重建`);
+  }
 
   for (let i = 0; i < list.length; i++) {
     const sha = list[i];
     const c = parseCommit(sha);
     const parentNew = c.parents.map((p) => mapped.get(p)).filter(Boolean);
+
+    // 树上完全一致、父链也对得上 → 直接复用远端那个提交，不再上传任何东西
+    const hit = remoteByTree.get(c.tree);
+    if (
+      hit &&
+      hit.parents.length === parentNew.length &&
+      hit.parents.every((p, idx) => p === parentNew[idx])
+    ) {
+      mapped.set(sha, hit.sha);
+      treeOf.set(sha, c.tree);
+      reused++;
+      process.stdout.write(`\r  复用 ${reused}/${list.length}   `);
+      continue;
+    }
+
     const baseTree = c.parents[0] ? treeOf.get(c.parents[0]) : undefined;
     const files = changedFiles(sha);
 
@@ -272,7 +303,10 @@ async function pushHistory({ owner, repo, token }) {
     console.error(`✗ 远端树 ${tipTree} ≠ 本地 ${localTree}，不移动 ref`);
     process.exit(1);
   }
-  console.log(`✓ 重建完成：${list.length} 个提交，tip ${newTip.slice(0, 7)}，树与本地一致`);
+  console.log(
+    `✓ 重建完成：${list.length} 个提交（复用 ${reused}，新建 ${list.length - reused}），` +
+      `tip ${newTip.slice(0, 7)}，树与本地一致`
+  );
 
   if (dry) {
     console.log('--dry：ref 未动');
