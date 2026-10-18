@@ -5271,7 +5271,14 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
         $shape = $slide.Shapes.Item($(if ($p.name) { $p.name } else { $p.shapeIndex }))
-        if ($null -ne $p.transparency) { $shape.Fill.Transparency = $p.transparency }
+        if ($null -ne $p.transparency) {
+            # 工具/文档说的是"百分比 0~100"，COM 要的是 0~1 —— 直接塞 50 会报"值不在预期的范围内"。
+            $tv = [double]$p.transparency
+            if ($tv -gt 1) { $tv = $tv / 100 }
+            if ($tv -lt 0) { $tv = 0 }
+            if ($tv -gt 1) { $tv = 1 }
+            $shape.Fill.Transparency = $tv
+        }
         Output-Json @{ success = $true; data = @{ name = $shape.Name } }
     }
 
@@ -5405,9 +5412,38 @@ switch ($Action) {
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
-        $shape = $slide.Shapes.Item($p.shapeName)
-        $slide.TimeLine.MainSequence.AddEffect($shape, $p.effect, 1)
-        Output-Json @{ success = $true }
+        # 两个致命点，都是实测踩出来的（不是推测）：
+        #   1) 老实现只读 shapeName，而工具传的是 shapeIndex → Shapes.Item($null) 拿到坏对象，
+        #      AddEffect 之后【整页】的 Shapes/Background 全部报"不能对 Null 值表达式调用方法"，
+        #      而且文稿列表还正常 —— 表现像"69 个工具一起坏了"，实际是这一条把页状态弄坏了。
+        #   2) effect 直接透传字符串（"fadeIn"），而 AddEffect 要的是 MsoAnimEffect 枚举数字。
+        #      这里补一张小表，认不出的明确报错，不再把坏值喂给 COM。
+        $shape = $null
+        if ($p.shapeName) { try { $shape = $slide.Shapes.Item([string]$p.shapeName) } catch {} }
+        if ($null -eq $shape -and $p.shapeIndex) { try { $shape = $slide.Shapes.Item([int]$p.shapeIndex) } catch {} }
+        if ($null -eq $shape) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 找不到要加动画的形状：shapeIndex（1 起）/shapeName 都没给或不存在" }
+            return
+        }
+        # animationType 是已下线工具 wps_ppt_set_animation 的旧键名，仍认（否则老调用一律失败）
+        $rawEffect = if ($p.effect) { $p.effect } elseif ($p.animationType) { $p.animationType } else { $null }
+        if (-not $rawEffect) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 缺少 effect（可用：appear/fadeIn/flyIn/wipeIn/zoomIn，或直接给 MsoAnimEffect 数字）" }
+            return
+        }
+        $effectMap = @{ appear = 1; fadeIn = 10; flyIn = 2; wipeIn = 22; zoomIn = 53 }
+        $effectId = if ($rawEffect -is [int] -or $rawEffect -is [long] -or $rawEffect -is [double]) { [int]$rawEffect } elseif ($effectMap.ContainsKey([string]$rawEffect)) { $effectMap[[string]$rawEffect] } else { $null }
+        if ($null -eq $effectId) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 不认识的 effect「$($p.effect)」；可用：appear/fadeIn/flyIn/wipeIn/zoomIn，或直接给 MsoAnimEffect 数字" }
+            return
+        }
+        try {
+            $slide.TimeLine.MainSequence.AddEffect($shape, $effectId, 1) | Out-Null
+        } catch {
+            Output-Json @{ success = $false; error = "添加动画失败：$(Get-CallError $_)" }
+            return
+        }
+        Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex; effectId = $effectId; count = $slide.TimeLine.MainSequence.Count } }
     }
 
     "setSlideTransition" {
@@ -6329,9 +6365,15 @@ switch ($Action) {
         $slide = $pres.Slides.Item($slideIndex)
         $shape = $slide.Shapes.Item($(if ($p.shapeName) { $p.shapeName } else { $p.shapeIndex }))
 
-        $shape.ThreeD.RotationX = if ($p.rotationX -ne $null) { $p.rotationX } else { 0 }
-        $shape.ThreeD.RotationY = if ($p.rotationY -ne $null) { $p.rotationY } else { 0 }
-        $shape.ThreeD.RotationZ = if ($p.rotationZ -ne $null) { $p.rotationZ } else { 0 }
+        # 工具传的是 rotation:{x,y,z} 对象，而这里读的是扁平 rotationX/Y/Z ——
+        # 三种形状都认，否则整包 psobject 会被塞进 float 属性（实测报"无法将 psobject 转换为类型 float"）。
+        $rot = $p.rotation
+        $rx = if ($null -ne $p.rotationX) { $p.rotationX } elseif ($null -ne $rot -and $null -ne $rot.x) { $rot.x } else { 0 }
+        $ry = if ($null -ne $p.rotationY) { $p.rotationY } elseif ($null -ne $rot -and $null -ne $rot.y) { $rot.y } else { 0 }
+        $rz = if ($null -ne $p.rotationZ) { $p.rotationZ } elseif ($null -ne $rot -and $null -ne $rot.z) { $rot.z } else { 0 }
+        $shape.ThreeD.RotationX = [float]$rx
+        $shape.ThreeD.RotationY = [float]$ry
+        $shape.ThreeD.RotationZ = [float]$rz
 
         if ($p.preset) {
             $presets = @{ isometric = @{ x = 45; y = 45; z = 0 }; perspective = @{ x = 30; y = 30; z = 0 }; oblique = @{ x = 20; y = 60; z = 0 }; tiltLeft = @{ x = 0; y = -30; z = 0 }; tiltRight = @{ x = 0; y = 30; z = 0 } }
@@ -6576,9 +6618,21 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
         $seq = $slide.TimeLine.MainSequence
-        $effect = $seq.Item($p.from)
-        $effect.MoveTo($p.to)
-        Output-Json @{ success = $true; data = @{ from = $p.from; to = $p.to } }
+        # 工具传的是 animationIndex/newOrder，这里以前只读 from/to → Item($null) 必报"值不在预期的范围内"
+        $fromIdx = if ($null -ne $p.animationIndex) { [int]$p.animationIndex } elseif ($null -ne $p.from) { [int]$p.from } else { 0 }
+        $toIdx = if ($null -ne $p.newOrder) { [int]$p.newOrder } elseif ($null -ne $p.to) { [int]$p.to } else { 0 }
+        $cnt = $seq.Count
+        if ($cnt -eq 0) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 本页还没有动画，谈不上排序；先 add_animation" }
+            return
+        }
+        if ($fromIdx -lt 1 -or $fromIdx -gt $cnt -or $toIdx -lt 1 -or $toIdx -gt $cnt) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 动画序号越界：本页共 $cnt 个（1 起），收到 from=$fromIdx to=$toIdx" }
+            return
+        }
+        $effect = $seq.Item($fromIdx)
+        $effect.MoveTo($toIdx)
+        Output-Json @{ success = $true; data = @{ from = $fromIdx; to = $toIdx } }
     }
 
     "removeSlideTransition" {
