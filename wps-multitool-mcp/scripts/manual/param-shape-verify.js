@@ -50,7 +50,7 @@ const ALLOWLIST = {
   'findReplace|replaceMode': { class: 'OK-误报', why: '信息性布尔（"是不是替换模式"）；真正决定行为的是 replaceText 为空 + replaceAll' },
 
   // ===== DEPRECATED：第 2 轮标了 [DEPRECATED] 的旧工具，等族合并轮 =====
-  'addAnimation|animationType': { class: 'DEPRECATED', why: '来自 wps_ppt_set_animation（已标 DEPRECATED，改用 wps_ppt_add_animation 的 effect）' },
+  // （addAnimation|animationType 已删：第 7 轮让 PS 侧直接认这个旧键，条目失效，门禁要求修好就删）
   'fillSeries|sourceRange': { class: 'DEPRECATED', why: '来自 wps_excel_auto_fill（已标 DEPRECATED，改用 wps_excel_fill_series 的 range/direction）' },
   'fillSeries|targetRange': { class: 'DEPRECATED', why: '同上：auto_fill 的旧参数名' },
   'hideRows|count': { class: 'DEPRECATED', why: '来自 wps_excel_hide_row（已标 DEPRECATED，改用 wps_excel_hide_rows 的 startRow/endRow）' },
