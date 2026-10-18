@@ -9,6 +9,12 @@
  * 尺寸被改），于是"图没变化"既可能是工具坏，也可能是靶子已经不是当初那个靶子了。
  * 实测过：wps_ppt_set_background 在序列里判失败，单独跑三个（含两个别名）全部成功。
  * 所以这里每条用例都重建一次靶子 —— 慢，但结论可信。
+ *
+ * 走 callTool 而不是直接拿 handler（第 8 轮改的）
+ * --------------------------------------------------
+ * callTool 才是 MCP 客户端真正走的那条路：别名解析、别名参数映射、必填校验、自动快照都在里面。
+ * 直接调 handler 等于绕过了整条链 —— 矩阵里那些"用旧名 + 旧参数"的行会被判成成功，
+ * 而线上其实早就 Missing required parameter 了。走真入口，旧名用例才有意义。
  */
 process.env.WPS_BRIDGE_PIPE = `\\\\.\\pipe\\wps-multitool-mcp-isolated-${Date.now()}`;
 process.env.WPS_BRIDGE_EPHEMERAL = '1';
@@ -39,7 +45,7 @@ fs.writeFileSync(
   )
 );
 
-const call = (name, args = {}) => toolRegistry.getTool(name).handler(args);
+const call = (name, args = {}) => toolRegistry.callTool({ id: name, name, arguments: args });
 const txt = (r) => String(((r && r.content && r.content[0] && r.content[0].text) || (r && r.error) || '')).replace(/\s+/g, ' ');
 
 function parseMatrix(file) {
@@ -91,6 +97,12 @@ async function fingerprint() {
   return parts.join('/');
 }
 
+/** 坐标指纹：只取第 1 页形状的 (left, top)，用于"只改位置"这类工具的判定 */
+async function coordFingerprint() {
+  const s = await call('wps_ppt_get_shapes', { slideIndex: 1 });
+  return (txt(s).match(/\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)\)/g) || []).join(' ');
+}
+
 async function shot(tag) {
   const p = path.join(tmpDir, `s-${tag}.png`);
   await call('wps_ppt_export_slide_as_image', { slideIndex: 1, outputPath: p });
@@ -106,6 +118,7 @@ async function shot(tag) {
   for (const row of rows) {
     await rebuild();
     const fpBefore = await fingerprint();
+    const coordBefore = await coordFingerprint();
     const imgBefore = await shot('a');
     const imgCheck = await shot('b');
     const stable = imgBefore && imgCheck && Buffer.compare(imgBefore, imgCheck) === 0;
@@ -126,6 +139,10 @@ async function shot(tag) {
         const fpAfter = await fingerprint();
         ok = fpAfter !== fpBefore;
         why = `计数 ${fpBefore} → ${fpAfter}`;
+      } else if (row.judge.includes('坐标差')) {
+        const coordAfter = await coordFingerprint();
+        ok = coordAfter !== coordBefore;
+        why = ok ? '形状坐标有变化' : `坐标未变 ${coordAfter.slice(0, 60)}`;
       } else if (row.judge.includes('读回')) {
         const t = txt(r);
         ok = t.length > 8 && !/undefined|null/.test(t.slice(0, 40));

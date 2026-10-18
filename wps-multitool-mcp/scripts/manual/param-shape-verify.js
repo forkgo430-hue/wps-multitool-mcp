@@ -82,8 +82,6 @@ const ALLOWLIST = {
   'setPptDateTime|format': { class: '延后', why: 'PS 只写 text（固定文本），日期格式串没实现' },
   'setPptFooter|show': { class: '延后', why: 'PS 只写 text，不支持显示/隐藏开关' },
   'setSlideNumber|startFrom': { class: '延后', why: 'PS 只写 visible，startFrom（起始页号）没实现' },
-  'setSlideTransition|duration': { class: '延后', why: 'PS 只写 EntryEffect，过渡时长没实现' },
-  'setSlideTransition|sound': { class: '延后', why: '同上：过渡音效没实现' },
   'startSlideShow|fromSlide': { class: '延后', why: 'PS 只能从头放映，fromSlide 没实现' },
   'transpose|destination': { class: '延后', why: 'PS 读 targetCell/destinationCell，TS 的 destination 形态没映射' },
 };

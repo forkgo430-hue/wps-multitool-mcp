@@ -662,7 +662,10 @@ $ParamAlias = @{
     'setPptDateTime'       = @{ show = 'visible'; autoUpdate = 'useFixed' }
     'setBorder'            = @{ borderStyle = 'style' }
     'setSlideTransition'   = @{ transition = 'effect' }
-    'set3DRotation'        = @{ rotation = 'rotationX' }
+    # 这条以前把 rotation:{x,y,z} 整个对象改名成 rotationX，于是 case 里
+    # [float]$rx 收到一个 PSCustomObject → "无法将类型 psobject 转换为 float"。
+    # case 已改成自己读 rotation.x/y/z，这里不能再改名。
+    # 'set3DRotation'     = @{ rotation = 'rotationX' }
     'autoFilter'           = @{ column = 'field' }
     'createKpiCards'       = @{ data = 'cards' }
     'createMiniCharts'     = @{ data = 'items' }
@@ -5101,7 +5104,29 @@ switch ($Action) {
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
-        $shape = $slide.Shapes.Item($(if ($p.tableName) { $p.tableName } else { $p.tableIndex }))
+        # tableIndex 是"第几个表格"，不是"第几个形状" —— 以前直接当形状序号用，
+        # 拿到的往往是矩形文本框，于是设样式全落空、返回却是 success。
+        $shape = $null
+        if ($p.tableName) {
+            try { $shape = $slide.Shapes.Item([string]$p.tableName) } catch {}
+        }
+        if ($null -eq $shape) {
+            $want = if ($null -ne $p.tableIndex) { [int]$p.tableIndex } else { 1 }
+            $seen = 0
+            for ($i = 1; $i -le $slide.Shapes.Count; $i++) {
+                $cand = $slide.Shapes.Item($i)
+                $isTable = $false
+                try { $isTable = [bool]$cand.HasTable } catch {}
+                if ($isTable) {
+                    $seen++
+                    if ($seen -eq $want) { $shape = $cand; break }
+                }
+            }
+        }
+        if ($null -eq $shape) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 本页找不到第 $($p.tableIndex) 个表格" }
+            return
+        }
         if ($null -ne $p.left) { $shape.Left = $p.left }
         if ($null -ne $p.top) { $shape.Top = $p.top }
         if ($null -ne $p.width) { $shape.Width = $p.width }
@@ -5484,13 +5509,25 @@ switch ($Action) {
         # animationType 是已下线工具 wps_ppt_set_animation 的旧键名，仍认（否则老调用一律失败）
         $rawEffect = if ($p.effect) { $p.effect } elseif ($p.animationType) { $p.animationType } else { $null }
         if (-not $rawEffect) {
-            Output-Json @{ success = $false; error = "[勿重试·先改参数] 缺少 effect（可用：appear/fadeIn/flyIn/wipeIn/zoomIn，或直接给 MsoAnimEffect 数字）" }
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 缺少 effect（可用：appear/fadeIn/flyIn/wipeIn/zoomIn/pulse/spin/grow/teeter，或直接给 MsoAnimEffect 数字）" }
             return
         }
-        $effectMap = @{ appear = 1; fadeIn = 10; flyIn = 2; wipeIn = 22; zoomIn = 53 }
+        # 第 8 轮动画族合并后，这张表要同时接住三类：入场（entrance）、强调（emphasis）、退场（exit）。
+        # 强调那几个值沿用 addEmphasisAnimation 一直在用的；退场在 WPS 上没有稳定的枚举名，
+        # 所以【不猜】—— 认不出的名字会明确报错并提示改传 MsoAnimEffect 数字（AddEffect 是吃数字的）。
+        $effectMap = @{
+            # 入场
+            appear = 1; fadeIn = 10; flyIn = 2; wipeIn = 22; zoomIn = 53; bounceIn = 26; spinIn = 15
+            dissolveIn = 9; boxIn = 4; circleIn = 6; diamondIn = 8; wheelIn = 21; plusIn = 13
+            wedgeIn = 20; randomBarsIn = 14; stripsIn = 18; blindsIn = 3; checkerboardIn = 5
+            crawlIn = 7; stretchIn = 17; swivelIn = 19; floatUp = 30; riseUp = 34; thinLine = 36
+            unfold = 37; whip = 38; expand = 50; shrink = 46
+            # 强调（与 addEmphasisAnimation 用的是同一套）
+            pulse = 63; spin = 15; grow = 59; teeter = 28; colorPulse = 62
+        }
         $effectId = if ($rawEffect -is [int] -or $rawEffect -is [long] -or $rawEffect -is [double]) { [int]$rawEffect } elseif ($effectMap.ContainsKey([string]$rawEffect)) { $effectMap[[string]$rawEffect] } else { $null }
         if ($null -eq $effectId) {
-            Output-Json @{ success = $false; error = "[勿重试·先改参数] 不认识的 effect「$($p.effect)」；可用：appear/fadeIn/flyIn/wipeIn/zoomIn，或直接给 MsoAnimEffect 数字" }
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 不认识的 effect「$($p.effect)」；常用：appear/fadeIn/flyIn/wipeIn/zoomIn（入场）、pulse/spin/grow/teeter（强调）。退场效果请直接给 MsoAnimEffect 数字（AddEffect 吃的是数字）" }
             return
         }
         try {
@@ -5508,8 +5545,26 @@ switch ($Action) {
         $pres = Get-TargetPres $ppt $p
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
-        $slide.SlideShowTransition.EntryEffect = $p.effect
-        Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex; effect = $p.effect } }
+        # 合并后的 wps_ppt_set_transition 传的是 effect；旧的直接调用方还在传 transition，两个都认。
+        if ($null -eq $p.effect -and $p.transition) { $p | Add-Member -NotePropertyName effect -NotePropertyValue $p.transition -Force }
+        $effectName = if ($p.effect) { ([string]$p.effect).ToLower() } else { "fade" }
+        # EntryEffect 是 PpEntryEffect 枚举：直接赋字符串 WPS 会抛"指定的转换无效"，
+        # 而以前这里就是把 $p.effect 原样赋过去 —— 取消切换（none）更是必然炸。
+        $effectMap = @{ none = 0; fade = 1; push = 2; wipe = 3; split = 4; reveal = 5; cover = 6; dissolve = 7; curtains = 8; random = 6; blinds = 3 }
+        $entry = -1
+        if ($effectMap.ContainsKey($effectName)) { $entry = $effectMap[$effectName] }
+        elseif ($effectName -match '^\d+$') { $entry = [int]$effectName }
+        if ($entry -lt 0) {
+            Output-Json @{ success = $false; error = "不认识的切换效果：$effectName（可用：none/fade/push/wipe/split/reveal/cover/dissolve/curtains）" }
+            return
+        }
+        $tr = $slide.SlideShowTransition
+        $tr.EntryEffect = $entry
+        $dur = 0.0
+        if ($p.duration) { try { $dur = [double]$p.duration } catch { $dur = 0.0 } }
+        if ($dur -gt 0) { try { $tr.Duration = $dur } catch {} }
+        # WPS COM 没有"切换时播放声音"的接口（那是 PowerPoint 的 AddMediaObject2），传了如实回报而不是假装生效
+        Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex; effect = $effectName; entryEffect = $entry; duration = $dur; soundApplied = $false } }
     }
 
     "setSlideBackground" {
@@ -5525,6 +5580,27 @@ switch ($Action) {
         if ($p.imagePath) {
             $slide.FollowMasterBackground = $false
             $slide.Background.Fill.UserPicture($p.imagePath)
+        }
+        # 渐变：合并后的 wps_ppt_set_background(target=slide,type=gradient) 走的就是这条，
+        # 而这里以前只认 color/imagePath → 传渐变没反应。colors 数组与 color1/color2 都接。
+        if ($null -eq $p.color1 -and $p.colors) {
+            $arr = @($p.colors)
+            if ($arr.Count -ge 1) { $p | Add-Member -NotePropertyName color1 -NotePropertyValue $arr[0] -Force }
+            if ($arr.Count -ge 2) { $p | Add-Member -NotePropertyName color2 -NotePropertyValue $arr[1] -Force }
+        }
+        if ($p.color1) {
+            try {
+                $slide.FollowMasterBackground = $false
+                $bgf = $slide.Background.Fill
+                $bgf.Visible = $true
+                $bgf.TwoColorGradient(1, 1)
+                $c1 = Convert-HexColorToRgbInt([string]$p.color1)
+                if ($null -ne $c1) { $bgf.ForeColor.RGB = $c1 }
+                if ($p.color2) {
+                    $c2 = Convert-HexColorToRgbInt([string]$p.color2)
+                    if ($null -ne $c2) { $bgf.BackColor.RGB = $c2 }
+                }
+            } catch {}
         }
         Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex } }
     }
@@ -5985,55 +6061,76 @@ switch ($Action) {
         $slide = $pres.Slides.Item($slideIndex)
 
         $layout = if ($p.layout) { $p.layout } else { "grid" }
-        $margin = if ($p.margin) { $p.margin } else { 50 }
-        $gap = if ($p.gap) { $p.gap } else { 20 }
-        $slideWidth = 720
-        $slideHeight = 540
+        $margin = if ($p.margin) { [double]$p.margin } else { 50.0 }
+        $gap = if ($p.gap) { [double]$p.gap } else { 20.0 }
+        $slideWidth = 720.0
+        $slideHeight = 540.0
 
+        # 逐个形状取值：属性读取会抛。实测在整轮冒烟里，前面的用例给形状加过 3D 旋转/材质之后，
+        # 再读 Width/Height 就抛"指定的转换无效" —— 一个形状读失败不该让整页排版全废。
+        # 这里把可排的形状收成 { shape, w, h }，取不到尺寸的直接跳过。
         $shapes = @()
+        $skipped = 0
         for ($i = 1; $i -le $slide.Shapes.Count; $i++) {
-            $s = $slide.Shapes.Item($i)
-            if ($s.Type -eq 1 -or $s.Type -eq 6 -or $s.Type -eq 17) { $shapes += $s }
+            $s = $null
+            try { $s = $slide.Shapes.Item($i) } catch { $skipped++; continue }
+            $t = -1
+            try { $t = [int]$s.Type } catch { $t = -1 }
+            if ($t -ne 1 -and $t -ne 6 -and $t -ne 17) { continue }
+            $w = 0.0; $h = 0.0
+            try { $w = [double]$s.Width } catch { $skipped++; continue }
+            try { $h = [double]$s.Height } catch { $skipped++; continue }
+            $shapes += , @($s, $w, $h)
         }
 
         if ($shapes.Count -eq 0) {
-            Output-Json @{ success = $true; data = @{ message = "没有可排列的形状"; count = 0 } }
-            break
+            Output-Json @{ success = $true; data = @{ message = "没有可排列的形状"; count = 0; skipped = $skipped } }
+            return
         }
 
         if ($layout -eq "horizontal") {
-            $totalWidth = 0
-            foreach ($shape in $shapes) { $totalWidth += $shape.Width }
+            $totalWidth = 0.0
+            foreach ($row in $shapes) { $totalWidth += [double]$row[1] }
             $availWidth = $slideWidth - 2 * $margin
             $spacing = ($availWidth - $totalWidth) / ($shapes.Count + 1)
-            $currentX = $margin + $spacing
-            foreach ($shape in $shapes) {
-                $shape.Left = $currentX
-                $shape.Top = ($slideHeight - $shape.Height) / 2
-                $currentX += $shape.Width + $spacing
+            $currentX = [double]$margin + $spacing
+            foreach ($row in $shapes) {
+                $shape = $row[0]; $w = [double]$row[1]; $h = [double]$row[2]
+                try { $shape.Left = [double]$currentX } catch { $skipped++ }
+                try { $shape.Top = [double](($slideHeight - $h) / 2) } catch { $skipped++ }
+                $currentX = $currentX + $w + $spacing
             }
         } elseif ($layout -eq "vertical") {
-            $currentY = $margin
-            foreach ($shape in $shapes) {
-                $shape.Left = ($slideWidth - $shape.Width) / 2
-                $shape.Top = $currentY
-                $currentY += $shape.Height + $gap
+            # 全部走 double 本地变量再赋值：直接拿表达式结果写 COM 的 Single 属性
+            # 会抛"指定的转换无效"（实测只有 vertical 分支炸）。
+            $currentY = [double]$margin
+            foreach ($row in $shapes) {
+                $shape = $row[0]; $w = [double]$row[1]; $h = [double]$row[2]
+                try { $shape.Left = [double](($slideWidth - $w) / 2) } catch { $skipped++ }
+                try { $shape.Top = [double]$currentY } catch { $skipped++ }
+                $currentY = $currentY + $h + [double]$gap
             }
         } else {
-            $cols = if ($p.cols) { $p.cols } else { [Math]::Ceiling([Math]::Sqrt($shapes.Count)) }
-            $rows = [Math]::Ceiling($shapes.Count / $cols)
+            # 显式 int：Math.Ceiling/Floor 返回 double，拿去做取模/赋值时 COM 的 Single 属性会抛"指定的转换无效"
+            $cols = if ($p.cols) { [int]$p.cols } else { [int][Math]::Ceiling([Math]::Sqrt($shapes.Count)) }
+            if ($cols -lt 1) { $cols = 1 }
+            $rows = [int][Math]::Ceiling($shapes.Count / $cols)
+            if ($rows -lt 1) { $rows = 1 }
             $cellWidth = ($slideWidth - 2 * $margin) / $cols
             $cellHeight = ($slideHeight - 2 * $margin) / $rows
             for ($idx = 0; $idx -lt $shapes.Count; $idx++) {
                 $col = $idx % $cols
-                $row = [Math]::Floor($idx / $cols)
-                $shape = $shapes[$idx]
-                $shape.Left = $margin + $col * $cellWidth + ($cellWidth - $shape.Width) / 2
-                $shape.Top = $margin + $row * $cellHeight + ($cellHeight - $shape.Height) / 2
+                $rowIdx = [int][Math]::Floor($idx / $cols)
+                $row = $shapes[$idx]
+                $shape = $row[0]; $w = [double]$row[1]; $h = [double]$row[2]
+                $newLeft = [double]$margin + [double]$col * [double]$cellWidth + ([double]$cellWidth - $w) / 2
+                $newTop = [double]$margin + [double]$rowIdx * [double]$cellHeight + ([double]$cellHeight - $h) / 2
+                try { $shape.Left = [double]$newLeft } catch { $skipped++ }
+                try { $shape.Top = [double]$newTop } catch { $skipped++ }
             }
         }
 
-        Output-Json @{ success = $true; data = @{ layout = $layout; count = $shapes.Count } }
+        Output-Json @{ success = $true; data = @{ layout = $layout; count = $shapes.Count; skipped = $skipped } }
     }
 
     "smartDistribute" {
@@ -6052,40 +6149,69 @@ switch ($Action) {
                 try { $shapes += $slide.Shapes.Item($name) } catch {}
             }
         } else {
+            # 同 autoLayout：Shape.Type 与尺寸都可能抛（页面里有 3D/表格/图片时），
+            # 收集阶段就逐个 try/catch，别让一个形状把整次分布拖垮。
             for ($i = 1; $i -le $slide.Shapes.Count; $i++) {
-                $s = $slide.Shapes.Item($i)
-                if ($s.Type -eq 1 -or $s.Type -eq 6 -or $s.Type -eq 17) { $shapes += $s }
+                $s = $null
+                try { $s = $slide.Shapes.Item($i) } catch { continue }
+                $t = -1
+                try { $t = [int]$s.Type } catch { $t = -1 }
+                if ($t -eq 1 -or $t -eq 6 -or $t -eq 17) {
+                    $okSize = $true
+                    try { $null = [double]$s.Width } catch { $okSize = $false }
+                    if ($okSize) { try { $null = [double]$s.Height } catch { $okSize = $false } }
+                    if ($okSize) { $shapes += $s }
+                }
             }
         }
 
         if ($shapes.Count -lt 2) {
             Output-Json @{ success = $true; data = @{ message = "需要至少2个形状"; count = $shapes.Count } }
-            break
+            return
         }
 
-        $shapes = if ($direction -eq "horizontal") { $shapes | Sort-Object Left } else { $shapes | Sort-Object Top }
+        # 不用 Sort-Object：COM 形状对象参与比较会抛"指定的转换无效"（只取到 1 个时返回的还不是数组）。
+        # 自己按 [double] 键插入排序，键先落本地变量。
+        $keys = @()
+        foreach ($shp in $shapes) {
+            $v = 0.0
+            try { $v = if ($direction -eq "horizontal") { [double]$shp.Left } else { [double]$shp.Top } } catch { $v = 0.0 }
+            $keys += , @($v, $shp)
+        }
+        for ($a = 1; $a -lt $keys.Count; $a++) {
+            $cur = $keys[$a]; $b = $a - 1
+            while ($b -ge 0 -and $keys[$b][0] -gt $cur[0]) { $keys[$b + 1] = $keys[$b]; $b-- }
+            $keys[$b + 1] = $cur
+        }
+        $shapes = @()
+        foreach ($kv in $keys) { $shapes += $kv[1] }
 
+        # 与 autoLayout 同一个坑：COM 属性参与算术会抛"指定的转换无效"，统一先落 [double]
         if ($direction -eq "horizontal") {
-            $minX = $shapes[0].Left
-            $maxX = $shapes[$shapes.Count - 1].Left + $shapes[$shapes.Count - 1].Width
-            $totalWidth = 0
-            foreach ($shape in $shapes) { $totalWidth += $shape.Width }
-            $spacing = ($maxX - $minX - $totalWidth) / ($shapes.Count - 1)
+            $minX = 0.0; try { $minX = [double]$shapes[0].Left } catch {}
+            $maxX = $minX
+            try { $last = $shapes[$shapes.Count - 1]; $maxX = [double]$last.Left + [double]$last.Width } catch {}
+            $totalWidth = 0.0
+            foreach ($shape in $shapes) { try { $totalWidth += [double]$shape.Width } catch {} }
+            $spacing = ($maxX - $minX - $totalWidth) / [Math]::Max(1, $shapes.Count - 1)
             $currentX = $minX
             foreach ($shape in $shapes) {
-                $shape.Left = $currentX
-                $currentX += $shape.Width + $spacing
+                $w = 0.0; try { $w = [double]$shape.Width } catch {}
+                try { $shape.Left = [double]$currentX } catch {}
+                $currentX = $currentX + $w + $spacing
             }
         } else {
-            $minY = $shapes[0].Top
-            $maxY = $shapes[$shapes.Count - 1].Top + $shapes[$shapes.Count - 1].Height
-            $totalHeight = 0
-            foreach ($shape in $shapes) { $totalHeight += $shape.Height }
-            $spacing = ($maxY - $minY - $totalHeight) / ($shapes.Count - 1)
+            $minY = 0.0; try { $minY = [double]$shapes[0].Top } catch {}
+            $maxY = $minY
+            try { $last = $shapes[$shapes.Count - 1]; $maxY = [double]$last.Top + [double]$last.Height } catch {}
+            $totalHeight = 0.0
+            foreach ($shape in $shapes) { try { $totalHeight += [double]$shape.Height } catch {} }
+            $spacing = ($maxY - $minY - $totalHeight) / [Math]::Max(1, $shapes.Count - 1)
             $currentY = $minY
             foreach ($shape in $shapes) {
-                $shape.Top = $currentY
-                $currentY += $shape.Height + $spacing
+                $h = 0.0; try { $h = [double]$shape.Height } catch {}
+                try { $shape.Top = [double]$currentY } catch {}
+                $currentY = $currentY + $h + $spacing
             }
         }
 
@@ -6716,14 +6842,30 @@ switch ($Action) {
         $ppt = Get-WpsPpt
         if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        $transitionMap = @{ none = 0; fade = 1; push = 2; wipe = 3; split = 4; reveal = 5; random = 6 }
-        $transition = if ($transitionMap[$p.transition]) { $transitionMap[$p.transition] } else { if ($p.transition) { $p.transition } else { 1 } }
+        # 参数名是 effect（合并后的 set_transition target='all' 就是它）；
+        # 以前这里只读 $p.transition，工具传的一直是 effect → 映射表查不到 → 静默全设成 fade。
+        if ($null -eq $p.effect -and $p.transition) { $p | Add-Member -NotePropertyName effect -NotePropertyValue $p.transition -Force }
+        $effectName = if ($p.effect) { ([string]$p.effect).ToLower() } else { "fade" }
+        $transitionMap = @{ none = 0; fade = 1; push = 2; wipe = 3; split = 4; reveal = 5; cover = 6; dissolve = 7; curtains = 8; random = 6; blinds = 3 }
+        $transition = -1
+        if ($transitionMap.ContainsKey($effectName)) { $transition = $transitionMap[$effectName] }
+        elseif ($effectName -match '^\d+$') { $transition = [int]$effectName }
+        if ($transition -lt 0) {
+            Output-Json @{ success = $false; error = "不认识的切换效果：$effectName（可用：none/fade/push/wipe/split/reveal/cover/dissolve/curtains）" }
+            return
+        }
+        $dur = 0.0
+        if ($p.duration) { try { $dur = [double]$p.duration } catch { $dur = 0.0 } }
+        $applied = 0
         for ($i = 1; $i -le $pres.Slides.Count; $i++) {
             $slide = $pres.Slides.Item($i)
-            $slide.SlideShowTransition.EntryEffect = $transition
-            if ($p.duration) { $slide.SlideShowTransition.Duration = $p.duration }
+            $tr = $slide.SlideShowTransition
+            $tr.EntryEffect = $transition
+            if ($dur -gt 0) { try { $tr.Duration = $dur } catch {} }
+            $applied++
         }
-        Output-Json @{ success = $true; data = @{ transition = $p.transition; appliedTo = $pres.Slides.Count } }
+        # 回读字段名与 setSlideTransition 对齐（slideCount）；appliedTo 留着兼容老调用方
+        Output-Json @{ success = $true; data = @{ effect = $effectName; entryEffect = $transition; duration = $dur; slideCount = $applied; appliedTo = $applied } }
     }
 
     "setBackgroundColor" {
