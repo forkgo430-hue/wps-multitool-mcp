@@ -4961,7 +4961,20 @@ switch ($Action) {
         if ($null -ne $p.width) { $shape.Width = $p.width }
         if ($null -ne $p.height) { $shape.Height = $p.height }
         if ($null -ne $p.rotation) { $shape.Rotation = $p.rotation }
-        Output-Json @{ success = $true; data = @{ name = $shape.Name } }
+        # 样式：schema 承诺了 style{borderColor,borderWidth,...}，而这个 case 以前只摆位置，
+        # 传了样式等于没传（返回 success，图上啥都没变）。这里真正落到 Line 上。
+        if ($p.borderColor -or $p.borderWidth) {
+            try {
+                $shape.Line.Visible = $true
+                if ($p.borderColor) {
+                    $bc = Convert-HexColorToRgbInt([string]$p.borderColor)
+                    if ($null -ne $bc) { $shape.Line.ForeColor.RGB = $bc }
+                }
+                if ($null -ne $p.borderWidth) { $shape.Line.Weight = [double]$p.borderWidth }
+            } catch {}
+        }
+        if ($p.shadow -and $p.shadow -is [string]) { } # 历史形状，忽略
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; styled = [bool]($p.borderColor -or $p.borderWidth) } }
     }
 
     "exportSlideAsImage" {
@@ -5093,7 +5106,37 @@ switch ($Action) {
         if ($null -ne $p.top) { $shape.Top = $p.top }
         if ($null -ne $p.width) { $shape.Width = $p.width }
         if ($null -ne $p.height) { $shape.Height = $p.height }
-        Output-Json @{ success = $true; data = @{ name = $shape.Name } }
+        # 样式：这个 case 以前只摆位置/尺寸，传了 headerColor/fontSize 也什么都不做。
+        $styled = 0
+        try {
+            if ($shape.HasTable) {
+                $tbl = $shape.Table
+                if ($p.headerColor) {
+                    $hc = Convert-HexColorToRgbInt([string]$p.headerColor)
+                    if ($null -ne $hc) {
+                        for ($c = 1; $c -le $tbl.Columns.Count; $c++) {
+                            $tbl.Cell(1, $c).Shape.Fill.ForeColor.RGB = $hc
+                        }
+                        $styled++
+                    }
+                }
+                if ($null -ne $p.fontSize -or $p.fontColor -or $null -ne $p.bold) {
+                    for ($r = 1; $r -le $tbl.Rows.Count; $r++) {
+                        for ($c = 1; $c -le $tbl.Columns.Count; $c++) {
+                            $tr = $tbl.Cell($r, $c).Shape.TextFrame.TextRange
+                            if ($null -ne $p.fontSize) { $tr.Font.Size = [double]$p.fontSize }
+                            if ($p.fontColor) {
+                                $fc = Convert-HexColorToRgbInt([string]$p.fontColor)
+                                if ($null -ne $fc) { $tr.Font.Color.RGB = $fc }
+                            }
+                            if ($null -ne $p.bold) { $tr.Font.Bold = [bool]$p.bold }
+                        }
+                    }
+                    $styled++
+                }
+            }
+        } catch {}
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; styled = ($styled -gt 0) } }
     }
 
     "setPptTableCellStyle" {
@@ -5218,6 +5261,12 @@ switch ($Action) {
         $slide = $pres.Slides.Item($slideIndex)
         $bg = $slide.Background.Fill
         $bg.Visible = $true
+        # 同 setShapeGradient：schema 给 gradient:{colors:[...]}，摊平后是 $p.colors
+        if ($null -eq $p.color1 -and $p.colors) {
+            $arr = @($p.colors)
+            if ($arr.Count -ge 1) { $p | Add-Member -NotePropertyName color1 -NotePropertyValue $arr[0] -Force }
+            if ($arr.Count -ge 2) { $p | Add-Member -NotePropertyName color2 -NotePropertyValue $arr[1] -Force }
+        }
         $bg.TwoColorGradient(1, 1)
         if ($p.color1) {
             $c1 = Convert-HexColorToRgbInt([string]$p.color1)
@@ -5237,6 +5286,13 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
         $shape = $slide.Shapes.Item($(if ($p.name) { $p.name } else { $p.shapeIndex }))
+        # 文档承诺的是 gradient:{type,colors:["#a","#b"]}，入口摊平后变成 $p.colors；
+        # 而这里只认 $p.color1/$p.color2 —— 于是"传了渐变却什么都没变"。两种都接。
+        if ($null -eq $p.color1 -and $p.colors) {
+            $arr = @($p.colors)
+            if ($arr.Count -ge 1) { $p | Add-Member -NotePropertyName color1 -NotePropertyValue $arr[0] -Force }
+            if ($arr.Count -ge 2) { $p | Add-Member -NotePropertyName color2 -NotePropertyValue $arr[1] -Force }
+        }
         $shape.Fill.TwoColorGradient(1, 1)
         if ($p.color1) {
             $c1 = Convert-HexColorToRgbInt([string]$p.color1)
@@ -6588,8 +6644,19 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
         $seq = $slide.TimeLine.MainSequence
-        if ($p.index) {
-            $seq.Item($p.index).Delete()
+        # 工具传的是 animationIndex，这里以前只读 index → 落进 else 分支把【所有动画都删了】，
+        # 计数变化看起来"成功"，但删多删少都不受控。两个键都认，并做越界检查。
+        $idx = if ($null -ne $p.animationIndex) { [int]$p.animationIndex } elseif ($null -ne $p.index) { [int]$p.index } else { 0 }
+        if ($seq.Count -eq 0) {
+            Output-Json @{ success = $true; data = @{ removed = 0; note = "本页本来就没有动画" } }
+            return
+        }
+        if ($idx -ge 1) {
+            if ($idx -gt $seq.Count) {
+                Output-Json @{ success = $false; error = "[勿重试·先改参数] 动画序号 $idx 越界：本页共 $($seq.Count) 个（1 起）" }
+                return
+            }
+            $seq.Item($idx).Delete()
         } else {
             while ($seq.Count -gt 0) { $seq.Item(1).Delete() }
         }
