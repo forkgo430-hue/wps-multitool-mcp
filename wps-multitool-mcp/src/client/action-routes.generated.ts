@@ -3,7 +3,7 @@
  * 源：scripts/wps-com.ps1 的 switch ($Action) 分支。
  * 重新生成：node scripts/gen-action-routes.js
  *
- * 统计：common=30  word=72  ppt=108  excel=101  合计 311
+ * 统计：common=30  word=72  ppt=111  excel=101  合计 314
  */
 
 import type { AppKey } from './action-routes';
@@ -245,6 +245,7 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "setColumns": 'word',
   "setDefaultFont": 'word',
   "setFont": 'word',
+  "setFontColor": 'ppt',
   "setFormula": 'excel',
   "setHeaderFooterLayout": 'word',
   "setHeadingNumbering": 'word',
@@ -284,7 +285,9 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "setSlideLayout": 'ppt',
   "setSlideNotes": 'ppt',
   "setSlideNumber": 'ppt',
+  "setSlideSize": 'ppt',
   "setSlideSubtitle": 'ppt',
+  "setSlideTheme": 'ppt',
   "setSlideTitle": 'ppt',
   "setSlideTransition": 'ppt',
   "setTextBoxStyle": 'ppt',

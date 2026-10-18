@@ -410,19 +410,23 @@ export const switchPresentationHandler: ToolHandler = async (
  */
 export const setSlideThemeDefinition: ToolDefinition = {
   name: 'wps_ppt_set_slide_theme',
-  description: `设置演示文稿主题。
+  description: `应用主题模板（换整套配色/字体/版式）。
+
+**必须是本机模板文件的完整路径**（.thmx / .potx / .ppt）—— WPS 的 COM 只有
+ApplyTemplate(文件)，没有"按主题名切换"的接口。传「商务主题」这种名字会明确报错，
+不会假装成功。
 
 使用场景：
-- "切换PPT主题"
-- "应用商务主题"
-- "更换演示文稿风格"`,
+- "用这个模板文件的主题"  → theme: "D:\\\\模板\\\\商务.thmx"
+- "套用公司模板"          → theme: "D:\\\\公司\\\\模板.potx"
+- 只想换配色/字体（不需要模板文件）→ 用 wps_ppt_beautify 或 wps_ppt_unify_font`,
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
     properties: {
       theme: {
         type: 'string',
-        description: '主题名称',
+        description: '模板文件的完整路径（.thmx / .potx / .ppt），不是主题名',
       },
     },
     required: ['theme'],

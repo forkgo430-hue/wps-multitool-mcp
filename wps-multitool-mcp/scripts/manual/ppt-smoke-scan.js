@@ -267,7 +267,6 @@ async function shot(tag) {
   await mk(() => call('wps_ppt_add_slide', { layout: 'blank' }), '第 1 页');
   await mk(() => call('wps_ppt_add_slide', { layout: 'blank' }), '第 2 页');
   const built = Number((txt(await call('wps_ppt_get_slide_count', {})).match(/(\d+)/) || [])[1] || 0);
-  console.log(`  靶子页数 = ${built}${built >= 2 ? '' : ' ⚠ 不足 2 页，末段用例会失真'}`);
   for (const page of [1, 2]) {
     // 参数名必须与 schema 一致：add_shape 要的是 type（不是 shapeType）。
     // 写错过一次：PS 读不到 type → AddShape($null) → E_FAIL，靶子只建出第 1 页，
@@ -280,12 +279,42 @@ async function shot(tag) {
     // 同理：超链接工具的参数是 url，不是 address
     await mk(() => call('wps_ppt_add_ppt_hyperlink', { slideIndex: page, shapeIndex: 1, url: 'https://example.com' }), `p${page} 超链接形状`);
   }
+  const builtCount = built * 6;
+  console.log(`  靶子页数 = ${built}${built >= 2 ? ' ✓' : ' ⚠ 不足 2 页，末段用例会失真'}`);
+  console.log(`  靶子元素 = ${builtCount}/12${builtCount >= 12 ? ' ✓' : ' ⚠ 元素不足'}`);
+
+  // 给靶子写文字：unify_font / beautify / beautify_all_slides / set_font_color 这些
+  // 全是"改文字样式"的工具，靶子上一旦没有文字，它们改不了任何东西 ——
+  // 导出图当然没变化，于是被判成"假成功"。上一轮 4 条里 3 条就是这么误判的。
+  // 这不是改判据，是把靶子补到"这些工具本来该作用的对象存在"。
+  console.log('  写入文字（让文字类工具有作用对象）：');
+  let textOk = 0;
+  for (const page of [1, 2]) {
+    // 形状索引 1 = 矩形，3 = 文本框（顺序：矩形/椭圆/文本框/表格/图片/超链接）
+    if (await mk(() => call('wps_ppt_set_shape_text', { slideIndex: page, shapeIndex: 1, text: `冒烟靶子 第${page}页 标题文字` }), `p${page} 形状1 文字`)) textOk++;
+    if (await mk(() => call('wps_ppt_set_shape_text', { slideIndex: page, shapeIndex: 3, text: `第${page}页正文样例文字，用于验证字体与配色类工具` }), `p${page} 文本框 文字`)) textOk++;
+  }
+  console.log(`  带文字的元素 = ${textOk}/4${textOk >= 4 ? ' ✓' : ' ⚠ 文字类工具的结论会不准'}`);
 
   // 导出确定性：连导两次，字节必须一致，否则"差分"这个判据本身就不可信
   const d1 = await shot('det1');
   const d2 = await shot('det2');
   const exportStable = d1 !== null && d1 === d2;
   console.log(`  ${exportStable ? '✓' : '⚠'} 导出确定性（连导两次一致）${exportStable ? '' : ' — 不稳定，导出图差分类用例会标"无法判定"'}`);
+
+  // --build-only：只建靶、验靶，然后退出。
+  // 存在的理由：交付前必须证明"靶子真的能建起来"（上一轮 58 个失败全是因为靶子只有 1 页），
+  // 而跑完整冒烟要 10 分钟且属于车道 C 的正式占用。这个开关让"靶子是否健康"能单独、快速地验。
+  if (process.argv.includes('--build-only')) {
+    console.log('\n=== --build-only：靶子建好即退出（不跑冒烟用例）===');
+    console.log(`  页数=${built} 元素=${builtCount}/12 带文字=${textOk}/4 导出稳定=${exportStable}`);
+    const healthy = built >= 2 && builtCount >= 12 && textOk >= 4;
+    console.log(`  ${healthy ? '✓ 靶子健康' : '✗ 靶子不健康 —— 这状态下跑出来的失败数没有意义'}`);
+    // 不保存直接关，别留垃圾
+    try { await call('wps_ppt_close_presentation', { name: created || undefined, save: false }); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    process.exit(healthy ? 0 : 1);
+  }
 
   console.log(`\n=== 3. 常规段（${normal.length} 条）===`);
   let basePrint = await fingerprint();
@@ -336,7 +365,22 @@ async function shot(tag) {
       const after = await shot('diff');
       const changed = after !== null && after !== baseShot;
       if (changed) baseShot = after;
-      note(tool, changed, changed ? '导出图有变化' : '导出图无变化（返回 success 但没生效）', repro);
+      // 差分没变化时补一条诊断（不改结论，只把线索摆出来）：
+      // 有些操作是"结构变了但静态图看不见"（空占位符、切换效果、页脚覆盖层），
+      // 也有的是"矩阵参数根本不是 schema 的参数"（工具其实没收到值）。
+      // 这两种的最优判据完全不同，靠一句"无变化"没法分诊 —— 第 6 轮为此白判过一次。
+      let hint = '';
+      if (!changed) {
+        const afterPrint = await fingerprint();
+        if (!samePrint(basePrint, afterPrint)) {
+          hint = `（注：导出图没变，但计数变了 ${JSON.stringify(basePrint)} → ${JSON.stringify(afterPrint)}：` +
+            '可能是不可见的结构变化，判据该换读回/数量差，不是工具坏）';
+          basePrint = afterPrint;
+        } else {
+          hint = '（注：图与计数都没变，检查矩阵参数是否与 schema 一致 —— 参数名不对时工具会静默什么都不做）';
+        }
+      }
+      note(tool, changed, (changed ? '导出图有变化' : '导出图无变化（返回 success 但没生效）') + hint, repro);
       return;
     }
     note(tool, false, `未知判据 "${judge}"（矩阵只允许 读回/导出图差分/数量差/跳过）`, repro);

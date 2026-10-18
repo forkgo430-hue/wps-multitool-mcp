@@ -148,11 +148,12 @@ export const beautifyDefinition: ToolDefinition = {
 - creative: 创意风（珊瑚红+金色）
 - minimal: 简约风（黑白灰）
 
-美化包含的操作：
-- 统一字体
-- 应用配色方案
-- 对齐元素
-- 优化间距
+美化【实际会做】的操作：
+- 统一字体（改所有有文字的文本框的字体名）
+- 应用配色方案（按字号分标题/正文上色）
+
+注意：不做自动对齐，也不动行距/间距 —— 这些改起来没有唯一正确答案，
+一键"优化"很容易把用户排版搞乱。要精确调版面用 align_shapes / set_shape_position。
 
 使用场景：
 - "美化这页PPT"
@@ -229,17 +230,29 @@ export const beautifyHandler: ToolHandler = async (
       output += `范围: ${beautify_all ? '所有幻灯片' : `第 ${result.slideIndex} 页`}\n`;
       output += `配色方案: ${schemeName}\n`;
       output += `字体: ${font || '微软雅黑'}\n\n`;
-      output += `优化详情：\n`;
 
-      result.operations.forEach((op) => {
-        const opName = {
-          unify_font: '统一字体',
-          apply_color_scheme: '应用配色',
-          align: '对齐元素',
-          optimize_spacing: '优化间距',
-        }[op.operation] || op.operation;
-        output += `- ${opName}: 处理了 ${op.count} 个元素\n`;
-      });
+      // operations 以前不存在（PS 只回 {style,count}），直接 .forEach 会把整个工具打崩
+      // ——冒烟第一条失败就是它。这里既兜空数组，也如实说"改了多少个文本"：
+      // 0 个不是"成功"，是"这一页没有可美化的文字"，必须让用户看出来。
+      const ops = Array.isArray(result.operations) ? result.operations : [];
+      const touched = ops.reduce((sum, op) => sum + (op.count || 0), 0);
+      if (touched === 0) {
+        output +=
+          '没有任何文本被改动 —— 这一页上没有带文字的形状/文本框。\n' +
+          '先写入文字再美化（wps_ppt_set_shape_text / wps_ppt_set_textbox_text），或换有文字的页。';
+      } else {
+        output += `优化详情：\n`;
+        for (const op of ops) {
+          const opName =
+            {
+              unify_font: '统一字体',
+              apply_color_scheme: '应用配色',
+              align: '对齐元素',
+              optimize_spacing: '优化间距',
+            }[op.operation] || op.operation;
+          output += `- ${opName}: 处理了 ${op.count} 个元素\n`;
+        }
+      }
 
       return {
         id: uuidv4(),

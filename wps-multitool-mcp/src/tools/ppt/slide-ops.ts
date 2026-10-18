@@ -1514,7 +1514,7 @@ export const setBackgroundHandler: ToolHandler = async (
 
 export const setSlideSizeDefinition: ToolDefinition = {
   name: 'wps_ppt_set_slide_size',
-  description: `设置演示文稿的幻灯片尺寸。
+  description: `设置演示文稿的幻灯片尺寸（按像素给，内部换算成 WPS 的磅）。
 
 常用尺寸：
 - 标准(4:3): 宽960, 高720
@@ -1522,6 +1522,8 @@ export const setSlideSizeDefinition: ToolDefinition = {
 - 宽屏(16:10): 宽960, 高600
 - A4横版: 宽1123, 高794
 - A4竖版: 宽794, 高1123
+
+注意：改尺寸会重排整份文稿，元素可能溢出页面。改完建议 wps_ppt_export_slide_as_image 看一眼。
 
 使用场景：
 - "把PPT改成16:9宽屏"
@@ -1533,11 +1535,11 @@ export const setSlideSizeDefinition: ToolDefinition = {
     properties: {
       width: {
         type: 'number',
-        description: '幻灯片宽度（像素）',
+        description: '幻灯片宽度（像素，96 DPI；内部 ×0.75 换算成磅）',
       },
       height: {
         type: 'number',
-        description: '幻灯片高度（像素）',
+        description: '幻灯片高度（像素，96 DPI；内部 ×0.75 换算成磅）',
       },
     },
     required: ['width', 'height'],

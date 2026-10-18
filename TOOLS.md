@@ -310,9 +310,9 @@
 | `wps_ppt_set_slide_content` |  | — | static | 设置幻灯片的正文内容区域。<br><sub>别名：设置幻灯片内容 / 设定幻灯片内容 / 幻灯片</sub> |
 | `wps_ppt_set_slide_layout` |  | — | static | 设置幻灯片的版式布局。<br><sub>别名：设置幻灯片版式 / 设定幻灯片版式 / 幻灯片</sub> |
 | `wps_ppt_set_slide_number` |  | — | static | 设置幻灯片页码的显示状态和起始编号。<br><sub>别名：设置幻灯片数字 / 设定幻灯片数字 / 幻灯片</sub> |
-| `wps_ppt_set_slide_size` |  | — | static | 设置演示文稿的幻灯片尺寸。<br><sub>别名：设置幻灯片size / 设定幻灯片size / 幻灯片</sub> |
+| `wps_ppt_set_slide_size` |  | — | static | 设置演示文稿的幻灯片尺寸（按像素给，内部换算成 WPS 的磅）。<br><sub>别名：设置幻灯片size / 设定幻灯片size / 幻灯片</sub> |
 | `wps_ppt_set_slide_subtitle` |  | — | static | 设置幻灯片的副标题。<br><sub>别名：设置幻灯片副标题 / 设定幻灯片副标题 / 幻灯片</sub> |
-| `wps_ppt_set_slide_theme` |  | — | static | 设置演示文稿主题。<br><sub>别名：设置幻灯片主题 / 设定幻灯片主题 / 幻灯片</sub> |
+| `wps_ppt_set_slide_theme` |  | — | static | 应用主题模板（换整套配色/字体/版式）。<br><sub>别名：设置幻灯片主题 / 设定幻灯片主题 / 幻灯片</sub> |
 | `wps_ppt_set_slide_transition` |  | — | static | 设置幻灯片的页面切换效果。<br><sub>别名：当前页切换效果 / 设置幻灯片切换效果 / 设定幻灯片切换效果</sub> |
 | `wps_ppt_set_table_cell` |  | — | live | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
 | `wps_ppt_set_table_cell_style` |  | — | static | 设置PPT表格中指定单元格的样式。<br><sub>别名：设置表格单元格样式 / 设定表格单元格样式 / 表格</sub> |

@@ -534,6 +534,28 @@ function Convert-HexColorToRgbInt([string]$hex) {
     return $r + ($g * 256) + ($b * 65536)
 }
 
+# 颜色 → RGB 整数：先按 #RRGGBB 解析，再退到常见颜色名。
+# 为什么不复用 Convert-HexColorToRgbInt：那个只吃十六进制，而 wps_ppt_set_font_color 的
+# schema 明确承诺"支持 #FF0000 或 red 这类颜色名"—— 承诺了就得做到，否则用户传 red 会静默不生效。
+function Convert-ColorToRgbInt([string]$color) {
+    if (-not $color) { return $null }
+    # Convert-HexColorToRgbInt 内部 ToInt32 遇到非十六进制会【抛异常】而不是返回 $null
+    # （实测 #ZZZZZZ → "未能找到任何可识别的数字"，用户看不懂）。这里接住，走统一的友好报错。
+    $rgb = $null
+    try { $rgb = Convert-HexColorToRgbInt $color } catch { $rgb = $null }
+    if ($null -ne $rgb) { return $rgb }
+    $names = @{
+        black = '000000'; white = 'FFFFFF'; red = 'FF0000'; green = '00B050'; lime = '00FF00'
+        blue = '0070C0'; yellow = 'FFFF00'; orange = 'FFA500'; purple = '800080'
+        gray = '808080'; grey = '808080'; pink = 'FFC0CB'; brown = 'A52A2A'
+        cyan = '00FFFF'; magenta = 'FF00FF'; navy = '000080'; teal = '008080'
+        gold = 'FFD700'; silver = 'C0C0C0'
+    }
+    $key = $color.Trim().ToLower()
+    if ($names.ContainsKey($key)) { return Convert-HexColorToRgbInt $names[$key] }
+    return $null
+}
+
 function Get-RangeFromAddress($workbook, [string]$address) {
     if ($address -match "^(?<sheet>[^!]+)!(?<range>.+)$") {
         $sheetName = $matches.sheet.Trim("'")
@@ -4330,7 +4352,9 @@ switch ($Action) {
         # 想丢弃改动又要抑制「另存为」弹框，标准做法是先把 Saved 置 true 再 Close()。
         if (-not $saveChanges) { try { $pres.Saved = $true } catch {} }
         $pres.Close()
-        Output-Json @{ success = $true; data = @{ closed = $name } }
+        # 第 6 轮：回包补 name。TS 读的是 data.name（打印"名称: xxx"），原来只回 closed
+        # → 每次关闭后用户看到"名称: undefined"（自检里就是这么发现的）。
+        Output-Json @{ success = $true; data = @{ closed = $name; name = $name; saved = [bool]$saveChanges } }
     }
 
     "getOpenPresentations" {
@@ -4477,6 +4501,50 @@ switch ($Action) {
         if ($null -eq $layout) { $layout = if ($p.layout) { $p.layout } else { 2 } }
         $pres.Slides.Item($index).Layout = $layout
         Output-Json @{ success = $true; data = @{ slideIndex = $index; layout = $layout } }
+    }
+
+    # 第 6 轮补：setSlideSize / setSlideTheme 两个动作 TS 一直在调，PS 里都没有 case
+    # → 冒烟里稳定报 Unknown action。补上，并且把"做不到的"说清楚，不糊一个 success。
+    "setSlideSize" {
+        $ppt = Get-WpsPpt
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
+        $pres = Get-TargetPres $ppt $p
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
+        $w = [double]$p.width
+        $h = [double]$p.height
+        if ($w -le 0 -or $h -le 0) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 宽高必须是正数（收到 width=$($p.width) height=$($p.height)）" }
+            return
+        }
+        # 单位换算：TS 的 schema 承诺的是【像素】，而 WPS 的 PageSetup 要的是【磅】。
+        # 1 px = 0.75 pt（96 DPI）。不换算的话 960×720 会被当成 960×720 磅 = 13.3×10 英寸，
+        # 页面上所有元素都跑到角落里去 —— 用户看到的是"设完尺寸版面全乱了"。
+        $wPt = $w * 0.75
+        $hPt = $h * 0.75
+        $pres.PageSetup.SlideWidth = $wPt
+        $pres.PageSetup.SlideHeight = $hPt
+        Output-Json @{ success = $true; data = @{ width = $w; height = $h; widthPt = $wPt; heightPt = $hPt; slideCount = $pres.Slides.Count } }
+    }
+
+    "setSlideTheme" {
+        $ppt = Get-WpsPpt
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
+        $pres = Get-TargetPres $ppt $p
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
+        $theme = [string]$p.theme
+        if (-not $theme) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 要给 theme（模板文件的完整路径）" }
+            return
+        }
+        # WPS 的 COM 只有 ApplyTemplate(文件路径)，没有"按主题名切换"的接口。
+        # 传进来的是名字（如「商务主题」）时明确报错 —— 这一条最容易被糊成 success，
+        # 因为 ApplyTemplate 对不存在的文件在某些版本上会静默什么都不做。
+        if (-not (Test-Path -LiteralPath $theme)) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 主题需要【模板文件路径】，而「$theme」不是本机存在的文件。WPS 没有按主题名切换的接口，请改用 .thmx / .potx / .ppt 模板文件的完整路径" }
+            return
+        }
+        $pres.ApplyTemplate($theme)
+        Output-Json @{ success = $true; data = @{ theme = $theme; slideCount = $pres.Slides.Count } }
     }
 
     "getSlideNotes" {
@@ -4757,6 +4825,34 @@ switch ($Action) {
         }
         if ($p.lineWidth) { $shape.Line.Weight = $p.lineWidth }
         Output-Json @{ success = $true; data = @{ name = $shape.Name } }
+    }
+
+    # 第 6 轮补：TS 侧 wps_ppt_set_font_color 一直在调 setFontColor，但 PS 里没有这个 case，
+    # 于是永远报 Unknown action（冒烟里就是这条）。注意"空文本"必须报错而不是返回 success ——
+    # 给一个没有文字的形状设字体颜色，改了也看不见，属于本轮要消灭的假成功。
+    "setFontColor" {
+        $ppt = Get-WpsPpt
+        if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
+        $pres = Get-TargetPres $ppt $p
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
+        $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
+        $slide = $pres.Slides.Item($slideIndex)
+        $shape = $slide.Shapes.Item($(if ($p.name) { $p.name } else { $p.shapeIndex }))
+        $rgb = Convert-ColorToRgbInt([string]$p.color)
+        if ($null -eq $rgb) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 颜色「$($p.color)」无法识别。请用 #RRGGBB（如 #FF0000）或常见颜色名（red/green/blue/black/white/yellow/orange/purple/gray/pink/cyan/magenta）" }
+            return
+        }
+        if (-not $shape.HasTextFrame) {
+            Output-Json @{ success = $false; error = "第 $slideIndex 页第 $($p.shapeIndex) 个形状没有文本框，无法设置文字颜色（要改填充色用 wps_ppt_set_shape_fill）" }
+            return
+        }
+        if (-not $shape.TextFrame.HasText) {
+            Output-Json @{ success = $false; error = "第 $slideIndex 页第 $($p.shapeIndex) 个形状是空文本，设置字色不会有任何可见变化。请先 wps_ppt_set_shape_text 写入文字" }
+            return
+        }
+        $shape.TextFrame.TextRange.Font.Color.RGB = $rgb
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; color = [string]$p.color } }
     }
 
     # 第 3 轮补：TS 侧 wps_ppt_set_shape_fill 早就在调这个动作，但 PS 里没有这个 case，
@@ -5445,7 +5541,8 @@ switch ($Action) {
                 }
             } catch {}
         }
-        Output-Json @{ success = $true; data = @{ style = $schemeKey; count = $count } }
+        # 第 6 轮：把"改了几个文本"和"处理了哪页"分开回，TS 才不会把 count 当页数打印。
+        Output-Json @{ success = $true; data = @{ style = $schemeKey; count = $count; slideCount = 1; slideIndex = $slideIndex } }
     }
 
     "createKpiCards" {
@@ -5611,7 +5708,8 @@ switch ($Action) {
                 } catch {}
             }
         }
-        Output-Json @{ success = $true; data = @{ style = $schemeKey; count = $count } }
+        # 第 6 轮：TS 读 data.slideCount（"处理页数: N 页"），原来只回 count → 永远 undefined
+        Output-Json @{ success = $true; data = @{ style = $schemeKey; count = $count; slideCount = $pres.Slides.Count } }
     }
 
     "createProgressBar" {
@@ -6719,33 +6817,76 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ slideIndex = $slideIndexOut; operations = $ops } }
     }
 
+    # 第 6 轮重写。原来的三处病：
+    #   ① 回包只有 {style,count}，而 TS 读 data.operations 并 .forEach → 直接崩
+    #      "Cannot read properties of undefined (reading 'forEach')"（冒烟里 79 条失败的第一条）；
+    #   ② TS 传的是嵌套 style:{colorScheme,font}，PS 却把 $p.style 当字符串查配色表
+    #      → 永远落到 business，配色方案参数形同摆设；
+    #   ③ slideIndex 传 'all'（美化整份）时 $pres.Slides.Item('all') 必炸。
+    # 现在：配色/字体两种形状都认、支持 all、把【真做了哪几件事】按 operations 数组回给 TS。
+    # 说明：描述里承诺的"对齐元素/优化间距"没有实现，所以不往 operations 里塞 —— 假报一条
+    # 比少报一条更坏（用户会以为版面被整理过）。
     "beautifySlide" {
         $ppt = Get-WpsPpt
         if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
         $pres = Get-TargetPres $ppt $p
-        $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { $ppt.ActiveWindow.Selection.SlideRange.SlideIndex }
-        $slide = $pres.Slides.Item($slideIndex)
+        if ($null -eq $pres) { Output-Json @{ success = $false; error = "No active presentation" }; return }
+
+        # 参数归一：嵌套 style{} 与扁平两套都收（TS 发的是嵌套）
+        $schemeKey = if ($p.colorScheme) { [string]$p.colorScheme } elseif ($p.style -and ($p.style.PSObject.Properties.Name -contains 'colorScheme')) { [string]$p.style.colorScheme } elseif ($p.style -is [string]) { [string]$p.style } else { 'business' }
+        $fontName = if ($p.font) { [string]$p.font } elseif ($p.style -and ($p.style.PSObject.Properties.Name -contains 'font')) { [string]$p.style.font } else { '微软雅黑' }
+
         $schemes = @{
             business = @{ title = 0x2F5496; body = 0x333333 }
             tech = @{ title = 0x00B0F0; body = 0x404040 }
             creative = @{ title = 0xFF6B6B; body = 0x4A4A4A }
             minimal = @{ title = 0x000000; body = 0x666666 }
         }
-        $scheme = $schemes[$p.style]
-        if ($null -eq $scheme) { $scheme = $schemes["business"] }
-        $count = 0
-        for ($j = 1; $j -le $slide.Shapes.Count; $j++) {
-            $shape = $slide.Shapes.Item($j)
-            try {
-                if ($shape.HasTextFrame -and $shape.TextFrame.HasText) {
-                    $textRange = $shape.TextFrame.TextRange
-                    if ($textRange.Font.Size -ge 24) { $textRange.Font.Color.RGB = $scheme.title }
-                    else { $textRange.Font.Color.RGB = $scheme.body }
-                    $count++
-                }
-            } catch {}
+        $scheme = $schemes[$schemeKey]
+        if ($null -eq $scheme) { $scheme = $schemes["business"]; $schemeKey = 'business' }
+
+        # 范围：'all' 或没给（以当前页为准）
+        $allSlides = ([string]$p.slideIndex -eq 'all')
+        $startIdx = 1
+        $endIdx = $pres.Slides.Count
+        if (-not $allSlides) {
+            if ($p.slideIndex) { $startIdx = [int]$p.slideIndex; $endIdx = $startIdx }
+            else {
+                try { $cur = $ppt.ActiveWindow.Selection.SlideRange.SlideIndex; if ($cur) { $startIdx = $cur; $endIdx = $cur } } catch {}
+            }
         }
-        Output-Json @{ success = $true; data = @{ style = $p.style; count = $count } }
+
+        $fontCount = 0
+        $colorCount = 0
+        for ($i = $startIdx; $i -le $endIdx; $i++) {
+            $slide = $pres.Slides.Item($i)
+            for ($j = 1; $j -le $slide.Shapes.Count; $j++) {
+                $shape = $slide.Shapes.Item($j)
+                try {
+                    if ($shape.HasTextFrame -and $shape.TextFrame.HasText) {
+                        $textRange = $shape.TextFrame.TextRange
+                        $textRange.Font.Name = $fontName
+                        $fontCount++
+                        if ($textRange.Font.Size -ge 24) { $textRange.Font.Color.RGB = $scheme.title }
+                        else { $textRange.Font.Color.RGB = $scheme.body }
+                        $colorCount++
+                    }
+                } catch {}
+            }
+        }
+
+        $operations = @(
+            @{ operation = 'unify_font'; count = $fontCount },
+            @{ operation = 'apply_color_scheme'; count = $colorCount }
+        )
+        Output-Json @{ success = $true; data = @{
+            slideIndex = $(if ($allSlides) { 'all' } else { $startIdx })
+            slideCount = $endIdx - $startIdx + 1
+            style = $schemeKey
+            font = $fontName
+            count = $colorCount
+            operations = $operations
+        } }
     }
 
     # ==================== Word 长文档 / 学术排版（补 office-mcp 那条缺失链路）====================
