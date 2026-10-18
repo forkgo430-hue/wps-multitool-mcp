@@ -32,6 +32,7 @@ import {
 } from '../utils/error';
 import { getToolMeta } from './tool-metadata';
 import { resolveToolAlias, isToolAlias, TOOL_ALIASES } from './tool-aliases.generated';
+import { withAutoSnapshot } from './auto-snapshot';
 
 /** 搜索命中项（比之前多了别名与正/反例） */
 export interface ToolSearchHit {
@@ -478,8 +479,10 @@ export class ToolRegistry {
       // 验证参数
       this.validateArguments(tool.definition, args);
 
-      // 执行handler
-      const result = await tool.handler(args);
+      // 执行handler —— 外面裹一层"可退"保险：破坏性/非幂等的工具在动手前自动存快照。
+      // 防重与失败降级都在 withAutoSnapshot 里（嵌套调用不再建、建不了只进 warnings）。
+      // 挂在这里而不是各 handler：这是所有工具调用的唯一入口，296 个工具逐个加必漏。
+      const result = await withAutoSnapshot(name, () => tool.handler(args));
 
       const duration = Date.now() - startTime;
       logger.info(`Tool executed: ${name}`, { id, duration, success: result.success });

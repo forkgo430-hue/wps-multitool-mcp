@@ -443,9 +443,11 @@ export const sortRangeHandler: ToolHandler = async (
     ascending?: boolean;
   };
   try {
+    // order 用字符串（'desc'/'asc'）：PS 的 sortRange 是拿它跟 "desc" 比。
+    // 以前发的是 ascending 布尔，PS 压根不读 → 永远升序，"按第N列降序"是假的。
     const response = await wpsClient.executeMethod<{ message: string }>(
       'sortRange',
-      { range, column, ascending: ascending !== false },
+      { range, column, order: ascending === false ? 'desc' : 'asc' },
       WpsAppType.SPREADSHEET
     );
     if (!response.success) {
@@ -506,13 +508,17 @@ export const findReplaceHandler: ToolHandler = async (
  */
 export const addCommentDefinition: ToolDefinition = {
   name: 'wps_excel_add_comment',
-  description: '给单元格添加批注。',
+  description:
+    '给单元格添加批注（同一格已有批注会被覆盖）。\n\n' +
+    '什么时候用：给人留审阅意见、标注某个数字的来源或口径。\n' +
+    '与 wps_word_add_comment 的区别：这个写进【Excel 当前工作表】的指定单元格；那个写进 Word 文档。',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
     properties: {
       cell: { type: 'string', description: '单元格地址，如 A1、B2' },
       comment: { type: 'string', description: '批注内容' },
+      sheet: { type: 'string', description: '工作表名，不填则当前活动表' },
     },
     required: ['cell', 'comment'],
   },
@@ -521,17 +527,25 @@ export const addCommentDefinition: ToolDefinition = {
 export const addCommentHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { cell, comment } = args as { cell: string; comment: string };
+  const { cell, comment, sheet } = args as { cell: string; comment: string; sheet?: string };
   try {
-    const response = await wpsClient.executeMethod<{ message: string }>(
-      'addComment',
-      { cell, comment },
+    // 动作名是 addCellComment（Excel 自己的一条），不是 Word 那个 addComment。
+    // 曾经这里调 addComment —— 那是 Word 版（Get-WpsWord + $word.Selection.Range），
+    // 结果：只开 Excel 时报 "WPS Word not running"；两个都开的时候批注**写进 Word 文档**去了。
+    const response = await wpsClient.executeMethod<{ cell: string; sheet: string }>(
+      'addCellComment',
+      { cell, comment, sheet },
       WpsAppType.SPREADSHEET
     );
     if (!response.success) {
       return { id: uuidv4(), success: false, content: [{ type: 'text', text: `添加批注失败: ${response.error}` }], error: response.error };
     }
-    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `批注添加成功！单元格: ${cell}` }] };
+    const where = response.data?.sheet ? `${response.data.sheet}!` : '';
+    return {
+      id: uuidv4(),
+      success: true,
+      content: [{ type: 'text', text: `批注添加成功！${where}${cell}` }],
+    };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: `添加批注出错: ${errMsg}` }], error: errMsg };

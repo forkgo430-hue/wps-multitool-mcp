@@ -43,7 +43,6 @@ const ALLOWLIST = {
   'showRows|endRow': { class: '已修-入口', why: '同上：转成 rows 数组的右端点' },
   'showColumns|startColumn': { class: '已修-入口', why: '入口第 3 步把 startColumn/endColumn 转成 PS 的 columns 数字数组' },
   'showColumns|endColumn': { class: '已修-入口', why: '同上：字母列号在入口已 Convert-ColumnLetterToNumber' },
-  'sortRange|ascending': { class: '已修-入口', why: '入口第 3 步把 ascending 布尔转成 PS 的 order（1 升 / 2 降）' },
 
   // ===== OK-误报：TS 故意多发的冗余键，PS 不读也不影响结果 =====
   'convertToPDF|filePath': { class: 'OK-误报', why: 'TS 把 filePath/path 当作 outputPath 的别名兜底多发一份（见 convert.ts 注释），PS 读 outputPath' },
@@ -62,7 +61,6 @@ const ALLOWLIST = {
   // ===== 延后：真缺实现，但要么响亮失败、要么是能力缺口，不是静默丢弃 =====
   'addAnimation|trigger': { class: '延后', why: 'PS 的 AddEffect 写死了 Trigger=1（单击），文档承诺的"开始方式"没实现' },
   'addCaption|newParagraph': { class: '延后', why: 'PS 用 position 决定插到段前/段后，newParagraph 是冗余表达' },
-  'addComment|cell': { class: '延后', why: 'PS 的 addComment 只认 comment/text（读当前选区），TS 的 cell 未被采纳' },
   'applyColorScheme|slideIndex': { class: '延后', why: 'PS 只支持整份文稿换配色；单页换色没实现（不会静默改错页）' },
   'copyRange|source': { class: '延后', why: 'PS 的 copyRange 读 range（剪贴板复制），source/destination 形态没实现' },
   'copyRange|destination': { class: '延后', why: '同上：目标区域形态没实现' },
@@ -75,16 +73,12 @@ const ALLOWLIST = {
   'createSheet|position': { class: '延后', why: 'PS 的 createSheet 不支持插入位置（永远追加到末尾）' },
   'duplicateSlide|targetIndex': { class: '延后', why: 'PS 的 duplicateSlide 不支持指定目标位置' },
   'fillSeries|direction': { class: '延后', why: 'PS 读 type/range/step，TS 的 direction（down/right/up/left）没映射' },
-  'freezePanes|freeze': { class: '延后', why: 'PS 的 freezePanes 只按 row/column 冻结，freeze=false（不冻结）没实现' },
   'getCellComments|range': { class: '延后', why: 'PS 的 getCellComments 按 sheet 读全表批注，range 过滤未实现' },
   'insertExcelImage|cell': { class: '延后', why: 'PS 用 left/top 定位，TS 的 cell（单元格地址）没转换' },
-  'insertFooter|section': { class: '延后', why: 'PS 只改当前节的页脚，不支持按 section 定位' },
-  'insertHeader|section': { class: '延后', why: '同上' },
   'insertImage|slideIndex': { class: '延后', why: 'wps_ppt_insert_slide_image 的 PS case 不读 slideIndex（只作用于当前页）' },
   'insertImage|left': { class: '延后', why: '同上：left/top 未被 PS 采纳' },
   'insertImage|top': { class: '延后', why: '同上' },
   'insertPptChart|data': { class: '延后', why: 'PS 的 insertPptChart 不写数据（要先插再 set_ppt_chart_data），TS 声称能一次传 data' },
-  'moveSheet|position': { class: '延后', why: 'PS 用 before/after，TS 的 position 枚举没映射' },
   'setPptDateTime|format': { class: '延后', why: 'PS 只写 text（固定文本），日期格式串没实现' },
   'setPptFooter|show': { class: '延后', why: 'PS 只写 text，不支持显示/隐藏开关' },
   'setSlideNumber|startFrom': { class: '延后', why: 'PS 只写 visible，startFrom（起始页号）没实现' },

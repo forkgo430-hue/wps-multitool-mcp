@@ -133,9 +133,21 @@ export function readOpLog(): SnapshotRecord[] {
   }
 }
 
-/** 取活动文档状态。只读动作，不会拉起没运行的 WPS（PS 侧用 GetActiveWpsApp） */
-async function getActiveState(): Promise<{ ok: true; state: DocState } | { ok: false; error: string }> {
-  const r = await wpsClient.executeMethod<DocState>('getActiveDocumentState', {});
+/**
+ * 取活动文档状态。只读动作，不会拉起没运行的 WPS（PS 侧用 GetActiveWpsApp）。
+ *
+ * app 提示不是可有可无的：三个应用可能同时开着，而 ActiveDocument 是弱引用。
+ * 不指定时 PS 只能猜（跳过空壳、优先未保存的那个），猜错就会把别人的文件当快照源 ——
+ * 实测踩过一次：用户正在 Word 里写，快照却抓了 Excel 里一个残留工作簿。
+ * 调用方知道自己在哪个应用时，务必传进来。
+ */
+async function getActiveState(
+  app?: 'word' | 'excel' | 'ppt'
+): Promise<{ ok: true; state: DocState } | { ok: false; error: string }> {
+  const r = await wpsClient.executeMethod<DocState>(
+    'getActiveDocumentState',
+    app ? { app } : {}
+  );
   if (!r.success) return { ok: false, error: r.error || '拿不到活动文档状态' };
   const data = (r.data ?? undefined) as DocState | undefined;
   if (!data) return { ok: false, error: '拿不到活动文档状态（返回空）' };
@@ -223,11 +235,11 @@ function prune(originalPath: string): number {
  * 建一份快照。给工具用，也给 batch 用（batch 直接调它，不走工具层，避免递归）。
  * 返回失败时一定带可操作的原因 —— "快照失败"这四个字对调用方没有任何用处。
  */
-export async function createSnapshot(label?: string): Promise<
+export async function createSnapshot(label?: string, app?: 'word' | 'excel' | 'ppt'): Promise<
   | { ok: true; record: SnapshotRecord; dirty: boolean }
   | { ok: false; error: string; code: 'no_document' | 'no_path' | 'io' }
 > {
-  const st = await getActiveState();
+  const st = await getActiveState(app);
   if (!st.ok) return { ok: false, error: st.error, code: 'no_document' };
   const { state } = st;
 
@@ -311,13 +323,21 @@ wps_common_batch 在检测到破坏性步骤时会自动调它，单独调用一
     type: 'object',
     properties: {
       label: { type: 'string', description: '给这份快照起个名字，例如 before-restyle（可省略）' },
+      app: {
+        type: 'string',
+        enum: ['word', 'excel', 'ppt'],
+        description:
+          '要快照哪个应用里当前打开的文档。三个应用都开着时强烈建议给，' +
+          '否则只能按"有未保存改动的优先"猜，可能抓错文件（可省略）',
+      },
     },
   },
 };
 
 export const snapshotCreateHandler: ToolHandler = async (args) => {
   const label = typeof args.label === 'string' ? args.label : undefined;
-  const r = await createSnapshot(label);
+  const appArg = args.app === 'word' || args.app === 'excel' || args.app === 'ppt' ? args.app : undefined;
+  const r = await createSnapshot(label, appArg);
   if (!r.ok) return fail(r.error, r.code);
 
   const lines = [

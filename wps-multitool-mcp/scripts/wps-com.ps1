@@ -285,7 +285,10 @@ function Resolve-Sheet($app, $p) {
         try { return $wb.Sheets.Item($key) } catch {}
         return $null
     }
-    try { return $app.ActiveSheet } catch { return $null }
+    # 必须取【$wb 的】ActiveSheet，不能取 $app.ActiveSheet：
+    # 解析到的工作簿未必是活动工作簿（例如探测里刚 Workbooks.Add 出来的临时簿），
+    # 两者混用会把参数作用到别的工作簿上 —— 实测导致 __probeExcelCaps 全项报"不支持"。
+    try { return $wb.ActiveSheet } catch { return $null }
 }
 
 # ==================== 模态对话框探测（C）====================
@@ -643,7 +646,8 @@ $ParamAlias = @{
     'createMiniCharts'     = @{ data = 'items' }
     'createOrgChart'       = @{ data = 'nodes' }
     'createProgressBar'    = @{ value = 'progress' }
-    'sortRange'            = @{ column = 'keyColumn' }
+    # sortRange 的 column 现在由 case 自己换算成列字母（TS 发的是数字，不是列地址），
+    # 不能再在这里改成 keyColumn —— 否则 case 会拿一个数字去 Range()。
     'subtotal'             = @{ columns = 'totalColumns' }
     'transpose'            = @{ source = 'sourceRange' }
     'setAnimationOrder'    = @{ animationIndex = 'from'; newOrder = 'to' }
@@ -715,11 +719,8 @@ if ($null -ne $p -and $p -is [psobject]) {
     }
     # 3) 值形态转换：这几个不是"换个名字"能解决的 —— PS 要数组/枚举，TS 给的是起止行或布尔。
     #    同样放入口统一做，case 体一行不动。
-    if ($Action -eq 'sortRange' -and ($have -contains 'ascending') -and -not ($have -contains 'order')) {
-        # PS 读 $p.order（xlAscending=1 / xlDescending=2），TS 给的是 ascending 布尔
-        $p | Add-Member -NotePropertyName order -NotePropertyValue $(if ([bool]$p.ascending) { 1 } else { 2 }) -Force
-        $have = @($p.PSObject.Properties.Name)
-    }
+    # （sortRange 的 ascending→order 已改到 TS 侧做：PS 的 order 收 'desc'/'asc' 字符串，
+    #   在这里塞数字曾经让"降序"永远落成升序 —— 第 4 轮改回 TS 发字符串。）
     if (@('hideRows', 'showRows') -contains $Action -and ($have -contains 'startRow') -and -not ($have -contains 'rows')) {
         # TS 的 startRow/endRow（闭区间）→ PS 的 rows 数组。
         # 修之前 PS 只认 row/rows，于是 wps_excel_hide_rows / show_rows 必然报
@@ -756,66 +757,73 @@ switch ($Action) {
     # 用户会在任务管理器里看到一堆自己没开的进程。所以只用 GetActiveWpsApp（只找已运行的实例）。
     # 真正的写文件放在 Node 侧：PS 一旦碰文件系统，路径写错就是把用户文档写坏。
     "getActiveDocumentState" {
-        $excel = Get-ActiveWpsApp 'Ket.Application'
-        if ($null -ne $excel) {
-            try {
-                $book = $excel.ActiveWorkbook
-                if ($null -ne $book) {
-                    $full = ""
-                    try { $full = [string]$book.FullName } catch {}
-                    # hasPath 必须用 Path 判，不能用 FullName —— 未保存的文档 FullName 也会
-                    # 拼出一个"默认目录\文字文稿1"（文件并不存在），拿它去 copy 只会 ENOENT。
-                    $dir = ""
-                    try { $dir = [string]$book.Path } catch {}
-                    $saved = $true
-                    try { $saved = [bool]$book.Saved } catch {}
-                    $ro = $false
-                    try { $ro = [bool]$book.ReadOnly } catch {}
-                    Output-Json @{ success = $true; data = @{ app = "excel"; name = [string]$book.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
-                    return
-                }
-            } catch {}
+        # 以前的实现是"Excel → Word → PPT 谁先有就报谁"，这在两个应用都开着时会报错人：
+        # 实测过一次——用户正在 Word 里写，Excel 里还挂着一个探测残留的工作簿，
+        # 结果快照把 Excel 那个工作簿当成"当前文档"，复制了错的文件。
+        # 现在的口径：优先用调用方指定的 app；没指定就① 跳过取不到名字的空壳（WPS 的
+        # ActiveDocument 是弱引用，Count>0 时也可能给空壳）② 优先"有未保存改动"的那个
+        # （那才是需要保命的）③ 还分不出来就按 excel → word → ppt。
+        $want = if ($p.app) { ([string]$p.app).ToLower() } else { '' }
+        $cand = @()
+
+        if (-not $want -or $want -eq 'excel') {
+            $excel = Get-ActiveWpsApp 'Ket.Application'
+            if ($null -ne $excel) {
+                try {
+                    $book = $excel.ActiveWorkbook
+                    if ($null -ne $book -and -not [string]::IsNullOrEmpty([string]$book.Name)) {
+                        $full = ""; try { $full = [string]$book.FullName } catch {}
+                        # hasPath 必须用 Path 判，不能用 FullName —— 未保存的文档 FullName 也会
+                        # 拼出一个"默认目录\文字编号1"（文件并不存在），拿它去 copy 只会 ENOENT。
+                        $dir = ""; try { $dir = [string]$book.Path } catch {}
+                        $saved = $true; try { $saved = [bool]$book.Saved } catch {}
+                        $ro = $false; try { $ro = [bool]$book.ReadOnly } catch {}
+                        $cand += @{ app = "excel"; name = [string]$book.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) }
+                    }
+                } catch {}
+            }
         }
 
-        $word = Get-ActiveWpsApp 'Kwps.Application'
-        if ($null -ne $word) {
-            try {
-                $doc = $word.ActiveDocument
-                if ($null -ne $doc) {
-                    $full = ""
-                    try { $full = [string]$doc.FullName } catch {}
-                    $dir = ""
-                    try { $dir = [string]$doc.Path } catch {}
-                    $saved = $true
-                    try { $saved = [bool]$doc.Saved } catch {}
-                    $ro = $false
-                    try { $ro = [bool]$doc.ReadOnly } catch {}
-                    Output-Json @{ success = $true; data = @{ app = "word"; name = [string]$doc.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
-                    return
-                }
-            } catch {}
+        if (-not $want -or $want -eq 'word') {
+            $word = Get-ActiveWpsApp 'Kwps.Application'
+            if ($null -ne $word) {
+                try {
+                    $doc = $word.ActiveDocument
+                    if ($null -ne $doc -and -not [string]::IsNullOrEmpty([string]$doc.Name)) {
+                        $full = ""; try { $full = [string]$doc.FullName } catch {}
+                        $dir = ""; try { $dir = [string]$doc.Path } catch {}
+                        $saved = $true; try { $saved = [bool]$doc.Saved } catch {}
+                        $ro = $false; try { $ro = [bool]$doc.ReadOnly } catch {}
+                        $cand += @{ app = "word"; name = [string]$doc.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) }
+                    }
+                } catch {}
+            }
         }
 
-        $ppt = Get-ActiveWpsApp 'Kwpp.Application'
-        if ($null -ne $ppt) {
-            try {
-                $pres = $ppt.ActivePresentation
-                if ($null -ne $pres) {
-                    $full = ""
-                    try { $full = [string]$pres.FullName } catch {}
-                    $dir = ""
-                    try { $dir = [string]$pres.Path } catch {}
-                    $saved = $true
-                    try { $saved = [bool]$pres.Saved } catch {}
-                    $ro = $false
-                    try { $ro = [bool]$pres.ReadOnly } catch {}
-                    Output-Json @{ success = $true; data = @{ app = "ppt"; name = [string]$pres.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
-                    return
-                }
-            } catch {}
+        if (-not $want -or $want -eq 'ppt') {
+            $ppt = Get-ActiveWpsApp 'Kwpp.Application'
+            if ($null -ne $ppt) {
+                try {
+                    $pres = $ppt.ActivePresentation
+                    if ($null -ne $pres -and -not [string]::IsNullOrEmpty([string]$pres.Name)) {
+                        $full = ""; try { $full = [string]$pres.FullName } catch {}
+                        $dir = ""; try { $dir = [string]$pres.Path } catch {}
+                        $saved = $true; try { $saved = [bool]$pres.Saved } catch {}
+                        $ro = $false; try { $ro = [bool]$pres.ReadOnly } catch {}
+                        $cand += @{ app = "ppt"; name = [string]$pres.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) }
+                    }
+                } catch {}
+            }
         }
 
-        Output-Json @{ success = $false; error = "No active document" }
+        if ($cand.Count -eq 0) {
+            Output-Json @{ success = $false; error = "No active document" }
+            return
+        }
+        # 未保存优先（那才是需要保命的），否则保持 excel → word → ppt 的稳定顺序
+        $chosen = $cand[0]
+        foreach ($c in $cand) { if (-not $c.saved) { $chosen = $c; break } }
+        Output-Json @{ success = $true; data = $chosen }
     }
     # 【临时诊断】列出挡路的对话框。用来验 C 项：Get-WpsModalDialogs 能不能真找到窗口。
     "__probeStyleAdd" {
@@ -2050,10 +2058,26 @@ switch ($Action) {
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $(Resolve-Sheet $excel $p)
         $range = $sheet.Range($p.range)
-        $keyCol = $sheet.Range($p.keyColumn)
-        $order = if ($p.order -eq "desc") { 2 } else { 1 }
+        # 第 4 轮修：TS 传的是 column（排序范围里的第几列，数字），PS 以前读 keyColumn 并把它
+        # 直接塞进 Range() —— 传数字进去必然抛（Range 只收地址/名字）。现在两种都接：
+        #   keyColumn（地址，如 "B:B"）直接用；column（数字）按排序范围的左边界换算成列字母。
+        $keyCol = $null
+        if ($p.keyColumn) {
+            $keyCol = $sheet.Range([string]$p.keyColumn)
+        } elseif ($p.column) {
+            $baseCol = $range.Column
+            $colLetter = Convert-ColumnNumberToLetter($baseCol + [int]$p.column - 1)
+            $keyCol = $sheet.Range("${colLetter}1")
+        } else {
+            Output-Json @{ success = $false; error = "要给 column（排序依据的列号）或 keyColumn（列地址，如 B:B）" }
+            return
+        }
+        # order 支持 'desc'/'asc' 字符串（TS 现在发这个）与 1/2 数字（历史裸调用）
+        $order = 1
+        if ([string]$p.order -eq 'desc') { $order = 2 }
+        elseif ([string]$p.order -match '^\d+$') { $order = [int]$p.order }
         $range.Sort($keyCol, $order)
-        Output-Json @{ success = $true }
+        Output-Json @{ success = $true; data = @{ range = $p.range; order = $order } }
     }
 
     "autoFilter" {
@@ -2762,12 +2786,23 @@ switch ($Action) {
         $wb = $(Resolve-Book $excel $p)
         if ($null -eq $wb) { Output-Json @{ success = $false; error = "No active workbook" }; return }
         $sheet = if ($p.sheet) { $wb.Sheets.Item($p.sheet) } else { $excel.ActiveSheet }
-        if ($p.before) {
+        # 第 4 轮修：TS 传的是 position（0 基目标位置），PS 只认 before/after ——
+        # 两个都没给时【什么都不做还返回 success】，用户以为移动了。
+        # 现在三条路都走通：position 优先，其次 before/after。
+        if ($null -ne $p.position) {
+            $target = [int]$p.position + 1
+            if ($target -lt 1) { $target = 1 }
+            if ($target -gt $wb.Sheets.Count) { $target = $wb.Sheets.Count }
+            $sheet.Move($wb.Sheets.Item($target))
+        } elseif ($p.before) {
             $sheet.Move($wb.Sheets.Item($p.before))
         } elseif ($p.after) {
             $sheet.Move($null, $wb.Sheets.Item($p.after))
+        } else {
+            Output-Json @{ success = $false; error = "要给 position（0 基目标位置），或 before/after（工作表名）。两个都没给就没法移动。" }
+            return
         }
-        Output-Json @{ success = $true; data = @{ movedSheet = $sheet.Name } }
+        Output-Json @{ success = $true; data = @{ movedSheet = $sheet.Name; position = $sheet.Index - 1 } }
     }
 
     "mergeCells" {
@@ -3028,15 +3063,28 @@ switch ($Action) {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $(Resolve-Sheet $excel $p)
-        if ($p.cell) {
-            $sheet.Range($p.cell).Select()
-        } elseif ($p.row -and $p.column) {
-            $col = $p.column
-            if ($col -is [int]) { $col = Convert-ColumnNumberToLetter([int]$col) }
-            $sheet.Range("$col$($p.row)").Select()
+        # 第 4 轮修三处：
+        #   ① TS 传 freeze=false 表示"取消冻结"，以前照样冻上；
+        #   ② 只给 row 或只给 column 时以前啥都不选（$p.row -and $p.column 才动），冻的还是上次的位置；
+        #   ③ 三个都没给时 $sheet.Range($null) 直接抛 COM 错。
+        $want = if ($null -ne $p.freeze) { [bool]$p.freeze } else { $true }
+        if (-not $want) {
+            $excel.ActiveWindow.FreezePanes = $false
+            Output-Json @{ success = $true; data = @{ frozen = $false; message = "窗格冻结已取消" } }
+            return
         }
+        # 冻结 N 行选 A(N+1)、冻结 M 列选 (M+1)1、两个都要选 (M+1)(N+1) —— 与 Excel UI 的语义一致
+        if ($p.cell) {
+            $sheet.Range([string]$p.cell).Select()
+        } elseif ($p.row -or $p.column) {
+            $rowIdx = if ($p.row) { [int]$p.row + 1 } else { 1 }
+            $colIdx = if ($p.column) { [int]$p.column + 1 } else { 1 }
+            $colLetter = Convert-ColumnNumberToLetter($colIdx)
+            $sheet.Range("$colLetter$rowIdx").Select()
+        }
+        # 三个都没给：不移动选区，就地冻结当前活动单元格的上方/左侧（Excel 的默认行为）
         $excel.ActiveWindow.FreezePanes = $true
-        Output-Json @{ success = $true; data = @{ message = "窗格已冻结" } }
+        Output-Json @{ success = $true; data = @{ frozen = $true; message = "窗格已冻结" } }
     }
 
     "unfreezePanes" {
@@ -3181,11 +3229,20 @@ switch ($Action) {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
         $sheet = $(Resolve-Sheet $excel $p)
-        $cell = $sheet.Range($p.cell)
-        if ($cell.Comment) { $cell.Comment.Delete() }
-        $cell.AddComment($p.text)
-        if ($p.visible) { $cell.Comment.Visible = $true }
-        Output-Json @{ success = $true; data = @{ cell = $p.cell; text = $p.text } }
+        if ($null -eq $sheet) { Output-Json @{ success = $false; error = "No sheet" }; return }
+        $cellAddr = [string]$p.cell
+        if (-not $cellAddr) { Output-Json @{ success = $false; error = "cell required" }; return }
+        # 第 4 轮修：TS 的 schema 里这个参数叫 comment（历史 PS 只认 text）——
+        # 曾经 $p.text 为 $null → AddComment($null) 造出一条空批注，还返回 success。
+        # 两个键都认，comment 优先。
+        $text = if ($p.comment) { $p.comment } else { $p.text }
+        if (-not $text) { Output-Json @{ success = $false; error = "comment required（批注内容不能为空）" }; return }
+        $target = $sheet.Range($cellAddr)
+        # 同一格已有批注时 AddComment 会抛（WPS 与 Excel 都不允许一格两条）→ 先删后加，等价于覆盖
+        try { if ($null -ne $target.Comment) { $target.Comment.Delete() } } catch {}
+        $target.AddComment([string]$text) | Out-Null
+        if ($p.visible) { try { $target.Comment.Visible = $true } catch {} }
+        Output-Json @{ success = $true; data = @{ cell = $cellAddr; sheet = $sheet.Name; comment = [string]$text } }
     }
 
     "deleteCellComment" {
@@ -3837,7 +3894,13 @@ switch ($Action) {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $(Resolve-Doc $word $p)
-        $section = $doc.Sections.Item(1)
+        # 第 4 轮修：原来硬编码 Sections.Item(1)，指定第 3 节完全无效（还返回 success）。
+        $secIdx = if ($p.section) { [int]$p.section } else { 1 }
+        if ($secIdx -lt 1 -or $secIdx -gt $doc.Sections.Count) {
+            Output-Json @{ success = $false; error = "第 $secIdx 节不存在（本文档共 $($doc.Sections.Count) 节）" }
+            return
+        }
+        $section = $doc.Sections.Item($secIdx)
         $header = $section.Headers.Item(1)
         $header.Range.Text = if ($p.text) { $p.text } else { "" }
         if ($p.alignment) {
@@ -3851,7 +3914,13 @@ switch ($Action) {
         $word = Get-WpsWord
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $(Resolve-Doc $word $p)
-        $section = $doc.Sections.Item(1)
+        # 同 insertHeader：section 参数以前被丢弃，永远改第 1 节
+        $secIdx = if ($p.section) { [int]$p.section } else { 1 }
+        if ($secIdx -lt 1 -or $secIdx -gt $doc.Sections.Count) {
+            Output-Json @{ success = $false; error = "第 $secIdx 节不存在（本文档共 $($doc.Sections.Count) 节）" }
+            return
+        }
+        $section = $doc.Sections.Item($secIdx)
         $footer = $section.Footers.Item(1)
         $footer.Range.Text = if ($p.text) { $p.text } else { "" }
         if ($p.alignment) {
@@ -4187,7 +4256,22 @@ switch ($Action) {
     "closePresentation" {
         $ppt = Get-WpsPpt
         if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $pres = if ($p.name) { $ppt.Presentations.Item($p.name) } else { $ppt.ActivePresentation }
+        # 按名字定位必须自己遍历：WPS 的 Presentations.Item() 只吃序号，传名字会抛
+        # DISP_E_NOTACOLLECTION（"Does not support a collection"）—— 实测踩过，
+        # 表现为"关不掉演示文稿"，而且报错完全看不出是参数类型问题。
+        $pres = $null
+        if ($p.name) {
+            for ($i = 1; $i -le $ppt.Presentations.Count; $i++) {
+                $cand = $ppt.Presentations.Item($i)
+                if ([string]$cand.Name -eq [string]$p.name) { $pres = $cand; break }
+            }
+            if ($null -eq $pres) {
+                Output-Json @{ success = $false; error = "找不到名为「$($p.name)」的演示文稿" }
+                return
+            }
+        } else {
+            $pres = $ppt.ActivePresentation
+        }
         if ($null -eq $pres) { Output-Json @{ success = $false; error = "No presentation" }; return }
         $name = $pres.Name
         # 第 3 轮修：原来 $pres.Close() 不带参数，TS 传的 save 被整个丢掉 ——
@@ -4202,7 +4286,11 @@ switch ($Action) {
                 return
             }
         }
-        $pres.Close($saveChanges)
+        # Presentation.Close() 在 WPS/PPT 的对象模型里【不接受参数】——
+        # 传 $saveChanges 进去会抛 DISP_E_NOTACOLLECTION，看着像集合用法错，其实是方法签名不符。
+        # 想丢弃改动又要抑制「另存为」弹框，标准做法是先把 Saved 置 true 再 Close()。
+        if (-not $saveChanges) { try { $pres.Saved = $true } catch {} }
+        $pres.Close()
         Output-Json @{ success = $true; data = @{ closed = $name } }
     }
 

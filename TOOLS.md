@@ -134,7 +134,7 @@
 | `wps_excel_set_formula` | 是 | — | live | 在指定单元格设置Excel公式。公式必须以=开头，支持所有Excel内置函数。<br><sub>别名：写公式 / 设置公式 / 填公式</sub> |
 | `wps_excel_switch_workbook` | 是 | — | live | 切换到指定名称的Excel工作簿。<br><sub>别名：切换工作簿 / 工作簿 / 表格文件</sub> |
 | `wps_excel_write_range` | 是 | — | live | 向Excel指定范围写入数据。数据格式为二维数组，从指定单元格开始向右下方填充。<br><sub>别名：批量写 / 写区域 / 一次写一片</sub> |
-| `wps_excel_add_comment` |  | N | live | 给单元格添加批注。<br><sub>别名：添加批注 / 新增批注 / 加批注</sub> |
+| `wps_excel_add_comment` |  | N | live | 给单元格添加批注（同一格已有批注会被覆盖）。<br><sub>别名：添加批注 / 新增批注 / 加批注</sub> |
 | `wps_excel_auto_fill` |  | — | live | [DEPRECATED·改用 wps_excel_fill_series] 自动填充单元格区域。根据源区域的数据模式自动填充到…<br><sub>别名：自动填充 / 填充</sub> |
 | `wps_excel_auto_filter` |  | — | live | 对Excel指定范围应用自动筛选。<br><sub>别名：自动筛选 / 筛选 / 过滤</sub> |
 | `wps_excel_auto_fit` |  | — | live | 按内容自动调整行高/列宽（等同 Excel 里双击列边界）。<br><sub>别名：自适应 / 自动调整列宽 / 自动列宽</sub> |

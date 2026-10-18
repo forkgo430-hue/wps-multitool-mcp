@@ -35,7 +35,8 @@ import {
   ToolWarning,
 } from '../../types/tools';
 import { toolRegistry, ToolRegistry } from '../../server/tool-registry';
-import { getToolAnnotations } from '../../server/tool-annotations';
+// 风险判据只有一份：与单工具写入的自动快照共用（口径不一致会让人以为单调用也安全）
+import { snapshotRiskOf } from '../../server/auto-snapshot';
 import { isDestructiveAction, isIdempotentAction } from '../../bridge/cancellable';
 import { wpsClient } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
@@ -49,15 +50,12 @@ export const BATCH_MAX_STEPS = 3;
  * 这一步值不值得为它存快照。
  * 破坏性（删、覆盖、原地转格式）最痛；非幂等（重放会叠两层）次之。
  * 只读的一律不存 —— 快照是保险，不是每次调用的仪式。
+ *
+ * 工具步骤的判据走 snapshotRiskOf（与单工具自动快照同一份规则）；
+ * 只有裸动作名（batch 的逃生舱）才在这里按动作名判。
  */
 function riskOf(step: BatchStep): string {
-  if (step.tool) {
-    const a = getToolAnnotations(step.tool);
-    if (!a || a.readOnlyHint) return '';
-    if (a.destructiveHint) return `${step.tool} 破坏性`;
-    if (a.idempotentHint === false) return `${step.tool} 非幂等`;
-    return '';
-  }
+  if (step.tool) return snapshotRiskOf(step.tool);
   if (step.action) {
     if (isDestructiveAction(step.action)) return `${step.action} 破坏性`;
     if (!isIdempotentAction(step.action)) return `${step.action} 非幂等`;

@@ -28,7 +28,9 @@ const os = require('os');
 const path = require('path');
 
 // 独立管道 + EPHEMERAL：卡死也只卡我自己这条桥，不碰用户正在用的那条
-process.env.WPS_BRIDGE_PIPE = '\\\\.\\pipe\\wps-multitool-mcp-agentC-excelguard';
+// 管道名带时间戳：固定名会连上还活着的旧桥，桥内存里是旧版 wps-com.ps1（本轮已踩过）
+const PIPE_SUFFIX = `agentC-excelguard-${Date.now()}`;
+process.env.WPS_BRIDGE_PIPE = `\\\\.\\pipe\\wps-multitool-mcp-${PIPE_SUFFIX}`;
 process.env.WPS_BRIDGE_EPHEMERAL = '1';
 process.env.WPS_BRIDGE_IDLE_MS = '120000';
 process.env.WPS_DAEMON_TIMEOUT = '20000';
@@ -70,6 +72,12 @@ async function workbookNames() {
   return names;
 }
 
+/** 打开的工作簿明细（name + path），用于 save_as 后重新认名字 */
+async function workbookList() {
+  const r = await call('wps_execute_method', { method: 'getOpenWorkbooks', appType: 'excel', params: {} });
+  try { return JSON.parse(txt(r)).data.workbooks || []; } catch { return []; }
+}
+
 (async () => {
   const tmpDir = path.join(os.tmpdir(), `wps-excel-guard-${Date.now()}`);
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -90,19 +98,28 @@ async function workbookNames() {
   const mine = [];
   console.log(`  探测前已打开的工作簿：${before.length ? before.join(' / ') : '(无)'}`);
 
-  /** 新建工作簿并认出它的名字（新建后列表里多出来的那个） */
+  /** 新建工作簿并认出它的名字：用 TOOL 建（稳），再轮询 getOpenWorkbooks 差分认名字（避免单拍 race） */
   const createMine = async () => {
     const created = await call('wps_excel_create_workbook', {});
     if (!created.success) return null;
-    const after = await workbookNames();
-    const fresh = after.find((n) => !before.includes(n) && !mine.includes(n));
-    if (fresh) mine.push(fresh);
-    return fresh;
+    for (let i = 0; i < 8; i++) {
+      const after = await workbookNames();
+      const fresh = after.find((n) => !before.includes(n) && !mine.includes(n));
+      if (fresh) {
+        mine.push(fresh);
+        return fresh;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return null;
   };
 
   /** 收尾：按名字关掉我建的；用户的一个都不碰 */
   const cleanup = async () => {
-    for (const n of mine) {
+    // 上一轮泄漏的临时工作簿（guard-probe.xlsx）也一并收掉
+    const allMine = [...mine];
+    if (before.includes('guard-probe.xlsx')) allMine.push('guard-probe.xlsx');
+    for (const n of allMine) {
       try {
         await call('wps_execute_method', {
           method: 'closeWorkbook', appType: 'excel', params: { name: n, saveChanges: false },
@@ -121,7 +138,7 @@ async function workbookNames() {
     console.log('\n--- A. 未保存工作簿 + close_workbook({save:true}) ---');
     const nameA = await createMine();
     if (!nameA) {
-      check('新建未保存工作簿（A 前置）', false, txt(await call('wps_excel_create_workbook', {})).slice(0, 60));
+      check('新建未保存工作簿（A 前置）', false, '建不起来（createMine 未认出新建工作簿）');
     } else {
       const a = await timed('wps_excel_close_workbook', { name: nameA, save: true });
       const msg = txt(a.r);
@@ -152,8 +169,9 @@ async function workbookNames() {
     }
 
     // ---------- B. 未保存 + save:false（逃生口）----------
+    // 注意：必须用【新建】的工作簿，不能复用 A 的（A 若护栏生效则仍在、若失效则已被关，都不是干净起点）
     console.log('\n--- B. 未保存工作簿 + close_workbook({save:false}) ---');
-    const nameB = nameA || (await createMine());
+    const nameB = await createMine();
     if (!nameB) {
       check('新建未保存工作簿（B 前置）', false, '建不起来');
     } else {
@@ -177,11 +195,16 @@ async function workbookNames() {
       check('新建工作簿（C 前置）', false, '建不起来');
     } else {
       const savePath = path.join(tmpDir, 'guard-probe.xlsx');
-      const sv = await call('wps_common_save_as', { filePath: savePath });
+      let sv = await call('wps_common_save_as', { filePath: savePath });
+      if (!sv.success) sv = await call('wps_common_save_as', { filePath: savePath }); // save_as 偶发超时，重试一次
       check('C0 先另存到临时目录', sv.success && fs.existsSync(savePath), txt(sv).split('\n')[0].slice(0, 60));
       if (sv.success) {
-        const c = await timed('wps_excel_close_workbook', { name: nameC, save: true });
-        const closed = !(await workbookNames()).includes(nameC);
+        // save_as 会把工作簿改名为文件名，必须重新认名字再去关
+        const renamed = (await workbookList()).find((w) => w.path === savePath);
+        const realName = renamed ? renamed.name : nameC;
+        if (renamed) { const i = mine.indexOf(nameC); if (i >= 0) mine[i] = realName; }
+        const c = await timed('wps_excel_close_workbook', { name: realName, save: true });
+        const closed = !(await workbookNames()).includes(realName);
         check(
           'C1 已保存 + save:true 正常关闭（护栏没误伤）',
           c.r.success === true && closed && c.ms < LIMIT_MS,
