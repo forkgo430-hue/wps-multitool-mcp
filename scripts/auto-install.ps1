@@ -188,7 +188,7 @@ if (-not $SkipWpsAddon) {
         exit 1
     }
 
-    $SourceAddonDir = "$ProjectRoot\wps-claude-addon"
+    $SourceAddonDir = "$ProjectRoot\wps-multitool-addon"
     $TargetAddonDir = "$WpsAddonDir\wps-claude-addon_"
 
     if (-not (Test-Path $SourceAddonDir)) {

@@ -1,4 +1,4 @@
-﻿# Input: 用户执行安装命令（本地 -File 或 irm | iex 一键）
+# Input: 用户执行安装命令（本地 -File 或 irm | iex 一键）
 # Output: 依赖安装 + TypeScript 构建 + WPS 加载项部署 + MCP 配置示例 + skill 安装
 # Pos: Windows 安装入口脚本。一旦我被修改，请更新我的头部注释，以及所属文件夹的md。
 #
@@ -314,7 +314,7 @@ $line
 # ============================================================================
 function Install-WpsAddon {
     param([string]$ProjectRoot)
-    $src = Join-Path $ProjectRoot 'wps-claude-addon'
+    $src = Join-Path $ProjectRoot 'wps-multitool-addon'
     if (-not (Test-Path $src)) { Write-Err2 "找不到加载项目录: $src"; return $false }
 
     $addonsDir = Join-Path $env:APPDATA 'kingsoft\wps\jsaddons'

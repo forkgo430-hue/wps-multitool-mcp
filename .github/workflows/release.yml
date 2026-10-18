@@ -71,7 +71,7 @@ jobs:
           node scripts/manual/gen-tool-verification.js
           node scripts/manual/gen-doc-stats.js
           node scripts/manual/gen-tools-doc.js
-          git diff --exit-code -- ../TOOLS.md ../README.md ../README.en.md ../wps-claude-addon/panel.html src/server/tool-verification.generated.ts
+          git diff --exit-code -- ../TOOLS.md ../README.md ../README.en.md ../wps-multitool-addon/panel.html src/server/tool-verification.generated.ts
 
       - name: Version PR / Publish
         uses: changesets/action@v1
