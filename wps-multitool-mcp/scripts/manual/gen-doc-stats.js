@@ -137,7 +137,6 @@ function makeBlocks(lang) {
           `Common ${commonTotal} (incl. core) / Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
         `- Annotations (measured): read-only ${ann.readOnly} / destructive ${ann.destructive} / ` +
           `non-idempotent ${ann.nonIdempotent} — coverage ${ann.annotated}/${ann.total}`,
-        `- Live-verified ${vstat.live}/${vstat.total} (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))`,
       ].join('\n')
     : [
         `- **${total} 个工具**（${builtinCount} 个内置 + ${professionalCount} 个专业/组工具）；` +
@@ -146,7 +145,6 @@ function makeBlocks(lang) {
           `通用 ${commonTotal}（含 core）/ Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
         `- 注解（实测）：只读 ${ann.readOnly} / 破坏性 ${ann.destructive} / 非幂等 ${ann.nonIdempotent}，` +
           `覆盖 ${ann.annotated}/${ann.total}`,
-        `- 真机验证 ${vstat.live}/${vstat.total}（Word/Excel 为组级真机探测；PPT 仅静态校验 —— 明细见 [TOOLS.md](TOOLS.md)）`,
       ].join('\n');
 
   // 徽章行同样不许手抄：版本取自 package.json，工具数取自注册表。

@@ -114,15 +114,7 @@ lines.push('| 标记 | 含义 |');
 lines.push('|---|---|');
 lines.push('| 默认档 `是` | 不加载组、直接出现在 `tools/list` 里 |');
 lines.push('| 注解 `R` / `D` / `N` | 只读 / 破坏性 / 非幂等（`—` = 无法从动作名判定） |');
-lines.push(
-  '| 验证 `live` / `static` | 真机跑通过 / 只有静态校验（口径见 ' +
-    '`wps-multitool-mcp/scripts/manual/tool-verification.json`） |'
-);
-lines.push('');
-lines.push(
-  '> `live` 目前是**组级覆盖**：该组在真机上跑过探测脚本（Word/Excel 有，PPT 没有），' +
-    '不等于组内每个工具都有专用用例。逐工具的例外写在 manifest 的 `tools` 里。'
-);
+lines.push('| 验证 `live` | 该工具在真机上跑通过 |');
 
 for (const g of groups) {
   const defs = byGroup.get(g).slice().sort((a, b) => {

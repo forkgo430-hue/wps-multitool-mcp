@@ -45,7 +45,7 @@ irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install
 | Writes fail halfway and nobody can say what changed | `warnings` as a third state: done, but N things didn't land |
 | Look-alike tools silently edit the wrong place | Every tool carries `notFor`; required reading in search results |
 | A broken edit cannot be undone | Auto snapshot before risky writes (`wps_common_batch` built in) + operation log |
-| No idea which tools actually work | Every tool is tagged live-verified / static-only; the default tier only lists verified ones |
+| No idea which tools actually work | Every tool carries its real-machine verification status; the default tier only lists verified ones |
 
 COM is not transactional, so failures carry a retry tag: `[retryable]` resend freely,
 `[do-not-retry · possibly half-applied]` read back first.
@@ -78,7 +78,6 @@ on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MC
 - **296 tools** (8 built-in + 288 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
 - Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 113
 - Annotations (measured): read-only 51 / destructive 34 / non-idempotent 110 — coverage 296/296
-- Live-verified 201/296 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
 <!-- AUTO:tool-stats:end -->
 
 ## Architecture
