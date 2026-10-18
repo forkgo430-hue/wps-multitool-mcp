@@ -24,7 +24,12 @@ import {
   ToolCategory,
   RegisteredTool,
 } from '../../types/tools';
-import { wpsClient } from '../../client/wps-client';
+import {
+  wpsClient,
+  setWordTarget,
+  setExcelTarget,
+  setPptTarget,
+} from '../../client/wps-client';
 
 // ============================================================
 // 1. wps_common_save - 保存当前文档
@@ -150,16 +155,28 @@ export const saveAsHandler: ToolHandler = async (
       success: boolean;
       message: string;
       outputPath: string;
+      appType?: string;
     }>('saveAs', params);
 
     if (response.success && response.data) {
+      // 另存为会【改掉文档的 Name】。之前锁定的目标名（比如"文字文稿1"）就此失效，
+      // 后续调用会报一句莫名其妙的 "No active document" —— 实测踩过一次。
+      // 这里按新文件名重新锁定；错锁比不锁更危险，所以类型不明时宁可不锁。
+      const outPath = response.data.outputPath || filePath;
+      const base = outPath.split(/[\\/]/).pop();
+      const app = (response.data.appType || '').toLowerCase();
+      if (base) {
+        if (app === 'word') setWordTarget(base);
+        else if (app === 'excel') setExcelTarget(base);
+        else if (app === 'ppt') setPptTarget(base);
+      }
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `另存为成功！\n输出路径: ${response.data.outputPath || filePath}`,
+            text: `另存为成功！\n输出路径: ${outPath}`,
           },
         ],
       };

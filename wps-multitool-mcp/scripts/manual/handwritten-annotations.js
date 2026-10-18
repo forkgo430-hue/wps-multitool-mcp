@@ -14,8 +14,16 @@
  * 进这份名单的判断标准：它的行为【不由某个固定动作决定】。
  *   1) 动作名是运行期参数（wps_execute_method 能执行任意 WPS 动作）
  *   2) 它是编排别人的容器，本身不发指令（wps_common_batch 转手调注册表）
- * 这两类都不该靠工具名猜。
+ *   3) 副作用不在 COM 里（快照系列：只调只读的 getActiveDocumentState，
+ *      真正写盘的是 Node 侧的 fs 复制 —— 按动作名推断会得出"只读"，是错的）
+ * 这三类都不该靠工具名猜。
  */
 module.exports = {
-  EXTRA_ANNOTATIONS_KEYS: ['wps_execute_method', 'wps_common_batch'],
+  EXTRA_ANNOTATIONS_KEYS: [
+    'wps_execute_method',
+    'wps_common_batch',
+    'wps_common_snapshot_create',
+    'wps_common_snapshot_restore',
+    'wps_common_snapshot_list',
+  ],
 };

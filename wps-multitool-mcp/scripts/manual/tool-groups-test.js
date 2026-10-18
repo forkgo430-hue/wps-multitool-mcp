@@ -1,12 +1,13 @@
 /**
  * Input: 无
- * Output: 工具档位（基础 40 / 全量）+ 工具组加载 的断言结果
+ * Output: 工具档位（基础档 / 全量）+ 工具组加载 的断言结果
  * Pos: 工具档位与工具组的手工验证脚本。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
  * 用法（先 npm run build）：node scripts/manual/tool-groups-test.js
  *
  * 注意：除了 allTools，这里还给内置的 wps_execute_method 补了一个 stub ——
- * 它在生产里由 mcp-server 注册，本脚本不起 server，补出来才和生产口径一致（正好 40）。
+ * 它在生产里由 mcp-server 注册，本脚本不起 server，补出来才和生产口径一致。
+ * 默认档数字不再写死：= core + （白名单 ∩ 真机验证），PPT 验完一个就涨一个。
  * 通知（notifications/tools/list_changed）不在这里测 —— 那需要真客户端，
  * 这里只断言"变更事件确实被触发"。
  */
@@ -23,6 +24,7 @@ const { onToolGroupsChanged } = require(path.join(ROOT, 'dist', 'tools', 'common
 const { ESSENTIAL_TOOL_NAMES, findUnknownEssentialTools, isEssentialTier } = require(
   path.join(ROOT, 'dist', 'server', 'tool-tiers.js')
 );
+const { isLiveVerified } = require(path.join(ROOT, 'dist', 'server', 'tool-verification.js'));
 
 const results = [];
 function check(name, cond, detail) {
@@ -58,13 +60,19 @@ console.log(
 );
 const listed0 = toolRegistry.listTools().tools.length;
 const total0 = toolRegistry.listAllTools().length;
-const essentialTotal = ESSENTIAL_TOOL_NAMES.size + coreGroup.total;
+// 默认档不再是一个固定数字：= core + （白名单 ∩ 真机验证过）。
+// 写死 40 的门禁会在 PPT 验完那天开始"红得莫名其妙"，所以这里现算。
+const essentialLive = [...ESSENTIAL_TOOL_NAMES].filter((n) => isLiveVerified(n) && registeredNames.has(n));
+const essentialStatic = [...ESSENTIAL_TOOL_NAMES].filter((n) => !isLiveVerified(n) && registeredNames.has(n));
+const expectedListed = coreGroup.total + essentialLive.length;
 console.log(`  默认列出 ${listed0} / 共 ${total0}`);
-console.log(`  基础档计算值 = 白名单 ${ESSENTIAL_TOOL_NAMES.size} + core ${coreGroup.total} = ${essentialTotal}`);
+console.log(
+  `  计算值 = core ${coreGroup.total} + 白名单里 live ${essentialLive.length} = ${expectedListed}` +
+    `（白名单还有 ${essentialStatic.length} 个 static 不占名额）`
+);
 
 check('档位是 essential', toolRegistry.tier === 'essential');
-check('默认列出恰好 40 个', listed0 === 40, `${listed0}`);
-check('基础档计算值与实际一致', essentialTotal === listed0, `${essentialTotal} vs ${listed0}`);
+check(`默认列出 ${listed0} = core + 白名单 live`, listed0 === expectedListed, `${expectedListed} vs ${listed0}`);
 check('总工具数 > 250', total0 > 250, `${total0}`);
 
 console.log('\n=== 白名单自检（防手误）===');
@@ -72,7 +80,14 @@ const unknown = findUnknownEssentialTools(registeredNames);
 check('基础档里没有"写了但不存在"的工具名', unknown.length === 0, unknown.length ? unknown.join(', ') : '无');
 
 const listedNames = new Set(toolRegistry.listTools().tools.map((t) => t.name));
-check('ppt 组里只列出基础档那 8 个（不整组列出）', pptGroup.listed === 8, `${pptGroup.listed}`);
+const pptEssentialLive = [...ESSENTIAL_TOOL_NAMES].filter(
+  (n) => n.startsWith('wps_ppt_') && isLiveVerified(n) && registeredNames.has(n)
+).length;
+check(
+  `ppt 组默认只列出基础档里 live 的 ${pptEssentialLive} 个` + '（未整组列出）',
+  pptGroup.listed === pptEssentialLive,
+  `${pptGroup.listed}`
+);
 check('core 组全部列出', coreGroup.listed === coreGroup.total, `${coreGroup.listed}/${coreGroup.total}`);
 check('core 里有 route_intent（意图识别）', listedNames.has('wps_route_intent'));
 check('核心管理工具都在', listedNames.has('wps_load_tool_group') && listedNames.has('wps_search_tools'));
@@ -92,8 +107,15 @@ const load = toolRegistry.loadGroup('ppt');
 const listed1 = toolRegistry.listTools().tools.length;
 check('loadGroup 返回 ok 且有变化', load.ok && load.changed);
 check('变更事件触发一次', notified === 1, `notified=${notified}`);
-check('列出数量 = 40 - 8 + 115 = 147', listed1 === 147, `${listed0} → ${listed1}`);
-check('ppt 整组 115 个都已列出', toolRegistry.getGroups().find((g) => g.group === 'ppt').listed === 115);
+check(
+  `整组加载后列出数量 = ${listed0} - ${pptEssentialLive} + ${pptGroup.total} = ${listed0 - pptEssentialLive + pptGroup.total}`,
+  listed1 === listed0 - pptEssentialLive + pptGroup.total,
+  `${listed0} → ${listed1}`
+);
+check(
+  `ppt 整组 ${pptGroup.total} 个都已列出`,
+  toolRegistry.getGroups().find((g) => g.group === 'ppt').listed === pptGroup.total
+);
 
 const load2 = toolRegistry.loadGroup('ppt');
 check('重复 load 不再触发通知', load2.changed === false && notified === 1);
@@ -102,7 +124,11 @@ console.log('\n=== 保护 core / 卸载 ppt ===');
 check('core 不允许卸载', toolRegistry.unloadGroup('core').ok === false);
 const un = toolRegistry.unloadGroup('ppt');
 check('卸载触发通知', notified === 2, `notified=${notified}`);
-check('卸载后回到 40（ppt 基础档那几个仍在列）', toolRegistry.listTools().tools.length === 40, `${toolRegistry.listTools().tools.length}`);
+check(
+  `卸载后回到默认档 ${listed0}`,
+  toolRegistry.listTools().tools.length === listed0,
+  `${toolRegistry.listTools().tools.length}`
+);
 check('不存在的组报错', toolRegistry.loadGroup('nope').ok === false && toolRegistry.unloadGroup('nope').ok === false);
 
 console.log('\n=== 全量档（子进程带 WPS_TOOL_TIER=full 跑一遍）===');

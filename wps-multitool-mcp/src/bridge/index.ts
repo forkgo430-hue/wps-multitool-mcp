@@ -198,8 +198,10 @@ function startHttpEndpoint(): void {
         'Content-Type': 'application/json; charset=utf-8',
         // 任务窗格会频繁轮询，禁缓存
         'Cache-Control': 'no-store',
-        // 面板是同源 file:// 页面，需要允许跨域读取
-        'Access-Control-Allow-Origin': '*',
+        // 只允许 file:// 页面（面板是本机文件，Origin 为 "null"）。
+        // 曾经这里是 '*'：任何网页都能读这份状态（含子进程 pid 与最近日志行，日志里可能有文档名）。
+        // 回环地址不等于只有自己人可访问 —— 用户浏览器里开着的任意站点都能打 127.0.0.1。
+        'Access-Control-Allow-Origin': 'null',
       });
       res.end(JSON.stringify(bridgeStatusPayload()));
       return;

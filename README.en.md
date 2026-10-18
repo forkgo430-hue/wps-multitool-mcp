@@ -3,7 +3,7 @@
 [简体中文](README.md) | **English**
 
 <!-- AUTO:badges:start -->
-[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#requirements)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-309-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#requirements)
 <!-- AUTO:badges:end -->
 
 > Let AI drive the WPS Office windows **you already have open**.
@@ -41,19 +41,44 @@ irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install
 
 | Problem | Mechanism |
 |---|---|
-| Hundreds of tools blow up the context | 40 listed by default; the rest via `wps_search_tools` + `wps_load_tool_group` |
+| Hundreds of tools blow up the context | Essential tier only; the rest via `wps_search_tools` + `wps_load_tool_group` |
 | Writes fail halfway and nobody can say what changed | `warnings` as a third state: done, but N things didn't land |
 | Look-alike tools silently edit the wrong place | Every tool carries `notFor`; required reading in search results |
+| A broken edit cannot be undone | Auto snapshot before risky writes (`wps_common_batch` built in) + operation log |
+| No idea which tools actually work | Every tool is tagged live-verified / static-only; the default tier only lists verified ones |
 
 COM is not transactional, so failures carry a retry tag: `[retryable]` resend freely,
 `[do-not-retry · possibly half-applied]` read back first.
 
+## Who it's for
+
+**Use it if** you work in WPS on Windows and want to edit the document that is *already open*.
+
+- WPS Writer / Spreadsheets / Presentation is your daily driver (contracts, papers, reports, decks)
+- The target is the file in front of you — with its comments, tracked changes, headers, unsaved edits
+- You need the Chinese-language details: academic layout, tracked revisions, template filling, TOC and cross-references
+- You accept that an AI can be wrong, so you want it to snapshot before it writes
+
+**Skip it if** — these are not "missing features", they are the wrong tool.
+
+- macOS / Linux: this path is Windows COM; there is no port planned
+- Headless CI / servers: it needs an interactive desktop and a logged-in session with WPS running
+- Batch processing thousands of files: that is a job for file-level libraries (`python-docx` / `openpyxl`)
+- Read-only extraction: if you don't need the app open, a parser is faster and safer
+
+**WPS only, no MS Office** — a trade-off, not an oversight. WPS and Office are two different COM object
+models (`Ket/Kwps/Kwpp` vs `Excel/Word/PowerPoint`). Supporting both means writing every action twice and
+verifying it in two environments — double the maintenance for a fraction of the users. Everything here is
+tuned for WPS users (Chinese document conventions, revisions, academic layout). Rather than being mediocre
+on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MCP servers — pick the right one.
+
 ## Scale
 
 <!-- AUTO:tool-stats:start -->
-- **306 tools** (12 built-in + 294 specialized); **only 40 listed by default** (essential tier, load on demand — see `scripts/manual/basic-tier-verify.js`)
-- Distribution (by tool group, built-ins counted in their app group): Common 25 (incl. core) / Word 70 / Excel 95 / PPT 116
-- Annotations (measured): read-only 53 / destructive 34 / non-idempotent 115 — coverage 306/306
+- **309 tools** (12 built-in + 297 specialized); **only 32 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
+- Distribution (by tool group, built-ins counted in their app group): Common 28 (incl. core) / Word 70 / Excel 95 / PPT 116
+- Annotations (measured): read-only 54 / destructive 35 / non-idempotent 117 — coverage 309/309
+- Live-verified 193/309 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
 <!-- AUTO:tool-stats:end -->
 
 ## Architecture
@@ -89,9 +114,11 @@ Same scope as the stats block above: built-in tools are counted inside their app
 | Excel | 95 | formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export |
 | Word | 70 | formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references |
 | PPT | 116 | slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export |
-| Common | 25 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
+| Common | 28 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
 | Built-in | 12 (already counted above) | connection check, generic method, data cache |
 <!-- AUTO:tool-table:end -->
+
+The full list of all 306 tools (name / default tier / annotations / live-verification status) is in **[TOOLS.md](TOOLS.md)** — generated from the registry, so it can never drift from the code.
 
 ## Install
 
@@ -137,33 +164,36 @@ and `-InstallDir`.
 <details>
 <summary><b>MCP config only (no add-in)</b></summary>
 
-> `wps-multitool-mcp` appears twice in the path on purpose: the outer one is the clone directory,
-> the inner one is the project subdirectory. If unsure, run the one-liner — it prints your real path.
+Don't hand-copy paths — let the program write them:
 
-**Claude Code** — `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/your/path/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
-    }
-  }
-}
+```powershell
+node wps-multitool-mcp/dist/index.js install
 ```
 
-**Cursor** — `.cursor/mcp.json`; **OpenAI Codex CLI** — `~/.codex/config.toml`:
+It detects CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor (only ones you already have — it never
+creates a directory for you), backs up each config before writing, reads it back to verify, and restores
+the backup if anything fails.
 
-```toml
-[mcp_servers.wps-multitool-mcp]
-command = "node"
-args = ["/your/path/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
+```powershell
+node dist/index.js install --dry-run    # show what would change
+node dist/index.js install --print      # print snippets, touch nothing
 ```
 
+For clients it can't detect, it prints a ready-to-paste snippet.
 Standard stdio server (spec 2025-11-25) — works with any MCP client.
 
 </details>
+
+## Privacy
+
+- **Your documents never leave the machine**: no telemetry, no crash reporting, no usage analytics,
+  and `src/` makes zero outbound requests
+- The only local network endpoint is the bridge's read-only status server (`127.0.0.1:27731/status`,
+  polled by the WPS task pane)
+- Snapshots live in `~/.wps-multitool-mcp/snapshots/` — they are copies of your documents, treat that
+  directory as sensitive and clear it after handling confidential files
+
+See [SECURITY.md](SECURITY.md) for the full threat model.
 
 ## Troubleshooting
 

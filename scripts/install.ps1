@@ -348,11 +348,14 @@ function Show-McpConfig {
 }
 "@
 
-    Write-Step "MCP 配置示例（复制到你的客户端配置里）"
+    Write-Step "下一步：自动写客户端配置（推荐）"
+    Write-Host "  node `"$dist`" install" -ForegroundColor Yellow
+    Write-Hint "会自动识别 CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor，写前备份、写后校验"
+    Write-Hint "只想看会改什么：加 --dry-run；想自己粘：加 --print"
+
+    Write-Step "或者手动粘（不推荐，路径容易漏一层）"
     Write-Host $cfg -ForegroundColor Yellow
-    Write-Hint "Claude Code: ~/.claude/settings.json"
-    Write-Hint "Cursor: <项目>/.cursor/mcp.json"
-    Write-Hint "CodeBuddy / WorkBuddy: 客户端设置里的 MCP 配置"
+    Write-Hint "注意：路径里出现两次 wps-multitool-mcp 是正常的（外层仓库目录、内层项目目录）"
 }
 
 # ============================================================================

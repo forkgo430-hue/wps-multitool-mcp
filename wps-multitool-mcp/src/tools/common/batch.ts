@@ -35,12 +35,35 @@ import {
   ToolWarning,
 } from '../../types/tools';
 import { toolRegistry, ToolRegistry } from '../../server/tool-registry';
+import { getToolAnnotations } from '../../server/tool-annotations';
+import { isDestructiveAction, isIdempotentAction } from '../../bridge/cancellable';
 import { wpsClient } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
 import { classifyWpsError } from '../../utils/error';
+import { createSnapshot, appendOpLog } from './snapshot';
 
 /** 赢容定的上限。不是"随手写的保守值"，是通道占用的现实约束（见头部注释） */
 export const BATCH_MAX_STEPS = 3;
+
+/**
+ * 这一步值不值得为它存快照。
+ * 破坏性（删、覆盖、原地转格式）最痛；非幂等（重放会叠两层）次之。
+ * 只读的一律不存 —— 快照是保险，不是每次调用的仪式。
+ */
+function riskOf(step: BatchStep): string {
+  if (step.tool) {
+    const a = getToolAnnotations(step.tool);
+    if (!a || a.readOnlyHint) return '';
+    if (a.destructiveHint) return `${step.tool} 破坏性`;
+    if (a.idempotentHint === false) return `${step.tool} 非幂等`;
+    return '';
+  }
+  if (step.action) {
+    if (isDestructiveAction(step.action)) return `${step.action} 破坏性`;
+    if (!isIdempotentAction(step.action)) return `${step.action} 非幂等`;
+  }
+  return '';
+}
 
 type Args = Record<string, unknown>;
 
@@ -91,7 +114,12 @@ export const batchDefinition: ToolDefinition = {
 **失败语义**：某步失败不会中断后续步骤。全成功=成功；部分成功=success 仍为 true 但会带
 warnings 标明哪步没成；全部失败才算失败。失败的步骤【不会自动重试】。
 
-注意：批量不改变回滚能力。COM 写入没有撤销，做之前该建快照还是要建。`,
+**自动快照**：batch 里有破坏性或非幂等的步骤时，执行前会自动给当前文档存一份快照
+（可用 snapshot=false 关掉）。快照建不成功不会拦住执行，但会在 warnings 里明说
+"这次没有回滚保险" —— 别把它当没事。
+
+注意：快照是【补偿】不是【事务】。它只保证"改坏了能退回磁盘上那一版"，
+救不了"写到一半的中间态"，也救不了未保存改动（那种情况会标 dirty）。`,
   category: ToolCategory.COMMON,
   group: 'common',
   inputSchema: {
@@ -115,6 +143,12 @@ warnings 标明哪步没成；全部失败才算失败。失败的步骤【不�
             },
           },
         },
+      },
+      snapshot: {
+        type: 'boolean',
+        description:
+          '执行前是否自动给当前文档建快照（默认 true）。只在有破坏性/非幂等步骤时才真的建；' +
+          '设 false = 你自己承担没有回滚的风险。',
       },
     },
     required: ['steps'],
@@ -140,6 +174,41 @@ export const batchHandler: ToolHandler = async (args: Args): Promise<ToolCallRes
   const warnings: ToolWarning[] = [];
   let okCount = 0;
 
+  // ---- 执行前：有风险的批次先存一份快照 ----------------------------------
+  // 判据不是"写不写"，而是"改坏了痛不痛"：破坏性（删/覆盖）与非幂等（重放会叠两层）
+  // 才值得存。每个写入都存会让人一天攒几百份快照，最后等于没存。
+  const risky = steps
+    .map((s, i) => ({ index: i, step: s, why: riskOf(s) }))
+    .filter((x) => x.why);
+  const wantsSnapshot = args.snapshot !== false && risky.length > 0;
+  let snapshotPath: string | null = null;
+
+  if (wantsSnapshot) {
+    const labels = risky.map((x) => x.step.tool || x.step.action).join(', ');
+    const snap = await createSnapshot(`batch: ${labels}`);
+    if (snap.ok) {
+      snapshotPath = snap.record.snapshotPath ?? null;
+      lines.push(
+        `已自动建快照（${risky.map((x) => x.why).join(' / ')}）→ ${snapshotPath}`,
+        snap.dirty ? '  注意：快照取自磁盘，不含未保存改动。' : '',
+        ''
+      );
+      if (snap.dirty) {
+        warnings.push({
+          step: 'snapshot.dirty',
+          message: '文档有未保存改动，自动快照是磁盘版本；要连未保存内容一起保命，先 wps_common_save 再重试',
+        });
+      }
+    } else {
+      // 建不了快照不阻断执行（用户可能就是要改一份还没保存的新文档），但必须说清
+      warnings.push({
+        step: 'snapshot',
+        message: `没能建快照：${snap.error}。这次执行没有回滚保险。`,
+      });
+      lines.push(`没能建快照：${snap.error}（继续执行，但没有回滚保险）`, '');
+    }
+  }
+
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     const label = step.tool || step.action || `第${i + 1}步`;
@@ -157,6 +226,14 @@ export const batchHandler: ToolHandler = async (args: Args): Promise<ToolCallRes
       } else {
         result = await runAction(step.action as string, step.params ?? {}, step.app ?? 'common');
       }
+
+      appendOpLog({
+        ts: new Date().toISOString(),
+        kind: 'batch',
+        tool: label,
+        success: result.success,
+        snapshot: snapshotPath ?? undefined,
+      });
 
       if (result.success) {
         okCount++;
@@ -182,6 +259,14 @@ export const batchHandler: ToolHandler = async (args: Args): Promise<ToolCallRes
       const kind = classifyWpsError(message);
       warnings.push({ step: label, message: `${message}（归类：${kind}）` });
       lines.push(`${i + 1}. ${label} — 异常：${message}`);
+      appendOpLog({
+        ts: new Date().toISOString(),
+        kind: 'batch',
+        tool: label,
+        success: false,
+        snapshot: snapshotPath ?? undefined,
+        error: message.slice(0, 200),
+      });
     }
   }
 

@@ -1,0 +1,28 @@
+{
+  "_note": [
+    "真机验证清单 —— 唯一真相源。gen-tool-verification.js 读它生成 src/server/tool-verification.generated.ts。",
+    "",
+    "状态只有两档，别加第三档（第三档最后一定会被当成'差不多能用'）：",
+    "  live   = 有【真机】证据：在装了 WPS 的 Windows 上跑过探测脚本/端到端，观察过实际结果",
+    "  static = 只有静态证据：类型检查、生成器、注解对账、CI 门禁，但没在真机上跑过",
+    "",
+    "口径必须写死在证据里：'live' 目前是【组级覆盖】—— 该组有探测脚本跑过，不等于组内每个工具都有专用用例。",
+    "想给单个工具升 live，就在 tools 里加一条，并在 evidence 里写清脚本名与日期。",
+    "宁可写 static：把没验过的说成验过，是在拿用户的文档赌。"
+  ],
+  "groups": {
+    "core": "live",
+    "common": "live",
+    "word": "live",
+    "excel": "live",
+    "ppt": "static"
+  },
+  "tools": {},
+  "evidence": {
+    "core": "verify-all 快测档（tool-groups-test / search-meta-verify）真跑注册表",
+    "common": "verify-all 的 annotation-e2e / warnings-batch-verify 真起 stdio server 跑通",
+    "word": "scripts/manual/word-caps-probe.js + p01-smoke.js（真机，修订/表格/样式/交叉引用/索引）",
+    "excel": "scripts/manual/excel-caps-probe.js（真机，公式/图表/透视表/格式）",
+    "ppt": "无 caps-probe，仅静态校验（类型 + 注解 + 生成器）；PPT 结果必须如实告诉用户未真机验证"
+  }
+}

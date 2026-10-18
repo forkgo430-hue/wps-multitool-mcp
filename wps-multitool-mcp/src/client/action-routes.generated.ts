@@ -3,7 +3,7 @@
  * 源：scripts/wps-com.ps1 的 switch ($Action) 分支。
  * 重新生成：node scripts/gen-action-routes.js
  *
- * 统计：common=29  word=72  ppt=107  excel=101  合计 309
+ * 统计：common=30  word=72  ppt=107  excel=101  合计 310
  */
 
 import type { AppKey } from './action-routes';
@@ -122,6 +122,7 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "freezePanes": 'excel',
   "generateTOC": 'word',
   "getActiveDocument": 'word',
+  "getActiveDocumentState": 'common',
   "getActivePresentation": 'ppt',
   "getActiveWorkbook": 'excel',
   "getAnimations": 'ppt',

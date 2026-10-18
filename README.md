@@ -3,7 +3,7 @@
 **简体中文** | [English](README.en.md)
 
 <!-- AUTO:badges:start -->
-[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-306-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#安装)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-309-brightgreen.svg)](#能力一览) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#安装)
 <!-- AUTO:badges:end -->
 
 > 让 AI 直接操控你**正开着**的 WPS 文字 / 表格 / 演示。
@@ -41,18 +41,39 @@ irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install
 
 | 坑 | 机制 |
 |---|---|
-| 几百个工具塞爆上下文 | 默认只列 40 个，其余 `wps_search_tools` 搜、`wps_load_tool_group` 拉 |
+| 几百个工具塞爆上下文 | 默认只列基础档，其余 `wps_search_tools` 搜、`wps_load_tool_group` 拉 |
 | 写到一半失败，说不清到底改没改 | `warnings` 第三态：做完了，但有 N 处没按预期 |
 | 近名工具选错，不报错，改到别处 | 每个工具带 `notFor` 反例，搜索命中必读 |
+| 改坏了退不回去 | 写入前自动快照（`wps_common_batch` 内置）+ 操作日志，可回滚到磁盘那一版 |
+| 不知道哪些工具真能用 | 每个工具标 `真机验证 / 仅静态验证`，默认档只收验证过的 |
 
 COM 不是事务，所以**失败带重试标签**：`[可重试]` 直接重发，`[勿重试·可能已执行一半]` 先读回来再决定。
+
+## 适用对象
+
+**该用**：Windows 上用 WPS 干活、并且想直接改**已经开着的**文档的人。
+
+- WPS 文字/表格/演示是主力工具（公文、合同、学术论文、汇报材料、数据报表）
+- 要动的是"眼前这份"——带着批注、修订、页眉页脚、还没保存的改动
+- 需要中文场景的细节：学术排版、修订留痕、模板填写、目录与交叉引用
+- 接受"AI 会犯错"这个前提，因此愿意让它先快照、再动手
+
+**不该用**：下面这些场景它帮不上忙，换工具更省事。
+
+- macOS / Linux —— 这条路走的是 Windows COM，没有移植计划
+- 无人值守的 CI / 服务器 —— 它需要交互式桌面和一个开着 WPS 的登录会话
+- 成千上万个文件的批处理 —— 那是文件解析类库的活（`python-docx` / `openpyxl`），不是 COM 的强项
+- 只想读文档内容做检索 —— 不需要开 Office 的场景，用解析库更快更稳
+
+**只做 WPS，不做 MS Office** —— 这是取舍，不是遗漏。WPS 与 Office 是两套 COM 对象模型（`Ket/Kwps/Kwpp` vs `Excel/Word/PowerPoint`），双栈意味着每个动作都要写两遍、在两种环境各验一遍，维护成本翻倍而收益只覆盖一部分用户。这套工具的细节（中文公文格式、修订、学术排版）本来就是冲着 WPS 用户去的 —— 与其两头都半桶水，不如一头做到底。用 MS Office 的话，社区里有专门的 Excel/PPT MCP，各取所需。
 
 ## 规模
 
 <!-- AUTO:tool-stats:start -->
-- **306 个工具**（12 个内置 + 294 个专业/组工具）；**默认只列 40 个**（基础档，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
-- 分布（按工具组，内置计入对应组）：通用 25（含 core）/ Word 70 / Excel 95 / PPT 116
-- 注解（实测）：只读 53 / 破坏性 34 / 非幂等 115，覆盖 306/306
+- **309 个工具**（12 个内置 + 297 个专业/组工具）；**默认只列 32 个**（基础档 ∩ 真机验证，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
+- 分布（按工具组，内置计入对应组）：通用 28（含 core）/ Word 70 / Excel 95 / PPT 116
+- 注解（实测）：只读 54 / 破坏性 35 / 非幂等 117，覆盖 309/309
+- 真机验证 193/309（Word/Excel 为组级真机探测；PPT 仅静态校验 —— 明细见 [TOOLS.md](TOOLS.md)）
 <!-- AUTO:tool-stats:end -->
 
 ## 架构
@@ -88,9 +109,11 @@ flowchart TB
 | Excel | 95 | 公式/数据/图表/透视表/工作表/格式/工作簿/行列/批注保护/图片导出 |
 | Word | 70 | 格式/内容/文档管理/页眉页脚/批注/书签/表格/模板填写/学术排版/修订/索引/交叉引用 |
 | PPT | 116 | 幻灯片/形状/图片/表格/美化/动画/图表/3D/数据可视化/图片导出 |
-| 通用 | 25 | 保存/连接检测/文本选取/格式转换/工具组管理/意图路由/批量执行 |
+| 通用 | 28 | 保存/连接检测/文本选取/格式转换/工具组管理/意图路由/批量执行 |
 | 内置 | 12（已计入上方各组） | 连接检查/万能方法调用/数据缓存 |
 <!-- AUTO:tool-table:end -->
+
+全部 306 个工具的完整清单（名称 / 默认档 / 注解 / 真机验证状态）见 **[TOOLS.md](TOOLS.md)**。它由注册表生成，与代码永远同步。
 
 ## 安装
 
@@ -134,33 +157,31 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 <details>
 <summary><b>只配 MCP，不装加载项</b></summary>
 
-> 下面路径里出现两次 `wps-multitool-mcp` 是正常的：外层是 clone 出来的目录，内层是项目子目录。
-> 不确定就用一键安装脚本，它会把你机器上的真实路径打印出来。
+不用手抄路径，让程序自己找：
 
-**Claude Code** — `~/.claude/settings.json`：
-
-```json
-{
-  "mcpServers": {
-    "wps-multitool-mcp": {
-      "command": "node",
-      "args": ["/你的路径/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
-    }
-  }
-}
+```powershell
+node wps-multitool-mcp/dist/index.js install
 ```
 
-**Cursor** — `.cursor/mcp.json`；**OpenAI Codex CLI** — `~/.codex/config.toml`：
+它会自动识别 CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor（只认已经装过的，不会给你新建目录），
+写前备份原文件、写后回读校验，失败自动还原。常用的两个开关：
 
-```toml
-[mcp_servers.wps-multitool-mcp]
-command = "node"
-args = ["/你的路径/wps-multitool-mcp/wps-multitool-mcp/dist/index.js"]
+```powershell
+node dist/index.js install --dry-run    # 只看会改什么
+node dist/index.js install --print      # 只打印配置片段，一个文件都不动
 ```
 
-标准 stdio 实现（spec 2025-11-25），任何 MCP 客户端都能接。
+没识别到的客户端，它会打印可直接粘贴的片段。标准 stdio 实现（spec 2025-11-25），任何 MCP 客户端都能接。
 
 </details>
+
+## 隐私
+
+- **文档内容不出本机**：没有遥测、没有崩溃上报、没有使用统计，`src/` 里没有任何出站请求
+- 唯一的本地网络端点是桥的只读状态接口（`127.0.0.1:27731/status`，只给 WPS 任务窗格轮询）
+- 快照按文档留在 `~/.wps-multitool-mcp/snapshots/`，等同文档副本，属于敏感目录，处理完敏感文档建议清空
+
+完整威胁模型与建议见 [SECURITY.md](SECURITY.md)。
 
 ## 故障排除
 

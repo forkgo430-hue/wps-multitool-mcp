@@ -71,6 +71,31 @@ const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
     idempotentHint: false,
     openWorldHint: false,
   },
+  /**
+   * 【三】观测到的动作名骗人：它只发了 getActiveDocumentState（只读），
+   * 真正的副作用是 Node 侧写文件（建快照 / 覆盖原文件）。按动作名推断会得出
+   * "只读"或"非破坏性"，而客户端可能拿它决定要不要弹确认 —— 这里必须手写。
+   */
+  wps_common_snapshot_create: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  wps_common_snapshot_restore: {
+    // 默认写副本、不覆盖；但 overwrite=true 时会原地盖掉原文件 —— 按最坏情况给
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  // list 压根不发动作（只读 oplog），名字推断会推成 snapshotList → 判成非只读，必须手写
+  wps_common_snapshot_list: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
 };
 
 /**

@@ -32,6 +32,8 @@ import {
   RegisteredTool,
 } from '../../types/tools';
 import { toolRegistry } from '../../server/tool-registry';
+import { verificationSummary } from '../../server/tool-verification';
+import { essentialButUnverified } from '../../server/tool-tiers';
 
 // 变更事件放在零依赖的 tool-group-events 里，由 ToolRegistry 在 load/unload 后触发。
 // 这里重新导出，方便订阅方只从工具模块引。
@@ -51,8 +53,10 @@ export const listToolGroupsDefinition: ToolDefinition = {
   name: 'wps_list_tool_groups',
   description: `列出所有工具组及当前是否已在列。
 
-默认是【基础档】：只列 40 个最常用的（工具组管理 4 + 常用三件套读写 36），
-其余 200 多个靠 wps_search_tools 搜、wps_load_tool_group 拉。
+默认是【基础档】：只列最常用且【真机验证过】的那批（工具组管理 + 常用三件套读写），
+其余靠 wps_search_tools 搜、wps_load_tool_group 拉。
+每组返回 total / listed / live 三个数：live 是该组真机验证过的工具数，
+live < total 的组（目前是 ppt）结果要如实告诉用户"这部分未在真机验证"。
 加载某个组 = 该组全部工具开始列出；卸载 = 回到基础档。
 （WPS_TOOL_TIER=full 可关掉基础档过滤，改回"按组切"。）
 
@@ -67,7 +71,10 @@ export const listToolGroupsDefinition: ToolDefinition = {
 export const listToolGroupsHandler: ToolHandler = async () => {
   const groups = toolRegistry.getGroups();
   const listed = toolRegistry.listTools().tools.length;
-  const total = toolRegistry.listAllTools().length;
+  const allNames = toolRegistry.listAllTools().map((d) => d.name);
+  const total = allNames.length;
+  const ver = verificationSummary(allNames);
+  const unverifiedEssential = essentialButUnverified();
   return text({
     tier: toolRegistry.tier,
     groups,
@@ -75,9 +82,15 @@ export const listToolGroupsHandler: ToolHandler = async () => {
       loadedGroups: toolRegistry.getLoadedGroups(),
       listedTools: listed,
       totalTools: total,
+      verifiedTools: ver.live,
       note:
         toolRegistry.tier === 'essential'
-          ? '基础档：列出的 = 基础 40 ∪ 已完整加载的组。未列出的工具仍可直接调用，也可以用 wps_search_tools 搜到再加载。'
+          ? `基础档：列出的 = （基础档白名单 ∩ 真机验证过）∪ 已完整加载的组。` +
+            `真机验证 ${ver.live}/${total}，未验证的组（ppt）默认不列。` +
+            (unverifiedEssential.length
+              ? `这批基础工具因未真机验证暂不默认列出：${unverifiedEssential.join(', ')}。`
+              : '') +
+            `未列出的工具仍可直接调用，也可以用 wps_search_tools 搜到再加载。`
           : '全量档：列出的 = 所有已加载组的工具。',
     },
   });
@@ -175,13 +188,16 @@ export const unloadToolGroupHandler: ToolHandler = async (args) => {
 
 export const searchToolsDefinition: ToolDefinition = {
   name: 'wps_search_tools',
-  description: `在所有工具里搜索（**包括未加载组的工具**），返回名字 + 所属组 + 是否已列出 + 中文别名。
+  description: `在所有工具里搜索（**包括未加载组的工具**），返回名字 + 所属组 + 是否已列出 + 中文别名 + 验证状态。
 
 关键词可以直接用中文（工具名是英文，描述和别名是中文）。
 **重点看 notFor**：本仓有一批近名工具（6 个 background、5 个 animation、4 个 transition、
 3 个插入图片、2 个 generate_*_toc、2 个 zoom），名字和描述几乎一样，光看名字分不出来。
 靠前的命中会带上 examples（什么诉求用它）和 notFor（它不干什么、该用谁），
 遇到一搜出来好几个同族工具时，务必按 notFor 挑，别瞎猜。
+
+**verified 字段**：live = 真机跑通过；static = 只有静态校验（目前整组 ppt 都是）。
+static 不是"不能用"，是"没人在这台机器上验证过" —— 用它做完事，要如实告诉用户结果未经真机验证。
 
 用途：组没加载时工具不在列表里，先搜出来，再 wps_load_tool_group 把它所在的组拉起来。
 

@@ -573,6 +573,73 @@ switch ($Action) {
     "ping" {
         Output-Json @{ success = $true; data = @{ message = "pong"; timestamp = [DateTimeOffset]::Now.ToUnixTimeMilliseconds() } }
     }
+
+    # 快照工具的前置查询：文档在哪 / 有没有未保存改动 / 只读没。
+    # 这里【只读】，也不像 Get-WpsExcel 那样顺手拉起应用 —— 查个状态就把 WPS 拽起来是副作用，
+    # 用户会在任务管理器里看到一堆自己没开的进程。所以只用 GetActiveWpsApp（只找已运行的实例）。
+    # 真正的写文件放在 Node 侧：PS 一旦碰文件系统，路径写错就是把用户文档写坏。
+    "getActiveDocumentState" {
+        $excel = Get-ActiveWpsApp 'Ket.Application'
+        if ($null -ne $excel) {
+            try {
+                $book = $excel.ActiveWorkbook
+                if ($null -ne $book) {
+                    $full = ""
+                    try { $full = [string]$book.FullName } catch {}
+                    # hasPath 必须用 Path 判，不能用 FullName —— 未保存的文档 FullName 也会
+                    # 拼出一个"默认目录\文字文稿1"（文件并不存在），拿它去 copy 只会 ENOENT。
+                    $dir = ""
+                    try { $dir = [string]$book.Path } catch {}
+                    $saved = $true
+                    try { $saved = [bool]$book.Saved } catch {}
+                    $ro = $false
+                    try { $ro = [bool]$book.ReadOnly } catch {}
+                    Output-Json @{ success = $true; data = @{ app = "excel"; name = [string]$book.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
+                    return
+                }
+            } catch {}
+        }
+
+        $word = Get-ActiveWpsApp 'Kwps.Application'
+        if ($null -ne $word) {
+            try {
+                $doc = $word.ActiveDocument
+                if ($null -ne $doc) {
+                    $full = ""
+                    try { $full = [string]$doc.FullName } catch {}
+                    $dir = ""
+                    try { $dir = [string]$doc.Path } catch {}
+                    $saved = $true
+                    try { $saved = [bool]$doc.Saved } catch {}
+                    $ro = $false
+                    try { $ro = [bool]$doc.ReadOnly } catch {}
+                    Output-Json @{ success = $true; data = @{ app = "word"; name = [string]$doc.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
+                    return
+                }
+            } catch {}
+        }
+
+        $ppt = Get-ActiveWpsApp 'Kwpp.Application'
+        if ($null -ne $ppt) {
+            try {
+                $pres = $ppt.ActivePresentation
+                if ($null -ne $pres) {
+                    $full = ""
+                    try { $full = [string]$pres.FullName } catch {}
+                    $dir = ""
+                    try { $dir = [string]$pres.Path } catch {}
+                    $saved = $true
+                    try { $saved = [bool]$pres.Saved } catch {}
+                    $ro = $false
+                    try { $ro = [bool]$pres.ReadOnly } catch {}
+                    Output-Json @{ success = $true; data = @{ app = "ppt"; name = [string]$pres.Name; fullName = $full; dir = $dir; saved = $saved; readOnly = $ro; hasPath = (-not [string]::IsNullOrEmpty($dir)) } }
+                    return
+                }
+            } catch {}
+        }
+
+        Output-Json @{ success = $false; error = "No active document" }
+    }
     # 【临时诊断】列出挡路的对话框。用来验 C 项：Get-WpsModalDialogs 能不能真找到窗口。
     "__probeStyleAdd" {
         # 最小对比实验：探测里 styles.add 报 supported，实现里却 E_FAIL。

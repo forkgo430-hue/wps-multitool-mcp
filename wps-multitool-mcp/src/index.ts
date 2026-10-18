@@ -98,10 +98,42 @@ async function main(): Promise<void> {
 
 // 如果是直接运行而不是被导入，则启动服务器
 if (require.main === module) {
-  main().catch((error) => {
-    log.error('Fatal error', error);
-    process.exit(1);
-  });
+  const sub = (process.argv[2] || '').trim();
+
+  if (sub === 'install') {
+    // 子命令：写客户端配置后退出，不碰 stdio（MCP 握手靠的是"无参数运行"这条路径）
+    import('./cli/install')
+      .then((m) => m.runInstall(process.argv.slice(3)))
+      .then((code) => process.exit(code))
+      .catch((error) => {
+        log.error('install failed', error);
+        process.exit(1);
+      });
+  } else if (sub === 'help' || sub === '--help' || sub === '-h') {
+    // 无参数 = 起 MCP server（客户端就是这么调的），所以帮助必须显式要
+    process.stdout.write(
+      [
+        'wps-multitool-mcp —— 用 COM 操控本机正开着的 WPS 文字/表格/演示',
+        '',
+        '用法：',
+        '  wps-multitool-mcp                 以 MCP server 启动（stdio，给客户端调用）',
+        '  wps-multitool-mcp install         把启动项写进已检测到的 MCP 客户端配置',
+        '      --dry-run                     只看会改什么，不落盘',
+        '      --print                       只打印配置片段，一个文件都不动',
+        '      --client <id>                 只处理某个客户端：' + 'codebuddy / workbuddy / codex / claude / claude-settings / cursor',
+        '  wps-multitool-mcp help            显示这段帮助',
+        '',
+        '环境变量：WPS_TOOL_TIER=full 关掉默认档过滤；WPS_TOOL_GROUPS=word,excel 指定初始加载的组',
+        '',
+      ].join('\n')
+    );
+    process.exit(0);
+  } else {
+    main().catch((error) => {
+      log.error('Fatal error', error);
+      process.exit(1);
+    });
+  }
 }
 
 export default main;

@@ -203,6 +203,9 @@ venv/
 
 # 其他 Claude 相关文件
 CLAUDE.md
+# 包内 CHANGELOG 由 changesets 生成，属发版产物，要进库；
+# 仓库根的 CHANGELOG.md 是早期手写的本地存档，继续保持忽略（不给它开例外）。
 CHANGELOG.md
+!wps-multitool-mcp/CHANGELOG.md
 .claude
 .spec-workflow

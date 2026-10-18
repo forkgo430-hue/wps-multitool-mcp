@@ -22,7 +22,8 @@ import {
 } from '../types/tools';
 import { createChildLogger } from '../utils/logger';
 import { emitToolGroupsChanged } from './tool-group-events';
-import { ESSENTIAL_TOOL_NAMES, isEssentialTier } from './tool-tiers';
+import { ESSENTIAL_TOOL_NAMES, isEssentialTier, isListedByDefault } from './tool-tiers';
+import { isLiveVerified } from './tool-verification';
 import {
   ToolNotFoundError,
   ToolExecutionError,
@@ -45,6 +46,11 @@ export interface ToolSearchHit {
   notFor?: string[];
   /** 命中的是哪一段：name / description / alias */
   matchedBy?: string;
+  /**
+   * 真机验证状态。static 不是"不能用"，是"没人在这台机器上跑通过"——
+   * 结果要如实转述，别把"没报错"当成"做对了"。
+   */
+  verified?: 'live' | 'static';
 }
 
 const logger = createChildLogger('ToolRegistry');
@@ -185,8 +191,12 @@ export class ToolRegistry {
 
   /**
    * 该工具当前是否会被列出。
-   *   基础档模式：core 组 ∪ 基础档白名单 ∪ 已完整加载的组
+   *   基础档模式：core 组 ∪ （基础档白名单 ∩ 真机验证过）∪ 已完整加载的组
    *   全量模式：所属组已加载
+   *
+   * 为什么要叠"验证过"这一层：默认档是模型最先看到的 30 多个工具，
+   * 等于我们在替用户做"这些能信"的背书。没在真机上跑过的（目前是 PPT 那批）
+   * 不该混在里面 —— 它们仍可搜到、仍可加载，只是不占默认名额。
    */
   isListed(def: ToolDefinition): boolean {
     const group = groupOfTool(def);
@@ -194,7 +204,7 @@ export class ToolRegistry {
       return this.loadedGroups.has(group);
     }
     if (group === ALWAYS_LOADED_GROUP) return true;
-    if (ESSENTIAL_TOOL_NAMES.has(def.name)) return true;
+    if (isListedByDefault(def.name)) return true;
     return this.fullyLoadedGroups.has(group);
   }
 
@@ -224,13 +234,23 @@ export class ToolRegistry {
    *   loaded      该组是否已加载
    *   fullyLoaded 基础档模式下，是否被"完整加载"（整组列出）
    */
-  getGroups(): Array<{ group: string; loaded: boolean; fullyLoaded: boolean; total: number; listed: number }> {
+  getGroups(): Array<{
+    group: string;
+    loaded: boolean;
+    fullyLoaded: boolean;
+    total: number;
+    listed: number;
+    /** 该组真机验证过的工具数 —— 和 total 一起看才知道"这组的工具能不能信" */
+    live: number;
+  }> {
     const counts = new Map<string, number>();
     const listedCounts = new Map<string, number>();
+    const liveCounts = new Map<string, number>();
     for (const t of this.tools.values()) {
       const g = groupOfTool(t.definition);
       counts.set(g, (counts.get(g) ?? 0) + 1);
       if (this.isListed(t.definition)) listedCounts.set(g, (listedCounts.get(g) ?? 0) + 1);
+      if (isLiveVerified(t.definition.name)) liveCounts.set(g, (liveCounts.get(g) ?? 0) + 1);
     }
     // core 组一定存在（哪怕暂时没有工具）
     if (!counts.has(ALWAYS_LOADED_GROUP)) counts.set(ALWAYS_LOADED_GROUP, 0);
@@ -242,6 +262,7 @@ export class ToolRegistry {
         fullyLoaded: this.fullyLoadedGroups.has(group),
         total,
         listed: listedCounts.get(group) ?? 0,
+        live: liveCounts.get(group) ?? 0,
       }))
       .sort((a, b) => a.group.localeCompare(b.group));
   }
@@ -348,6 +369,7 @@ export class ToolRegistry {
         description: (def.description || '').split('\n')[0].slice(0, 120),
         aliases: meta.aliases.slice(0, 5),
         matchedBy,
+        verified: isLiveVerified(def.name) ? 'live' : 'static',
         score,
       });
     }

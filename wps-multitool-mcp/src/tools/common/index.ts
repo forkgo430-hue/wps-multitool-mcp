@@ -17,6 +17,7 @@ import { toolGroupTools } from './toolgroups';
 import { intentTools } from './intent';
 import { repairTools } from './repair';
 import { batchTools } from './batch';
+import { snapshotTools } from './snapshot';
 
 /**
  * 所有通用的Tools
@@ -28,8 +29,9 @@ import { batchTools } from './batch';
  * - 工具组管理（core 组，永远列出）: list_tool_groups, load_tool_group, unload_tool_group, search_tools
  * - 意图识别（core 组）: route_intent —— 一句话判断该开哪个组
  * - 批量执行: batch —— 一次 1~3 步，省掉逐个调用的往返，遇错不中断
+ * - 快照: snapshot_create / snapshot_list / snapshot_restore —— COM 非事务的补偿层
  *
- * 默认只列 40 个基础工具（WPS_TOOL_TIER=full 可关闭），其余靠 search + load 按需拉
+ * 默认只列基础档里【真机验证过】的工具（WPS_TOOL_TIER=full 可关闭），其余靠 search + load 按需拉
  */
 export const commonTools: RegisteredTool[] = [
   ...convertTools,
@@ -37,6 +39,7 @@ export const commonTools: RegisteredTool[] = [
   ...statusTools,
   ...repairTools,
   ...batchTools,
+  ...snapshotTools,
   ...toolGroupTools,
   ...intentTools,
 ];
@@ -47,6 +50,19 @@ export { generalTools } from './general';
 export { statusTools, statusDefinition, statusHandler } from './status';
 export { repairTools, repairDefinition, repairHandler } from './repair';
 export { batchTools, batchDefinition, batchHandler, BATCH_MAX_STEPS } from './batch';
+export {
+  snapshotTools,
+  snapshotCreateDefinition,
+  snapshotCreateHandler,
+  snapshotListDefinition,
+  snapshotListHandler,
+  snapshotRestoreDefinition,
+  snapshotRestoreHandler,
+  createSnapshot,
+  readOpLog,
+  appendOpLog,
+  SNAPSHOT_ROOT,
+} from './snapshot';
 export {
   intentTools,
   routeIntentDefinition,

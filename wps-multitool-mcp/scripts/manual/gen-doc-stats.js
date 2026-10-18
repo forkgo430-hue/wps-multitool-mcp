@@ -40,6 +40,7 @@ const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registr
 const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
 const { groupOfTool } = require(path.join(ROOT, 'dist', 'types', 'tools.js'));
 const { annotationSummary } = require(path.join(ROOT, 'dist', 'server', 'tool-annotations.js'));
+const { verificationSummary } = require(path.join(ROOT, 'dist', 'server', 'tool-verification.js'));
 
 // ---- 1. 真实注册路径，量出数字 ----------------------------------------------
 const inst = new WpsMcpServer();
@@ -58,6 +59,8 @@ for (const t of all) {
   byGroup[g] = (byGroup[g] || 0) + 1;
 }
 const ann = annotationSummary(all.map((t) => t.name));
+// 别叫 ver —— 文件末尾 panel 版本号那个变量也叫 ver，重名会在运行期直接炸（已经踩过一次）
+const vstat = verificationSummary(all.map((t) => t.name));
 const listed = toolRegistry.listTools().tools.length;
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -129,19 +132,21 @@ function makeBlocks(lang) {
   const statsBlock = en
     ? [
         `- **${total} tools** (${builtinCount} built-in + ${professionalCount} specialized); ` +
-          `**only ${listed} listed by default** (essential tier, load on demand — see \`scripts/manual/basic-tier-verify.js\`)`,
+          `**only ${listed} listed by default** (essential ∩ live-verified, load on demand — see \`scripts/manual/basic-tier-verify.js\`)`,
         `- Distribution (by tool group, built-ins counted in their app group): ` +
           `Common ${commonTotal} (incl. core) / Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
         `- Annotations (measured): read-only ${ann.readOnly} / destructive ${ann.destructive} / ` +
           `non-idempotent ${ann.nonIdempotent} — coverage ${ann.annotated}/${ann.total}`,
+        `- Live-verified ${vstat.live}/${vstat.total} (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))`,
       ].join('\n')
     : [
         `- **${total} 个工具**（${builtinCount} 个内置 + ${professionalCount} 个专业/组工具）；` +
-          `**默认只列 ${listed} 个**（基础档，按需加载 —— 口径与校验见 \`scripts/manual/basic-tier-verify.js\`）`,
+          `**默认只列 ${listed} 个**（基础档 ∩ 真机验证，按需加载 —— 口径与校验见 \`scripts/manual/basic-tier-verify.js\`）`,
         `- 分布（按工具组，内置计入对应组）：` +
           `通用 ${commonTotal}（含 core）/ Word ${byGroup.word || 0} / Excel ${byGroup.excel || 0} / PPT ${byGroup.ppt || 0}`,
         `- 注解（实测）：只读 ${ann.readOnly} / 破坏性 ${ann.destructive} / 非幂等 ${ann.nonIdempotent}，` +
           `覆盖 ${ann.annotated}/${ann.total}`,
+        `- 真机验证 ${vstat.live}/${vstat.total}（Word/Excel 为组级真机探测；PPT 仅静态校验 —— 明细见 [TOOLS.md](TOOLS.md)）`,
       ].join('\n');
 
   // 徽章行同样不许手抄：版本取自 package.json，工具数取自注册表。

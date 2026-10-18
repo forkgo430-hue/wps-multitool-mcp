@@ -30,11 +30,13 @@ const FAST = [
   ['error-map-test.js', '错误分类映射'],
   ['error-type-verify.js', '错误类型与可重试标签'],
   ['search-meta-verify.js', '工具检索元数据（别名/反例）'],
-  ['basic-tier-verify.js', '默认列出恰好 40 个'],
+  ['verification-verify.js', '验证状态覆盖与默认档'],
+  ['basic-tier-verify.js', '默认档 = 白名单 ∩ 真机验证'],
   ['tool-groups-test.js', '工具组加载'],
   ['intent-test.js', '意图识别词表'],
   ['annotation-verify.js', '工具注解与三方对账'],
   ['warnings-batch-verify.js', 'warnings 语义 + 批量执行'],
+  ['install-verify.js', 'install 子命令（合并/备份/幂等）'],
   ['skill-verify.js', 'skill 包规范'],
 ];
 
@@ -42,6 +44,7 @@ const FAST = [
 const HEAVY = [
   ['excel-caps-probe.js', 'Excel 能力探测（需 WPS）'],
   ['word-caps-probe.js', 'Word 能力探测（需 WPS）'],
+  ['snapshot-verify.js', '快照 / 恢复（需 WPS）'],
   ['annotation-e2e.js', '注解端到端（真起 stdio server）'],
   ['bridge-test.js', '桥进程'],
   ['cancel-verify.js', '取消机制（真跑 PowerShell）'],

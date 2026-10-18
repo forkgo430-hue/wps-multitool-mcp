@@ -1,17 +1,23 @@
 /**
  * Input: 工具名
  * Output: 是否属于"基础档"
- * Pos: 工具档位（基础 40 / 全量）白名单。一旦我被修改，请更新我的头部注释，以及所属目录的md。
+ * Pos: 工具档位（基础档 / 全量）白名单。一旦我被修改，请更新我的头部注释，以及所属目录的md。
  *
  * 为什么要这一个档
  * ----------------
- * 全量 285 个工具一次性塞进上下文既贵又稀释注意力；但只按组切（word/excel/ppt）粒度又太粗
- * —— 只做一份报告也要背上 45 个 word 工具。所以再叠一层"基础档"：默认只列 40 个
- * （覆盖三件套最常用的读写 + 工具组管理 + 诊断），其余靠 search_tools 搜 + load_tool_group 拉。
+ * 全量 306 个工具一次性塞进上下文既贵又稀释注意力；但只按组切（word/excel/ppt）粒度又太粗
+ * —— 只做一份报告也要背上 70 个 word 工具。所以再叠一层"基础档"：
+ * 默认只列白名单里【真机验证过】的那批（覆盖三件套最常用的读写 + 工具组管理 + 诊断），
+ * 其余靠 search_tools 搜 + load_tool_group 拉。
+ *
+ * 为什么要再乘一个"验证状态"
+ * ------------------------
+ * 白名单回答"常不常用"，验证状态回答"跑通过没有"。默认档是模型最先看到、也是最容易被直接调用的一批，
+ * 等于我们在替用户背书。PPT 那 8 个基础工具没真机跑过，就从默认档里退出来（仍可搜到、仍可加载）。
  *
  * 语义（要说清，否则容易误判）
  * ----------------------------
- *   默认（WPS_TOOL_TIER=essential）：列出的 = 基础档 40 个 ∪ 已"完整加载"的组
+ *   默认（WPS_TOOL_TIER=essential）：列出的 = （基础档 ∩ 真机验证过）∪ 已"完整加载"的组
  *   WPS_TOOL_TIER=full：忽略基础档，按组来（列出 = 已加载组的全部工具）
  *   加载某个组 → 该组全部工具开始列出；卸载 → 回到基础档（基础档里属于该组的仍会列出，
  *   因为基础档是跨组的常用集，本来就该一直在）
@@ -20,11 +26,15 @@
  */
 
 import { ToolGroupName } from '../types/tools';
+import { isLiveVerified } from './tool-verification';
 
 /**
- * 基础档：core 之外的 35 个常用工具。
- * core 组自己有 5 个（list/load/unload/search + route_intent）且永远列出，合计正好 40。
+ * 基础档白名单：core 之外的 35 个常用工具。
+ * core 组自己有 5 个（list/load/unload/search + route_intent）且永远列出，不受白名单与验证状态约束。
  * 拆开算的原因：core 不需要白名单（见 ALWAYS_LOADED_GROUP），所以这份名单只放非 core 的。
+ *
+ * 注意：白名单 ≠ 默认列出。最终还要过 isListedByDefault 的验证状态那一层，
+ * 所以清单里不要再写"合计正好 40"这类数字 —— 数字会随验证进度变，写死必腐化。
  */
 export const ESSENTIAL_TOOLS: readonly string[] = [
   // 通用（7）：状态、存盘、导出、逃生舱
@@ -94,9 +104,25 @@ export const ESSENTIAL_BY_GROUP: Readonly<Record<string, number>> = ESSENTIAL_TO
 /** core 组的工具数（在 toolgroups.ts 里定义，这里只标注预期值，用于自检） */
 export const CORE_GROUP_TOOL_COUNT = 4;
 
-/** 当前档位：默认 essential（40），WPS_TOOL_TIER=full 关闭基础档过滤 */
+/** 当前档位：默认 essential，WPS_TOOL_TIER=full 关闭基础档过滤 */
 export function isEssentialTier(): boolean {
   return (process.env.WPS_TOOL_TIER || 'essential').toLowerCase() !== 'full';
+}
+
+/**
+ * 基础档 × 真机验证 = 默认列出的那一批。
+ *
+ * 拆成两层的理由：白名单是"最常用的 35 个"，验证状态是"这些到底在真机上跑通过没有"。
+ * 两层都要过，才配占默认名额 —— 默认档是模型最先看到的东西，等于我们在替用户背书。
+ * 被挡在外面的工具【没被删除】：search 能搜到，load 组能拉出来，只是不默认出现。
+ */
+export function isListedByDefault(name: string): boolean {
+  return ESSENTIAL_TOOL_NAMES.has(name) && isLiveVerified(name);
+}
+
+/** 基础档里因"未真机验证"而不默认列出的工具（诊断用，让人知道少的是哪几个） */
+export function essentialButUnverified(): string[] {
+  return ESSENTIAL_TOOLS.filter((n) => !isLiveVerified(n));
 }
 
 /** 诊断：把基础档清单与实际注册名对一遍，找出"写了但不存在"的名字（防手误） */
