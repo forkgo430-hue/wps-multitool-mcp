@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**309 个工具**（12 内置 + 297 专业/组工具）· 默认列出 32 个 · 注解覆盖 309/309 · 真机验证 193/309
+**309 个工具**（12 内置 + 297 专业/组工具）· 默认列出 40 个 · 注解覆盖 309/309 · 真机验证 201/309
 
 | 标记 | 含义 |
 |---|---|
@@ -230,6 +230,14 @@
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
+| `wps_ppt_add_slide` | 是 | N | live | 添加新幻灯片到演示文稿。<br><sub>别名：添加幻灯片 / 新增幻灯片 / 加幻灯片</sub> |
+| `wps_ppt_add_speaker_notes` | 是 | — | live | 添加或追加演讲者备注到指定幻灯片。<br><sub>别名：添加演讲者备注 / 新增演讲者备注 / 加演讲者备注</sub> |
+| `wps_ppt_create_presentation` | 是 | N | live | 新建空白演示文稿。<br><sub>别名：创建演示文稿 / 新建演示文稿 / 生成演示文稿</sub> |
+| `wps_ppt_export_slide_as_image` | 是 | — | live | 将指定幻灯片导出为位图图片（PNG/JPG/JPEG/GIF/BMP）。<br><sub>别名：导出幻灯片as图片 / 输出幻灯片as图片 / 幻灯片</sub> |
+| `wps_ppt_get_open_presentations` | 是 | R | live | 获取当前所有已打开的演示文稿列表。<br><sub>别名：获取打开演示文稿 / 读取打开演示文稿 / 查看打开演示文稿</sub> |
+| `wps_ppt_get_slide_count` | 是 | R | live | 获取演示文稿中的幻灯片总数。<br><sub>别名：获取幻灯片count / 读取幻灯片count / 查看幻灯片count</sub> |
+| `wps_ppt_insert_image` | 是 | N | live | 在幻灯片中插入图片。<br><sub>别名：插入图片 / 加图片 / 新增图片</sub> |
+| `wps_ppt_set_slide_title` | 是 | — | live | 设置幻灯片的标题文本。<br><sub>别名：设置标题 / 改标题 / 设置幻灯片标题</sub> |
 | `wps_get_active_presentation` |  | R | static | 获取当前打开的WPS演示文稿信息<br><sub>别名：当前演示文稿 / 活动演示 / 打开的是哪个PPT</sub> |
 | `wps_ppt_add_animation` |  | N | static | 为幻灯片中的形状添加动画效果。<br><sub>别名：添加动画 / 加动画 / 新增动画</sub> |
 | `wps_ppt_add_animation_preset` |  | N | static | 为形状添加预设入场动画效果。<br><sub>别名：添加动画预设 / 新增动画预设 / 加动画预设</sub> |
@@ -239,8 +247,6 @@
 | `wps_ppt_add_page_indicator` |  | N | static | 为演示文稿添加页码指示器。<br><sub>别名：添加页面指示器 / 新增页面指示器 / 加页面指示器</sub> |
 | `wps_ppt_add_ppt_hyperlink` |  | N | static | 为幻灯片中的形状添加超链接。<br><sub>别名：添加超链接 / 新增超链接 / 加超链接</sub> |
 | `wps_ppt_add_shape` |  | N | static | 在幻灯片中添加形状。<br><sub>别名：添加形状 / 新增形状 / 加形状</sub> |
-| `wps_ppt_add_slide` |  | N | static | 添加新幻灯片到演示文稿。<br><sub>别名：添加幻灯片 / 新增幻灯片 / 加幻灯片</sub> |
-| `wps_ppt_add_speaker_notes` |  | — | static | 添加或追加演讲者备注到指定幻灯片。<br><sub>别名：添加演讲者备注 / 新增演讲者备注 / 加演讲者备注</sub> |
 | `wps_ppt_add_textbox` |  | N | static | 在幻灯片中添加文本框。<br><sub>别名：加文本框 / 插入文本框 / 添加文本框</sub> |
 | `wps_ppt_add_title_decoration` |  | N | static | 为幻灯片标题添加装饰性元素。<br><sub>别名：添加标题装饰 / 新增标题装饰 / 加标题装饰</sub> |
 | `wps_ppt_align_objects` |  | — | static | 对齐幻灯片中的对象。<br><sub>别名：对齐objects</sub> |
@@ -261,7 +267,6 @@
 | `wps_ppt_create_kpi_cards` |  | N | static | 在幻灯片上创建KPI指标卡片。<br><sub>别名：创建KPI卡片 / 新建KPI卡片 / 生成KPI卡片</sub> |
 | `wps_ppt_create_mini_charts` |  | N | static | 在幻灯片中创建迷你图表。<br><sub>别名：创建迷你图表 / 新建迷你图表 / 生成迷你图表</sub> |
 | `wps_ppt_create_org_chart` |  | N | static | 在幻灯片中创建组织架构图。<br><sub>别名：创建组织图表 / 新建组织图表 / 生成组织图表</sub> |
-| `wps_ppt_create_presentation` |  | N | static | 新建空白演示文稿。<br><sub>别名：创建演示文稿 / 新建演示文稿 / 生成演示文稿</sub> |
 | `wps_ppt_create_progress_bar` |  | N | static | 在幻灯片中创建进度条。<br><sub>别名：创建进度条 / 新建进度条 / 生成进度条</sub> |
 | `wps_ppt_create_styled_table` |  | N | static | 在幻灯片中创建带预设样式的精美表格。<br><sub>别名：创建styled表格 / 新建styled表格 / 生成styled表格</sub> |
 | `wps_ppt_create_timeline` |  | N | static | 在幻灯片中创建时间线。<br><sub>别名：创建时间轴 / 新建时间轴 / 生成时间轴</sub> |
@@ -272,12 +277,9 @@
 | `wps_ppt_distribute_shapes` |  | — | static | 等距分布幻灯片中的多个形状。<br><sub>别名：分布形状 / 等距分布形状 / 形状</sub> |
 | `wps_ppt_duplicate_shape` |  | N | static | 复制幻灯片中的指定形状。<br><sub>别名：复制形状 / 副本形状 / 形状</sub> |
 | `wps_ppt_duplicate_slide` |  | N | static | 复制指定的幻灯片，在其后插入副本。<br><sub>别名：复制幻灯片 / 副本幻灯片 / 幻灯片</sub> |
-| `wps_ppt_export_slide_as_image` |  | — | static | 将指定幻灯片导出为位图图片（PNG/JPG/JPEG/GIF/BMP）。<br><sub>别名：导出幻灯片as图片 / 输出幻灯片as图片 / 幻灯片</sub> |
 | `wps_ppt_find_ppt_text` |  | R | static | 在演示文稿中搜索指定文本。<br><sub>别名：查找文本 / 搜索文本 / 文本</sub> |
 | `wps_ppt_get_animations` |  | R | static | 获取幻灯片上所有动画效果的列表。<br><sub>别名：获取动画 / 读取动画 / 查看动画</sub> |
-| `wps_ppt_get_open_presentations` |  | R | static | 获取当前所有已打开的演示文稿列表。<br><sub>别名：获取打开演示文稿 / 读取打开演示文稿 / 查看打开演示文稿</sub> |
 | `wps_ppt_get_shapes` |  | R | static | 获取幻灯片中所有形状的列表信息。<br><sub>别名：获取形状 / 读取形状 / 查看形状</sub> |
-| `wps_ppt_get_slide_count` |  | R | static | 获取演示文稿中的幻灯片总数。<br><sub>别名：获取幻灯片count / 读取幻灯片count / 查看幻灯片count</sub> |
 | `wps_ppt_get_slide_info` |  | R | static | 获取指定幻灯片的详细信息，包括布局、元素列表等。<br><sub>别名：获取幻灯片信息 / 读取幻灯片信息 / 查看幻灯片信息</sub> |
 | `wps_ppt_get_slide_master` |  | R | static | 获取当前演示文稿的母版信息。<br><sub>别名：获取幻灯片母版 / 读取幻灯片母版 / 查看幻灯片母版</sub> |
 | `wps_ppt_get_slide_notes` |  | R | static | 获取指定幻灯片的备注内容。<br><sub>别名：获取幻灯片备注 / 读取幻灯片备注 / 查看幻灯片备注</sub> |
@@ -285,7 +287,6 @@
 | `wps_ppt_get_table_cell` |  | R | static | 获取PPT表格中指定单元格的文本内容。<br><sub>别名：获取表格单元格 / 读取表格单元格 / 查看表格单元格</sub> |
 | `wps_ppt_get_textboxes` |  | R | static | 获取幻灯片上所有文本框的列表。<br><sub>别名：获取文本框 / 读取文本框 / 查看文本框</sub> |
 | `wps_ppt_group_shapes` |  | — | static | 将幻灯片中的多个形状组合为一个组。<br><sub>别名：组合形状 / 分组形状 / 形状</sub> |
-| `wps_ppt_insert_image` |  | N | static | 在幻灯片中插入图片。<br><sub>别名：插入图片 / 加图片 / 新增图片</sub> |
 | `wps_ppt_insert_ppt_chart` |  | N | static | 在幻灯片中插入数据图表。<br><sub>别名：插入图表 / 新增图表 / 加入图表</sub> |
 | `wps_ppt_insert_ppt_image` |  | N | static | 插入图片到幻灯片中。<br><sub>别名：插入图片 / 新增图片 / 加入图片</sub> |
 | `wps_ppt_insert_slide_image` |  | N | static | 在幻灯片中插入图片。<br><sub>别名：插入幻灯片图片 / 新增幻灯片图片 / 加入幻灯片图片</sub> |
@@ -332,7 +333,6 @@
 | `wps_ppt_set_slide_size` |  | — | static | 设置演示文稿的幻灯片尺寸。<br><sub>别名：设置幻灯片size / 设定幻灯片size / 幻灯片</sub> |
 | `wps_ppt_set_slide_subtitle` |  | — | static | 设置幻灯片的副标题。<br><sub>别名：设置幻灯片副标题 / 设定幻灯片副标题 / 幻灯片</sub> |
 | `wps_ppt_set_slide_theme` |  | — | static | 设置演示文稿主题。<br><sub>别名：设置幻灯片主题 / 设定幻灯片主题 / 幻灯片</sub> |
-| `wps_ppt_set_slide_title` |  | — | static | 设置幻灯片的标题文本。<br><sub>别名：设置标题 / 改标题 / 设置幻灯片标题</sub> |
 | `wps_ppt_set_slide_transition` |  | — | static | 设置幻灯片的页面切换效果。<br><sub>别名：当前页切换效果 / 设置幻灯片切换效果 / 设定幻灯片切换效果</sub> |
 | `wps_ppt_set_table_cell` |  | — | static | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
 | `wps_ppt_set_table_cell_style` |  | — | static | 设置PPT表格中指定单元格的样式。<br><sub>别名：设置表格单元格样式 / 设定表格单元格样式 / 表格</sub> |

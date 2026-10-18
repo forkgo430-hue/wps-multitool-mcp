@@ -70,10 +70,10 @@ COM 不是事务，所以**失败带重试标签**：`[可重试]` 直接重发�
 ## 规模
 
 <!-- AUTO:tool-stats:start -->
-- **309 个工具**（12 个内置 + 297 个专业/组工具）；**默认只列 32 个**（基础档 ∩ 真机验证，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
+- **309 个工具**（12 个内置 + 297 个专业/组工具）；**默认只列 40 个**（基础档 ∩ 真机验证，按需加载 —— 口径与校验见 `scripts/manual/basic-tier-verify.js`）
 - 分布（按工具组，内置计入对应组）：通用 28（含 core）/ Word 70 / Excel 95 / PPT 116
 - 注解（实测）：只读 54 / 破坏性 35 / 非幂等 117，覆盖 309/309
-- 真机验证 193/309（Word/Excel 为组级真机探测；PPT 仅静态校验 —— 明细见 [TOOLS.md](TOOLS.md)）
+- 真机验证 201/309（Word/Excel 为组级真机探测；PPT 仅静态校验 —— 明细见 [TOOLS.md](TOOLS.md)）
 <!-- AUTO:tool-stats:end -->
 
 ## 架构

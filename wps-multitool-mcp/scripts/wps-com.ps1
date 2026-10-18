@@ -1189,8 +1189,12 @@ switch ($Action) {
     "createPresentation" {
         $ppt = Get-WpsPpt
         if ($null -eq $ppt) { Output-Json @{ success = $false; error = "WPS PPT not running" }; return }
-        $ppt.Presentations.Add() | Out-Null
-        Output-Json @{ success = $true }
+        $pres = $ppt.Presentations.Add()
+        # 必须回 data：Node 侧的 handler 判的是 success && data，
+        # 只回 success 会被当成失败（"新建演示文稿失败: undefined" —— 实测踩过）
+        $nm = ""
+        try { $nm = [string]$pres.Name } catch {}
+        Output-Json @{ success = $true; data = @{ name = $nm; count = $ppt.Presentations.Count } }
     }
 
     "convertToPDF" {

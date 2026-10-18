@@ -75,10 +75,10 @@ on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MC
 ## Scale
 
 <!-- AUTO:tool-stats:start -->
-- **309 tools** (12 built-in + 297 specialized); **only 32 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
+- **309 tools** (12 built-in + 297 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
 - Distribution (by tool group, built-ins counted in their app group): Common 28 (incl. core) / Word 70 / Excel 95 / PPT 116
 - Annotations (measured): read-only 54 / destructive 35 / non-idempotent 117 — coverage 309/309
-- Live-verified 193/309 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
+- Live-verified 201/309 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
 <!-- AUTO:tool-stats:end -->
 
 ## Architecture

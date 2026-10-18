@@ -58,14 +58,17 @@ export const createPresentationHandler: ToolHandler = async (
       WpsAppType.PRESENTATION
     );
 
-    if (response.success && response.data) {
+    // 只要有 success 就算成功：data 是可选的（老版本 PS 只回 success，
+    // 曾因此把"建好了"报成"失败: undefined"）
+    if (response.success) {
+      const name = response.data?.name;
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `新建演示文稿成功！\n名称: ${response.data.name}`,
+            text: `新建演示文稿成功！${name ? `\n名称: ${name}` : ''}`,
           },
         ],
       };

@@ -45,6 +45,7 @@ const HEAVY = [
   ['excel-caps-probe.js', 'Excel 能力探测（需 WPS）'],
   ['word-caps-probe.js', 'Word 能力探测（需 WPS）'],
   ['snapshot-verify.js', '快照 / 恢复（需 WPS）'],
+  ['ppt-caps-probe.js', 'PPT 基础档（需 WPS 演示）'],
   ['annotation-e2e.js', '注解端到端（真起 stdio server）'],
   ['bridge-test.js', '桥进程'],
   ['cancel-verify.js', '取消机制（真跑 PowerShell）'],
