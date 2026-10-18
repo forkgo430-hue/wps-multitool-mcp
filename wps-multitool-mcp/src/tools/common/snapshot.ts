@@ -80,10 +80,34 @@ const text = (t: string, ok = true, extra: Partial<ToolCallResult> = {}): ToolCa
 const fail = (t: string, error?: string): ToolCallResult =>
   text(t, false, { error: error ?? t });
 
+/**
+ * oplog 超过这个大小就轮转：把当前的 ops.jsonl 改名成 ops.1.jsonl，
+ * 只留一份旧的，更老的直接删。
+ *
+ * 为什么必须有上限：这是追加写的操作日志，COM 没有事务，快照又是"改前保命"的手段 ——
+ * 用户用得越勤它越长，而它只被 readOpLog 读来列举快照，留 20 年的记录没有意义。
+ * 10 MB 按每条 ~200 字节算约 5 万条，远超"退两步"的需要。
+ */
+const OPLOG_MAX_BYTES = 10 * 1024 * 1024;
+
+/** 轮转：ops.jsonl → ops.1.jsonl（更老的直接删）。失败就放弃轮转，不阻断业务 */
+function rotateOpLogIfNeeded(): void {
+  try {
+    if (!fs.existsSync(OPLOG_FILE)) return;
+    if (fs.statSync(OPLOG_FILE).size < OPLOG_MAX_BYTES) return;
+    const old = path.join(OPLOG_DIR, 'ops.1.jsonl');
+    if (fs.existsSync(old)) fs.rmSync(old, { force: true });
+    fs.renameSync(OPLOG_FILE, old);
+  } catch {
+    /* 轮转失败不该影响业务：接着往原文件里写就行 */
+  }
+}
+
 /** 追加一条操作日志。日志写不了不该把业务打断 —— 它是证据，不是前置条件 */
 export function appendOpLog(entry: SnapshotRecord): void {
   try {
     fs.mkdirSync(OPLOG_DIR, { recursive: true });
+    rotateOpLogIfNeeded();
     fs.appendFileSync(OPLOG_FILE, `${JSON.stringify(entry)}\n`, 'utf8');
   } catch {
     /* 磁盘满 / 权限不足时静默降级 */

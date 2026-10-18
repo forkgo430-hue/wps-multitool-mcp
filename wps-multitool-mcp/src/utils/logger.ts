@@ -37,6 +37,20 @@ const isEnvTrue = (value?: string): boolean => {
 };
 
 /**
+ * 单文件上限 5 MB、保留 3 份。
+ *
+ * 为什么必须有：之前 ~/.wps-multitool-mcp/logs 涨到 10.5 MB 且没有任何上限 ——
+ * 这个进程是常驻的（MCP server 跟着 IDE 活），一次调用记几行，几个月就能把用户
+ * 家目录写出一个几十 MB 的文件。winston 自带 maxsize/maxFiles，不需要引新依赖。
+ *
+ * 语义（别搞反）：winston 是**写满当前文件就改名**——combined.log 写满 5 MB →
+ * 变成 combined1.log，新的写进 combined.log；超过 maxFiles 份的最老那份直接删。
+ * 所以"保留 3 份"= 最多在盘上留下 3 个 5 MB 的文件，上限 15 MB。
+ */
+const LOG_MAX_SIZE = 5 * 1024 * 1024;
+const LOG_MAX_FILES = 3;
+
+/**
  * 创建Logger实例
  */
 const createLogger = (name: string): winston.Logger => {
@@ -49,10 +63,14 @@ const createLogger = (name: string): winston.Logger => {
     new winston.transports.File({
       filename: path.join(logDir, 'error.log'),
       level: 'error',
+      maxsize: LOG_MAX_SIZE,
+      maxFiles: LOG_MAX_FILES,
     }),
     // 所有日志
     new winston.transports.File({
       filename: path.join(logDir, 'combined.log'),
+      maxsize: LOG_MAX_SIZE,
+      maxFiles: LOG_MAX_FILES,
     }),
   ];
 

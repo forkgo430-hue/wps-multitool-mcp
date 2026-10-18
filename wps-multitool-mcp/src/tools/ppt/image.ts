@@ -27,15 +27,11 @@ import { WpsAppType } from '../../types/wps';
 
 export const insertPptImageDefinition: ToolDefinition = {
   name: 'wps_ppt_insert_ppt_image',
-  description: `插入图片到幻灯片中。
-
-支持常见图片格式（PNG、JPG、BMP、GIF等）。
-可以指定图片的位置和大小，不指定则使用默认值。
-
-使用场景：
-- "在第2页插入一张图片"
-- "把这张图片放到PPT里"
-- "在幻灯片右下角插入logo"`,
+  description:
+    '[DEPRECATED·改用 wps_ppt_insert_image] 插入图片到幻灯片中。\n\n' +
+    '支持常见图片格式（PNG、JPG、BMP、GIF等）。可以指定图片的位置和大小，不指定则使用默认值。\n\n' +
+    '什么时候用：已被 wps_ppt_insert_image 取代（同一个 insertPptImage 动作），' +
+    '旧参数是 filePath，新工具必填 path —— 别两个混着用。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',

@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**309 个工具**（12 内置 + 297 专业/组工具）· 默认列出 40 个 · 注解覆盖 309/309 · 真机验证 201/309
+**296 个工具**（8 内置 + 288 专业/组工具）· 默认列出 40 个 · 注解覆盖 296/296 · 真机验证 197/296
 
 | 标记 | 含义 |
 |---|---|
@@ -23,7 +23,7 @@
 | `wps_search_tools` | 是 | — | live | 在所有工具里搜索（包括未加载组的工具），返回名字 + 所属组 + 是否已列出 + 中文别名 + 验证状态。<br><sub>别名：找工具 / 搜工具 / 有没有什么工具</sub> |
 | `wps_unload_tool_group` | 是 | — | live | 卸载一个工具组，卸载后该组工具不再出现在工具列表里（仍可直接调用，但不推荐）。<br><sub>别名：卸载工具组合 / 工具 / 组合</sub> |
 
-## 通用（23）
+## 通用（22）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -40,7 +40,6 @@
 | `wps_common_batch` |  | DN | live | 一次执行 1~3 个操作，省掉逐个调用的往返。 |
 | `wps_common_get_app_info` |  | R | live | 获取WPS应用的基本信息。<br><sub>别名：获取应用信息 / 读取应用信息 / 查看应用信息</sub> |
 | `wps_common_get_selected_text` |  | R | live | 获取当前文档中选中的文本内容。<br><sub>别名：获取选中文本 / 读取选中文本 / 查看选中文本</sub> |
-| `wps_common_ping` |  | R | live | 检测WPS应用连接状态。<br><sub>别名：连通性 / 探活</sub> |
 | `wps_common_quit` |  | — | live | 结束 WPS（Word / Excel / PPT 全部）。<br><sub>别名：退出</sub> |
 | `wps_common_repair` |  | — | live | 诊断并在【有限范围内】修复 WPS 自动化常见问题。<br><sub>别名：修复 / 卡死了 / 自救</sub> |
 | `wps_common_set_selected_text` |  | — | live | 替换当前文档中选中的文本内容。<br><sub>别名：设置选中文本 / 设定选中文本 / 选中</sub> |
@@ -51,7 +50,7 @@
 | `wps_get_cached_data` |  | R | live | 从MCP Server获取缓存的数据，用于跨应用数据传递。<br><sub>别名：取暂存数据 / 读缓存 / 取暂存结果</sub> |
 | `wps_list_cache` |  | R | live | 列出MCP Server中所有缓存的数据键名<br><sub>别名：看缓存列表 / 暂存了哪些 / 列出cache</sub> |
 
-## Word（70）
+## Word（67）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -65,8 +64,6 @@
 | `wps_word_open_document` | 是 | — | live | 打开指定路径的Word文档。<br><sub>别名：打开文档 / 文档</sub> |
 | `wps_word_set_default_font` | 是 | — | live | 设置文档默认字体（改 Normal 样式，正文与后续新建段落都会跟着变）。<br><sub>别名：设置默认字体 / 设定默认字体 / 默认</sub> |
 | `wps_word_switch_document` | 是 | — | live | 切换到指定名称的文档。<br><sub>别名：切换文档 / 文档</sub> |
-| `wps_get_active_document` |  | R | live | 获取当前打开的WPS文字文档信息<br><sub>别名：当前文档 / 活动文档 / 打开的是哪个文档</sub> |
-| `wps_insert_text` |  | N | live | 在当前文档中插入文本<br><sub>别名：插入文本 / 插字 / 在文档里打字</sub> |
 | `wps_word_add_caption` |  | N | live | 在当前位置插入题注（自动编号，如"图 1""表 2"）。<br><sub>别名：添加题注 / 新增题注 / 加题注</sub> |
 | `wps_word_add_footnote` |  | N | live | 插入脚注（页脚注释，自动编号）。<br><sub>别名：添加脚注 / 新增脚注 / 加脚注</sub> |
 | `wps_word_add_list` |  | N | live | 在当前位置插入项目符号或编号列表（一次写多条）。<br><sub>别名：添加列出 / 新增列出 / 加列出</sub> |
@@ -82,7 +79,6 @@
 | `wps_word_enable_track_changes` |  | — | live | 开启或关闭Word文档的修订模式（Track Changes）。<br><sub>别名：开启跟踪更改 / 启用跟踪更改 / 跟踪</sub> |
 | `wps_word_find_in_document` |  | R | live | 在Word文档中查找文本并返回位置信息，不执行替换操作。<br><sub>别名：查找in文档 / 搜索in文档 / 文档</sub> |
 | `wps_word_format_table` |  | — | live | 设置文档里某个表格的样式 / 表头加粗 / 边框。<br><sub>别名：格式表格 / 表格</sub> |
-| `wps_word_generate_doc_toc` |  | N | live | 自动生成文档目录。根据文档中的标题样式自动生成目录。<br><sub>别名：生成目录 / 文档目录 / 生成doc目录</sub> |
 | `wps_word_generate_toc` |  | N | live | 根据文档中的标题样式自动生成目录。<br><sub>别名：生成目录 / 插入目录 / 自动目录</sub> |
 | `wps_word_get_active_document` |  | R | live | 获取当前WPS Writer活动文档的基本信息<br><sub>别名：获取当前文档 / 读取当前文档 / 查看当前文档</sub> |
 | `wps_word_get_bookmarks` |  | R | live | 列出文档里所有书签：名称、位置、锚定文本。<br><sub>别名：书签列表 / 有哪些书签 / 查看书签</sub> |
@@ -115,7 +111,7 @@
 | `wps_word_set_cell_borders` |  | — | live | 设置表格单元格的边框。<br><sub>别名：设置单元格borders / 设定单元格borders / 单元格</sub> |
 | `wps_word_set_columns` |  | — | live | 设置分栏（整节等宽多栏）。<br><sub>别名：设置列 / 设定列 / 列</sub> |
 | `wps_word_set_font` |  | — | live | 设置字体格式，包括字体名称、字号、加粗、斜体、颜色等。<br><sub>别名：设置字体 / 设定字体 / 字体</sub> |
-| `wps_word_set_font_style` |  | — | live | 设置选中文字的字体样式属性<br><sub>别名：设置字体样式 / 设定字体样式 / 字体</sub> |
+| `wps_word_set_font_style` |  | — | live | [DEPRECATED·改用 wps_word_set_font] 设置选中文字的字体样式属性<br><sub>别名：设置字体样式 / 设定字体样式 / 字体</sub> |
 | `wps_word_set_heading_numbering` |  | — | live | 给标题加章节自动编号（1. / 1.1. / 1.1.1. 这种）。<br><sub>别名：设置标题编号 / 设定标题编号 / 标题</sub> |
 | `wps_word_set_line_spacing` |  | — | live | 设置段落行距。<br><sub>别名：设置行距间距 / 设定行距间距 / 行距</sub> |
 | `wps_word_set_page_setup` |  | — | live | 设置文档页面布局，包括页面方向和边距。<br><sub>别名：设置页面设置 / 设定页面设置 / 页面</sub> |
@@ -126,7 +122,7 @@
 | `wps_word_table_row_col` |  | N | live | 在表格里插入或删除行/列。<br><sub>别名：表格行col / 行</sub> |
 | `wps_word_update_fields` |  | — | live | 刷新文档里的所有域：目录、图表目录、交叉引用、页码等。<br><sub>别名：更新域 / 刷新域 / 域</sub> |
 
-## Excel（95）
+## Excel（89）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -141,7 +137,7 @@
 | `wps_excel_switch_workbook` | 是 | — | live | 切换到指定名称的Excel工作簿。<br><sub>别名：切换工作簿 / 工作簿 / 表格文件</sub> |
 | `wps_excel_write_range` | 是 | — | live | 向Excel指定范围写入数据。数据格式为二维数组，从指定单元格开始向右下方填充。<br><sub>别名：批量写 / 写区域 / 一次写一片</sub> |
 | `wps_excel_add_comment` |  | N | live | 给单元格添加批注。<br><sub>别名：添加批注 / 新增批注 / 加批注</sub> |
-| `wps_excel_auto_fill` |  | — | live | 自动填充单元格区域。根据源区域的数据模式自动填充到目标区域。<br><sub>别名：自动填充 / 填充</sub> |
+| `wps_excel_auto_fill` |  | — | live | [DEPRECATED·改用 wps_excel_fill_series] 自动填充单元格区域。根据源区域的数据模式自动填充到…<br><sub>别名：自动填充 / 填充</sub> |
 | `wps_excel_auto_filter` |  | — | live | 对Excel指定范围应用自动筛选。<br><sub>别名：自动筛选 / 筛选 / 过滤</sub> |
 | `wps_excel_auto_fit` |  | — | live | 按内容自动调整行高/列宽（等同 Excel 里双击列边界）。<br><sub>别名：自适应 / 自动调整列宽 / 自动列宽</sub> |
 | `wps_excel_auto_sum` |  | — | live | 对指定范围的列或行自动求和，并将结果写入目标单元格。<br><sub>别名：自动求和 / 求和</sub> |
@@ -156,9 +152,8 @@
 | `wps_excel_create_workbook` |  | N | live | 新建一个空白Excel工作簿。<br><sub>别名：创建工作簿 / 新建工作簿 / 生成工作簿</sub> |
 | `wps_excel_delete_cell_comment` |  | DN | live | 删除Excel单元格上的批注。<br><sub>别名：删除单元格批注 / 删掉单元格批注 / 去掉单元格批注</sub> |
 | `wps_excel_delete_chart` |  | DN | live | 删除工作表上的图表。<br><sub>别名：删图表 / 删除图表 / 把图删了</sub> |
-| `wps_excel_delete_column` |  | DN | live | 删除指定列。可指定起始列号和删除列数。<br><sub>别名：删除列 / 删掉列 / 去掉列</sub> |
 | `wps_excel_delete_columns` |  | DN | live | 删除Excel中指定位置的一列或多列。<br><sub>别名：删除列 / 删掉列 / 去掉列</sub> |
-| `wps_excel_delete_row` |  | DN | live | 删除指定行。可指定起始行号和删除行数。<br><sub>别名：删除行 / 删一行 / 删掉行</sub> |
+| `wps_excel_delete_row` |  | DN | live | [DEPRECATED·改用 wps_excel_delete_rows] 删除指定行。可指定起始行号和删除行数。<br><sub>别名：删除行 / 删一行 / 删掉行</sub> |
 | `wps_excel_delete_rows` |  | DN | live | 删除Excel中指定位置的一行或多行。<br><sub>别名：删除多行 / 批量删行 / 删除行</sub> |
 | `wps_excel_delete_sheet` |  | DN | live | 删除当前工作簿中的指定工作表。注意：此操作不可撤销。<br><sub>别名：删除工作表 / 删掉工作表 / 去掉工作表</sub> |
 | `wps_excel_diagnose_formula` |  | R | live | 诊断公式错误，分析原因并提供修复建议。<br><sub>别名：诊断公式 / 排查公式 / 公式</sub> |
@@ -178,12 +173,10 @@
 | `wps_excel_get_sheet_info` |  | R | live | 查工作表的实际使用范围与规模：用到哪一块、多少行多少列、有没有隐藏行列、有几个图表。<br><sub>别名：表详情 / 表多大 / 用到哪</sub> |
 | `wps_excel_group_rows` |  | — | live | 对Excel中指定范围的行进行分组，便于折叠/展开管理。<br><sub>别名：组合行 / 分组行 / 行</sub> |
 | `wps_excel_hide_column` |  | — | live | 隐藏或显示指定列。可指定起始列号、列数和隐藏/显示状态。<br><sub>别名：隐藏列 / 列</sub> |
-| `wps_excel_hide_row` |  | — | live | 隐藏或显示Excel指定行。可一次操作连续多行。<br><sub>别名：隐藏行 / 行</sub> |
+| `wps_excel_hide_row` |  | — | live | [DEPRECATED·改用 wps_excel_hide_rows] 隐藏或显示Excel指定行。可一次操作连续多行。<br><sub>别名：隐藏行 / 行</sub> |
 | `wps_excel_hide_rows` |  | — | live | 隐藏Excel中指定范围的行。<br><sub>别名：隐藏行 / 行</sub> |
-| `wps_excel_insert_column` |  | N | live | 在指定位置插入列。可指定起始列号和插入列数。<br><sub>别名：插入列 / 新增列 / 加入列</sub> |
 | `wps_excel_insert_columns` |  | N | live | 在Excel中指定位置插入一列或多列。<br><sub>别名：插入列 / 新增列 / 加入列</sub> |
 | `wps_excel_insert_excel_image` |  | N | live | 在Excel中插入图片到指定位置。<br><sub>别名：插入图片 / 新增图片 / 加入图片</sub> |
-| `wps_excel_insert_row` |  | N | live | 在Excel中插入行。<br><sub>别名：插入行 / 插入一行 / 新增行</sub> |
 | `wps_excel_insert_rows` |  | N | live | 在Excel中指定位置插入一行或多行。<br><sub>别名：插入多行 / 批量插入行 / 插入行</sub> |
 | `wps_excel_lock_cells` |  | — | live | 锁定或解锁Excel指定范围的单元格（需配合工作表保护使用）。<br><sub>别名：锁定单元格 / 单元格</sub> |
 | `wps_excel_merge_cells` |  | N | live | 合并Excel指定范围的单元格。合并后保留左上角单元格的值。<br><sub>别名：合并单元格 / 单元格</sub> |
@@ -221,12 +214,9 @@
 | `wps_excel_unprotect_sheet` |  | — | live | 取消保护当前工作表。<br><sub>别名：取消保护工作表 / 工作表</sub> |
 | `wps_excel_update_chart` |  | — | live | 更新Excel图表的属性，包括标题、颜色、图例、数据标签等。<br><sub>别名：更新图表 / 刷新图表 / 图表</sub> |
 | `wps_excel_update_pivot_table` |  | — | live | 更新已有透视表的配置，包括添加/移除字段、修改聚合方式等。<br><sub>别名：更新数据透视表表格 / 刷新数据透视表表格 / 数据透视表</sub> |
-| `wps_excel_zoom` |  | — | live | 设置工作表缩放比例<br><sub>别名：缩放 / 显示比例</sub> |
 | `wps_get_active_workbook` |  | R | live | 获取当前打开的WPS表格工作簿信息<br><sub>别名：当前工作簿 / 活动工作簿 / 打开的是哪个表格</sub> |
-| `wps_get_cell_value` |  | R | live | 读取指定单元格的值<br><sub>别名：读单元格 / 单元格值 / 取格子里的值</sub> |
-| `wps_set_cell_value` |  | — | live | 设置指定单元格的值<br><sub>别名：写单元格 / 填格子 / 设置单元格内容</sub> |
 
-## PPT（116）
+## PPT（113）
 
 | 工具 | 默认档 | 注解 | 验证 | 说明 |
 |---|---|---|---|---|
@@ -241,15 +231,14 @@
 | `wps_get_active_presentation` |  | R | static | 获取当前打开的WPS演示文稿信息<br><sub>别名：当前演示文稿 / 活动演示 / 打开的是哪个PPT</sub> |
 | `wps_ppt_add_animation` |  | N | static | 为幻灯片中的形状添加动画效果。<br><sub>别名：添加动画 / 加动画 / 新增动画</sub> |
 | `wps_ppt_add_animation_preset` |  | N | static | 为形状添加预设入场动画效果。<br><sub>别名：添加动画预设 / 新增动画预设 / 加动画预设</sub> |
-| `wps_ppt_add_chart` |  | N | static | 在幻灯片中插入图表。<br><sub>别名：插入图表 / 加图表 / 添加图表</sub> |
 | `wps_ppt_add_emphasis_animation` |  | N | static | 为形状添加强调动画效果，用于在演示时突出显示元素。<br><sub>别名：强调动画 / 添加强调动画 / 新增强调动画</sub> |
 | `wps_ppt_add_master_element` |  | N | static | 向母版中添加新元素。<br><sub>别名：添加母版element / 新增母版element / 加母版element</sub> |
 | `wps_ppt_add_page_indicator` |  | N | static | 为演示文稿添加页码指示器。<br><sub>别名：添加页面指示器 / 新增页面指示器 / 加页面指示器</sub> |
 | `wps_ppt_add_ppt_hyperlink` |  | N | static | 为幻灯片中的形状添加超链接。<br><sub>别名：添加超链接 / 新增超链接 / 加超链接</sub> |
-| `wps_ppt_add_shape` |  | N | static | 在幻灯片中添加形状。<br><sub>别名：添加形状 / 新增形状 / 加形状</sub> |
+| `wps_ppt_add_shape` |  | N | live | 在幻灯片中添加形状。<br><sub>别名：添加形状 / 新增形状 / 加形状</sub> |
 | `wps_ppt_add_textbox` |  | N | static | 在幻灯片中添加文本框。<br><sub>别名：加文本框 / 插入文本框 / 添加文本框</sub> |
 | `wps_ppt_add_title_decoration` |  | N | static | 为幻灯片标题添加装饰性元素。<br><sub>别名：添加标题装饰 / 新增标题装饰 / 加标题装饰</sub> |
-| `wps_ppt_align_objects` |  | — | static | 对齐幻灯片中的对象。<br><sub>别名：对齐objects</sub> |
+| `wps_ppt_align_objects` |  | — | live | [DEPRECATED·改用 wps_ppt_align_shapes] 对齐幻灯片中的对象。<br><sub>别名：对齐objects</sub> |
 | `wps_ppt_align_shapes` |  | — | static | 对齐幻灯片中的多个形状。<br><sub>别名：对齐形状 / 形状</sub> |
 | `wps_ppt_apply_color_scheme` |  | — | static | 为幻灯片应用统一配色方案。<br><sub>别名：应用颜色scheme / 套用颜色scheme / 颜色</sub> |
 | `wps_ppt_apply_transition_to_all` |  | — | static | 为所有幻灯片应用统一的切换效果。<br><sub>别名：全部应用切换 / 所有页切换效果 / 应用切换效果toall</sub> |
@@ -276,7 +265,6 @@
 | `wps_ppt_delete_textbox` |  | DN | static | 删除幻灯片上指定的文本框。<br><sub>别名：删除文本框 / 删掉文本框 / 去掉文本框</sub> |
 | `wps_ppt_distribute_shapes` |  | — | static | 等距分布幻灯片中的多个形状。<br><sub>别名：分布形状 / 等距分布形状 / 形状</sub> |
 | `wps_ppt_duplicate_shape` |  | N | static | 复制幻灯片中的指定形状。<br><sub>别名：复制形状 / 副本形状 / 形状</sub> |
-| `wps_ppt_duplicate_slide` |  | N | static | 复制指定的幻灯片，在其后插入副本。<br><sub>别名：复制幻灯片 / 副本幻灯片 / 幻灯片</sub> |
 | `wps_ppt_find_ppt_text` |  | R | static | 在演示文稿中搜索指定文本。<br><sub>别名：查找文本 / 搜索文本 / 文本</sub> |
 | `wps_ppt_get_animations` |  | R | static | 获取幻灯片上所有动画效果的列表。<br><sub>别名：获取动画 / 读取动画 / 查看动画</sub> |
 | `wps_ppt_get_shapes` |  | R | static | 获取幻灯片中所有形状的列表信息。<br><sub>别名：获取形状 / 读取形状 / 查看形状</sub> |
@@ -287,11 +275,11 @@
 | `wps_ppt_get_table_cell` |  | R | static | 获取PPT表格中指定单元格的文本内容。<br><sub>别名：获取表格单元格 / 读取表格单元格 / 查看表格单元格</sub> |
 | `wps_ppt_get_textboxes` |  | R | static | 获取幻灯片上所有文本框的列表。<br><sub>别名：获取文本框 / 读取文本框 / 查看文本框</sub> |
 | `wps_ppt_group_shapes` |  | — | static | 将幻灯片中的多个形状组合为一个组。<br><sub>别名：组合形状 / 分组形状 / 形状</sub> |
-| `wps_ppt_insert_ppt_chart` |  | N | static | 在幻灯片中插入数据图表。<br><sub>别名：插入图表 / 新增图表 / 加入图表</sub> |
-| `wps_ppt_insert_ppt_image` |  | N | static | 插入图片到幻灯片中。<br><sub>别名：插入图片 / 新增图片 / 加入图片</sub> |
+| `wps_ppt_insert_ppt_chart` |  | N | live | 在幻灯片中插入数据图表。<br><sub>别名：插入图表 / 新增图表 / 加入图表</sub> |
+| `wps_ppt_insert_ppt_image` |  | N | static | [DEPRECATED·改用 wps_ppt_insert_image] 插入图片到幻灯片中。<br><sub>别名：插入图片 / 新增图片 / 加入图片</sub> |
 | `wps_ppt_insert_slide_image` |  | N | static | 在幻灯片中插入图片。<br><sub>别名：插入幻灯片图片 / 新增幻灯片图片 / 加入幻灯片图片</sub> |
 | `wps_ppt_insert_slides_from_file` |  | N | static | 从另一个 PPT 文件把整页幻灯片插入到【当前活动演示文稿】，并保留来源幻灯片的原始格式（字体/配色/版式/图片）。用于把多个…<br><sub>别名：插入幻灯片fromfile / 新增幻灯片fromfile / 加入幻灯片fromfile</sub> |
-| `wps_ppt_insert_table` |  | N | static | 在幻灯片中插入表格。<br><sub>别名：插入表格 / 加表格 / 新增表格</sub> |
+| `wps_ppt_insert_table` |  | N | live | 在幻灯片中插入表格。<br><sub>别名：插入表格 / 加表格 / 新增表格</sub> |
 | `wps_ppt_move_slide` |  | N | static | 移动幻灯片到指定位置。<br><sub>别名：移动幻灯片 / 幻灯片 / 页面</sub> |
 | `wps_ppt_open_presentation` |  | — | static | 打开指定路径的演示文稿文件。<br><sub>别名：打开演示文稿 / 演示文稿 / PPT</sub> |
 | `wps_ppt_remove_animation` |  | DN | static | 移除幻灯片中指定的动画效果。<br><sub>别名：删除动画 / 移除动画 / 去掉动画</sub> |
@@ -303,7 +291,7 @@
 | `wps_ppt_set_3d_material` |  | — | static | 设置幻灯片中形状的3D材质效果。<br><sub>别名：设置3d材质 / 设定3d材质 / 材质</sub> |
 | `wps_ppt_set_3d_rotation` |  | — | static | 设置幻灯片中形状的3D旋转效果。<br><sub>别名：设置3d旋转 / 设定3d旋转 / 旋转</sub> |
 | `wps_ppt_set_active_target` |  | — | static | 锁定后续所有 PPT 操作的【目标演示文稿】（按文件名）。锁定后，本服务器会给所有演示类调用自动注入该文稿名，底层精确定位，彻…<br><sub>别名：设置当前目标 / 设定当前目标 / 当前</sub> |
-| `wps_ppt_set_animation` |  | N | static | 设置幻灯片中指定元素的动画效果。<br><sub>别名：设置动画 / 设定动画 / 动画</sub> |
+| `wps_ppt_set_animation` |  | N | static | [DEPRECATED·改用 wps_ppt_add_animation] 设置幻灯片中指定元素的动画效果。<br><sub>别名：设置动画 / 设定动画 / 动画</sub> |
 | `wps_ppt_set_animation_order` |  | — | static | 调整动画在时间线上的播放顺序。<br><sub>别名：设置动画顺序 / 设定动画顺序 / 动画</sub> |
 | `wps_ppt_set_background` |  | — | static | 设置幻灯片的背景颜色或背景图片。<br><sub>别名：设置背景 / 换背景 / 设定背景</sub> |
 | `wps_ppt_set_background_color` |  | — | static | 设置幻灯片背景为指定颜色。<br><sub>别名：背景色 / 背景颜色 / 纯色背景</sub> |
@@ -322,25 +310,24 @@
 | `wps_ppt_set_shape_position` |  | — | static | 设置幻灯片中指定形状的位置和大小。<br><sub>别名：设置形状位置 / 设定形状位置 / 形状</sub> |
 | `wps_ppt_set_shape_shadow` |  | — | static | 设置幻灯片中指定形状的阴影效果。<br><sub>别名：设置形状阴影 / 设定形状阴影 / 形状</sub> |
 | `wps_ppt_set_shape_style` |  | — | static | 设置幻灯片中形状的样式，包括填充颜色、边框颜色和边框粗细。<br><sub>别名：设置形状样式 / 设定形状样式 / 形状</sub> |
-| `wps_ppt_set_shape_text` |  | — | static | 设置幻灯片中指定形状的文字内容。<br><sub>别名：设置形状文本 / 设定形状文本 / 形状</sub> |
+| `wps_ppt_set_shape_text` |  | — | live | 设置幻灯片中指定形状的文字内容。<br><sub>别名：设置形状文本 / 设定形状文本 / 形状</sub> |
 | `wps_ppt_set_shape_transparency` |  | — | static | 设置幻灯片中指定形状的透明度。<br><sub>别名：设置形状透明度 / 设定形状透明度 / 形状</sub> |
 | `wps_ppt_set_shape_z_order` |  | — | static | 设置形状在幻灯片中的层级顺序（Z轴排列）。<br><sub>别名：设置形状z顺序 / 设定形状z顺序 / 形状</sub> |
-| `wps_ppt_set_slide_background` |  | — | static | 设置幻灯片背景，支持多种背景类型。<br><sub>别名：设置当前页背景 / 设置幻灯片背景 / 设定幻灯片背景</sub> |
+| `wps_ppt_set_slide_background` |  | — | static | [DEPRECATED·改用 wps_ppt_set_background] 设置幻灯片背景，支持多种背景类型。<br><sub>别名：设置当前页背景 / 设置幻灯片背景 / 设定幻灯片背景</sub> |
 | `wps_ppt_set_slide_content` |  | — | static | 设置幻灯片的正文内容区域。<br><sub>别名：设置幻灯片内容 / 设定幻灯片内容 / 幻灯片</sub> |
 | `wps_ppt_set_slide_layout` |  | — | static | 设置幻灯片的版式布局。<br><sub>别名：设置幻灯片版式 / 设定幻灯片版式 / 幻灯片</sub> |
-| `wps_ppt_set_slide_notes` |  | — | static | 设置幻灯片的备注内容，用于演讲提示。<br><sub>别名：设置幻灯片备注 / 设定幻灯片备注 / 幻灯片</sub> |
 | `wps_ppt_set_slide_number` |  | — | static | 设置幻灯片页码的显示状态和起始编号。<br><sub>别名：设置幻灯片数字 / 设定幻灯片数字 / 幻灯片</sub> |
 | `wps_ppt_set_slide_size` |  | — | static | 设置演示文稿的幻灯片尺寸。<br><sub>别名：设置幻灯片size / 设定幻灯片size / 幻灯片</sub> |
 | `wps_ppt_set_slide_subtitle` |  | — | static | 设置幻灯片的副标题。<br><sub>别名：设置幻灯片副标题 / 设定幻灯片副标题 / 幻灯片</sub> |
 | `wps_ppt_set_slide_theme` |  | — | static | 设置演示文稿主题。<br><sub>别名：设置幻灯片主题 / 设定幻灯片主题 / 幻灯片</sub> |
 | `wps_ppt_set_slide_transition` |  | — | static | 设置幻灯片的页面切换效果。<br><sub>别名：当前页切换效果 / 设置幻灯片切换效果 / 设定幻灯片切换效果</sub> |
-| `wps_ppt_set_table_cell` |  | — | static | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
+| `wps_ppt_set_table_cell` |  | — | live | 设置PPT表格中指定单元格的文本内容。<br><sub>别名：设置表格单元格 / 设定表格单元格 / 表格</sub> |
 | `wps_ppt_set_table_cell_style` |  | — | static | 设置PPT表格中指定单元格的样式。<br><sub>别名：设置表格单元格样式 / 设定表格单元格样式 / 表格</sub> |
 | `wps_ppt_set_table_row_style` |  | — | static | 设置PPT表格中指定行的样式。<br><sub>别名：设置表格行样式 / 设定表格行样式 / 表格</sub> |
 | `wps_ppt_set_table_style` |  | — | static | 设置PPT表格的整体样式。<br><sub>别名：设置表格样式 / 设定表格样式 / 表格</sub> |
 | `wps_ppt_set_textbox_style` |  | — | static | 设置文本框样式（字体大小、颜色、粗体等）。<br><sub>别名：设置文本框样式 / 设定文本框样式 / 文本框</sub> |
 | `wps_ppt_set_textbox_text` |  | — | static | 设置指定文本框的文本内容。<br><sub>别名：设置文本框文本 / 设定文本框文本 / 文本框</sub> |
-| `wps_ppt_set_transition` |  | — | static | 设置幻灯片切换效果。<br><sub>别名：切换效果 / 切换动画 / 翻页效果</sub> |
+| `wps_ppt_set_transition` |  | — | static | [DEPRECATED·改用 wps_ppt_set_slide_transition] 设置幻灯片切换效果。<br><sub>别名：切换效果 / 切换动画 / 翻页效果</sub> |
 | `wps_ppt_smart_distribute` |  | — | static | 将指定形状进行等距分布排列。<br><sub>别名：智能分布 / 分布 / 等距分布</sub> |
 | `wps_ppt_start_slide_show` |  | N | static | 开始幻灯片放映。<br><sub>别名：开始幻灯片显示 / 启动幻灯片显示 / 幻灯片</sub> |
 | `wps_ppt_switch_presentation` |  | — | static | 切换到指定名称的演示文稿。<br><sub>别名：切换演示文稿 / 演示文稿 / PPT</sub> |

@@ -89,7 +89,8 @@ const cases = [
   ['wps_excel_get_cell_value', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['wps_common_status', { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
   ['wps_excel_write_range', { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }],
-  ['wps_excel_insert_row', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
+  // 旧名 wps_excel_insert_row 已于第 2 轮降为别名，这里改盯规范名（同一个 insertRows 动作）
+  ['wps_excel_insert_rows', { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }],
   ['wps_common_save_as', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
   ['wps_convert_to_pdf', { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }],
 ];
@@ -104,12 +105,16 @@ for (const [name, want] of cases) {
 }
 
 // 内置的 12 个（registerBuiltinTools）也必须带注解 —— 之前正是漏了这一批
+// 第 2 轮后是 8 个：4 个历史短名（wps_get_active_document / wps_insert_text /
+// wps_get_cell_value / wps_set_cell_value）已降为别名，改由规范名带注解，
+// 别名解析走 getToolAnnotations 内部，这里盯的是"仍在册的内置"。
 const builtin = names.filter((n) =>
-  ['wps_check_connection', 'wps_get_active_document', 'wps_insert_text',
-   'wps_get_active_workbook', 'wps_get_cell_value', 'wps_set_cell_value',
+  ['wps_check_connection',
+   'wps_get_active_workbook',
    'wps_get_active_presentation', 'wps_execute_method', 'wps_cache_data',
    'wps_get_cached_data', 'wps_list_cache', 'wps_clear_cache'].includes(n)
 );
+eq('server 直注册的内置工具数 = 8（4 个短名已降别名）', builtin.length, 8);
 const builtinNoAnn = builtin.filter((n) => !getToolAnnotations(n));
 eq('server 直注册的 12 个工具都有注解', builtinNoAnn.length, 0);
 eq('wps_execute_method 标为破坏性（能执行任意动作）',

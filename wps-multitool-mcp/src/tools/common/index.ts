@@ -98,8 +98,6 @@ export {
   saveHandler,
   saveAsDefinition,
   saveAsHandler,
-  pingDefinition,
-  pingHandler,
   wireCheckDefinition,
   wireCheckHandler,
   getAppInfoDefinition,

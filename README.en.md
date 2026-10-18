@@ -3,7 +3,7 @@
 [简体中文](README.md) | **English**
 
 <!-- AUTO:badges:start -->
-[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-309-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#requirements)
+[![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-296-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#requirements)
 <!-- AUTO:badges:end -->
 
 > Let AI drive the WPS Office windows **you already have open**.
@@ -75,10 +75,10 @@ on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MC
 ## Scale
 
 <!-- AUTO:tool-stats:start -->
-- **309 tools** (12 built-in + 297 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
-- Distribution (by tool group, built-ins counted in their app group): Common 28 (incl. core) / Word 70 / Excel 95 / PPT 116
-- Annotations (measured): read-only 54 / destructive 35 / non-idempotent 117 — coverage 309/309
-- Live-verified 201/309 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
+- **296 tools** (8 built-in + 288 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
+- Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 113
+- Annotations (measured): read-only 51 / destructive 34 / non-idempotent 110 — coverage 296/296
+- Live-verified 197/296 (Word/Excel group-level real-machine probes; PPT static-only — details in [TOOLS.md](TOOLS.md))
 <!-- AUTO:tool-stats:end -->
 
 ## Architecture
@@ -111,11 +111,11 @@ Same scope as the stats block above: built-in tools are counted inside their app
 <!-- AUTO:tool-table:start -->
 | App | Tools | Highlights |
 |-----|-------|-----------|
-| Excel | 95 | formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export |
-| Word | 70 | formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references |
-| PPT | 116 | slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export |
-| Common | 28 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
-| Built-in | 12 (already counted above) | connection check, generic method, data cache |
+| Excel | 89 | formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export |
+| Word | 67 | formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references |
+| PPT | 113 | slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export |
+| Common | 27 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
+| Built-in | 8 (already counted above) | connection check, generic method, data cache |
 <!-- AUTO:tool-table:end -->
 
 The full list of all 306 tools (name / default tier / annotations / live-verification status) is in **[TOOLS.md](TOOLS.md)** — generated from the registry, so it can never drift from the code.

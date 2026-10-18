@@ -687,7 +687,10 @@ export const setRowHeightHandler: ToolHandler = async (
 
 export const hideRowDefinition: ToolDefinition = {
   name: 'wps_excel_hide_row',
-  description: '隐藏或显示Excel指定行。可一次操作连续多行。',
+  description:
+    '[DEPRECATED·改用 wps_excel_hide_rows] 隐藏或显示Excel指定行。可一次操作连续多行。\n\n' +
+    '什么时候用：已被 wps_excel_hide_rows 取代（同一个 hideRows 动作），' +
+    '旧参数是 row/count/hide，新工具用 startRow/endRow —— 别两个混着用。',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',

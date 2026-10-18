@@ -35,18 +35,11 @@ import { WpsAppType } from '../../types/wps';
  */
 export const setSlideBackgroundDefinition: ToolDefinition = {
   name: 'wps_ppt_set_slide_background',
-  description: `设置幻灯片背景，支持多种背景类型。
-
-支持的背景类型（background.type）：
-- solid: 纯色背景，需提供 color 字段
-- gradient: 渐变背景，需提供 colors 数组
-- image: 图片背景，需提供 imagePath 字段
-- pattern: 图案背景，需提供 pattern 和 color 字段
-
-使用场景：
-- "给第1页设置蓝色背景"
-- "设置渐变背景"
-- "用图片做背景"`,
+  description:
+    '[DEPRECATED·改用 wps_ppt_set_background] 设置幻灯片背景，支持多种背景类型。\n\n' +
+    '什么时候用：已被 wps_ppt_set_background 取代（同一个 setSlideBackground 动作），' +
+    '旧参数是 background{type,...} 嵌套对象，新工具用 color/imagePath 平铺 —— ' +
+    '旧参数在新工具上会被静默忽略，这是最坑的一处，别两个混着用。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',

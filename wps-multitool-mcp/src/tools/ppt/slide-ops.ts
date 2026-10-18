@@ -112,77 +112,6 @@ export const deleteSlideHandler: ToolHandler = async (
 };
 
 // ============================================================
-// 2. wps_ppt_duplicate_slide - 复制幻灯片
-// ============================================================
-
-export const duplicateSlideDefinition: ToolDefinition = {
-  name: 'wps_ppt_duplicate_slide',
-  description: `复制指定的幻灯片，在其后插入副本。
-
-使用场景：
-- "复制第2页幻灯片"
-- "把这页再复制一份"
-- "克隆当前幻灯片"`,
-  category: ToolCategory.PRESENTATION,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      slideIndex: {
-        type: 'number',
-        description: '要复制的幻灯片索引（从1开始）',
-      },
-    },
-    required: ['slideIndex'],
-  },
-};
-
-export const duplicateSlideHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { slideIndex } = args as { slideIndex: number };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-      newSlideIndex: number;
-    }>(
-      'duplicateSlide',
-      { slideIndex },
-      WpsAppType.PRESENTATION
-    );
-
-    if (response.success && response.data) {
-      return {
-        id: uuidv4(),
-        success: true,
-        content: [
-          {
-            type: 'text',
-            text: `幻灯片复制成功！\n源幻灯片: 第 ${slideIndex} 页\n副本位置: 第 ${response.data.newSlideIndex} 页`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `复制幻灯片失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `复制幻灯片出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-// ============================================================
 // 3. wps_ppt_move_slide - 移动幻灯片到指定位置
 // ============================================================
 
@@ -647,83 +576,6 @@ export const getSlideNotesHandler: ToolHandler = async (
       id: uuidv4(),
       success: false,
       content: [{ type: 'text', text: `获取幻灯片备注出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-// ============================================================
-// 9. wps_ppt_set_slide_notes - 设置幻灯片备注
-// ============================================================
-
-export const setSlideNotesDefinition: ToolDefinition = {
-  name: 'wps_ppt_set_slide_notes',
-  description: `设置幻灯片的备注内容，用于演讲提示。
-
-使用场景：
-- "给第1页添加备注"
-- "写一些演讲提示"
-- "修改备注内容"`,
-  category: ToolCategory.PRESENTATION,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      slideIndex: {
-        type: 'number',
-        description: '幻灯片索引（从1开始）',
-      },
-      notes: {
-        type: 'string',
-        description: '备注内容',
-      },
-    },
-    required: ['slideIndex', 'notes'],
-  },
-};
-
-export const setSlideNotesHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { slideIndex, notes } = args as {
-    slideIndex: number;
-    notes: string;
-  };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-    }>(
-      'setSlideNotes',
-      { slideIndex, notes },
-      WpsAppType.PRESENTATION
-    );
-
-    if (response.success) {
-      return {
-        id: uuidv4(),
-        success: true,
-        content: [
-          {
-            type: 'text',
-            text: `幻灯片备注设置成功！\n幻灯片: 第 ${slideIndex} 页\n备注内容: "${notes.substring(0, 80)}${notes.length > 80 ? '...' : ''}"`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `设置幻灯片备注失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `设置幻灯片备注出错: ${errMsg}` }],
       error: errMsg,
     };
   }
@@ -1352,22 +1204,10 @@ export const setShapeTextHandler: ToolHandler = async (
 
 export const setAnimationDefinition: ToolDefinition = {
   name: 'wps_ppt_set_animation',
-  description: `设置幻灯片中指定元素的动画效果。
-
-支持的动画类型：
-- fadeIn: 淡入
-- flyIn: 飞入
-- wipeIn: 擦除
-- zoomIn: 缩放进入
-- bounceIn: 弹跳进入
-- spinIn: 旋转进入
-- fadeOut: 淡出
-- flyOut: 飞出
-
-使用场景：
-- "给第1页的第2个元素添加淡入动画"
-- "设置飞入效果"
-- "给形状加个弹跳动画"`,
+  description:
+    '[DEPRECATED·改用 wps_ppt_add_animation] 设置幻灯片中指定元素的动画效果。\n\n' +
+    '什么时候用：已被 wps_ppt_add_animation 取代（同一个 addAnimation 动作），' +
+    '旧参数是 animationType，新工具必填 effect，且多了 trigger —— 别两个混着用。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
@@ -1625,22 +1465,10 @@ export const setSlideSizeHandler: ToolHandler = async (
 
 export const setTransitionDefinition: ToolDefinition = {
   name: 'wps_ppt_set_transition',
-  description: `设置幻灯片切换效果。
-
-支持的切换类型：
-- fade: 淡出
-- push: 推入
-- wipe: 擦除
-- split: 拆分
-- reveal: 揭开
-- cover: 覆盖
-- dissolve: 溶解
-- curtains: 帷幕
-
-使用场景：
-- "给第2页设置淡出切换效果"
-- "设置幻灯片切换为推入"
-- "修改页面切换动画"`,
+  description:
+    '[DEPRECATED·改用 wps_ppt_set_slide_transition] 设置幻灯片切换效果。\n\n' +
+    '什么时候用：已被 wps_ppt_set_slide_transition 取代（同一个 setSlideTransition 动作），' +
+    '旧参数是 transition，新工具必填 effect，且多了 duration/sound —— 别两个混着用。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
@@ -1706,109 +1534,6 @@ export const setTransitionHandler: ToolHandler = async (
       id: uuidv4(),
       success: false,
       content: [{ type: 'text', text: `设置切换效果出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-// ============================================================
-// 20. wps_ppt_add_chart - 在幻灯片中插入图表
-// ============================================================
-
-export const addChartDefinition: ToolDefinition = {
-  name: 'wps_ppt_add_chart',
-  description: `在幻灯片中插入图表。
-
-支持的图表类型：
-- bar: 柱形图
-- line: 折线图
-- pie: 饼图
-- scatter: 散点图
-- area: 面积图
-- doughnut: 圆环图
-
-使用场景：
-- "在第1页插入一个柱形图"
-- "添加饼图展示数据"
-- "插入折线图显示趋势"`,
-  category: ToolCategory.PRESENTATION,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      slideIndex: {
-        type: 'number',
-        description: '幻灯片索引（从1开始）',
-      },
-      chartType: {
-        type: 'string',
-        description: '图表类型，如 bar, line, pie, scatter, area, doughnut',
-      },
-      data: {
-        type: 'array',
-        description: '图表数据数组，每项包含标签和数值',
-        items: {
-          type: 'object',
-          properties: {
-            label: { type: 'string', description: '数据标签' },
-            value: { type: 'number', description: '数据值' },
-          },
-        },
-      },
-    },
-    required: ['slideIndex', 'chartType', 'data'],
-  },
-};
-
-export const addChartHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { slideIndex, chartType, data } = args as {
-    slideIndex: number;
-    chartType: string;
-    data: Array<{ label: string; value: number }>;
-  };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-      chartId?: string;
-    }>(
-      'insertPptChart',
-      { slideIndex, chartType, data },
-      WpsAppType.PRESENTATION
-    );
-
-    if (response.success) {
-      const chartNameMap: Record<string, string> = {
-        bar: '柱形图', line: '折线图', pie: '饼图', scatter: '散点图',
-        area: '面积图', doughnut: '圆环图',
-      };
-
-      return {
-        id: uuidv4(),
-        success: true,
-        content: [
-          {
-            type: 'text',
-            text: `图表插入成功！\n幻灯片: 第 ${slideIndex} 页\n图表类型: ${chartNameMap[chartType] || chartType}\n数据点数: ${data.length}`,
-          },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `插入图表失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `插入图表出错: ${errMsg}` }],
       error: errMsg,
     };
   }
@@ -1965,14 +1690,12 @@ export const addSpeakerNotesHandler: ToolHandler = async (
 
 export const slideOpsTools: RegisteredTool[] = [
   { definition: deleteSlideDefinition, handler: deleteSlideHandler },
-  { definition: duplicateSlideDefinition, handler: duplicateSlideHandler },
   { definition: moveSlideDefinition, handler: moveSlideHandler },
   { definition: getSlideCountDefinition, handler: getSlideCountHandler },
   { definition: getSlideInfoDefinition, handler: getSlideInfoHandler },
   { definition: switchSlideDefinition, handler: switchSlideHandler },
   { definition: setSlideLayoutDefinition, handler: setSlideLayoutHandler },
   { definition: getSlideNotesDefinition, handler: getSlideNotesHandler },
-  { definition: setSlideNotesDefinition, handler: setSlideNotesHandler },
   { definition: addShapeDefinition, handler: addShapeHandler },
   { definition: setShapeStyleDefinition, handler: setShapeStyleHandler },
   { definition: addTextboxDefinition, handler: addTextboxHandler },
@@ -1983,7 +1706,6 @@ export const slideOpsTools: RegisteredTool[] = [
   { definition: setBackgroundDefinition, handler: setBackgroundHandler },
   { definition: setSlideSizeDefinition, handler: setSlideSizeHandler },
   { definition: setTransitionDefinition, handler: setTransitionHandler },
-  { definition: addChartDefinition, handler: addChartHandler },
   { definition: setShapeFillDefinition, handler: setShapeFillHandler },
   { definition: addSpeakerNotesDefinition, handler: addSpeakerNotesHandler },
 ];

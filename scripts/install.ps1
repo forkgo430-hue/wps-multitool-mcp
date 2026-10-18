@@ -253,6 +253,63 @@ function Install-McpServer {
 }
 
 # ============================================================================
+# 合并 publish.xml 里的加载项条目（绝不整文件覆盖）
+# ============================================================================
+# 为什么必须是合并，不能 Out-File 一把写进去
+# ----------------------------------------
+# %APPDATA%\kingsoft\wps\jsaddons\publish.xml 是【全机所有 WPS 加载项】的共享清单：
+# 我们的、别人厂商的、WPS 自带的，条目全在这一个文件里。整文件覆盖会把别人家的
+# <jsplugin> 一起清掉 —— 症状是用户装完我们的插件，别的插件就从功能区消失了，
+# 而他根本想不到是我们干的（我们这边还显示"安装成功"）。
+#
+# 行为：文件不存在 → 新建，只含我们这一条；
+#       已存在 → 先删掉我们自己上次那条（重复执行不会堆条目），别人的行一个字符都不碰，
+#                再把我们这条插到 </jsplugins> 前；
+#       已存在但不是加载项清单（没有 <jsplugins>）→ 不动它，返回 $false 让调用方知道。
+#
+# 这个函数在 deploy-addon.ps1 里有一份同样的拷贝 —— 因为 install.ps1 要支持
+# `irm | iex` 单文件执行，不能依赖旁边有没有 lib 文件。改这边记得同步那边。
+function Merge-PublishXmlEntry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Entry
+    )
+    $line = "  $Entry"
+
+    if (-not (Test-Path $Path)) {
+        $dir = Split-Path -Parent $Path
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+        @"
+<?xml version="1.0" encoding="UTF-8"?>
+<jsplugins>
+$line
+</jsplugins>
+"@ -replace '\s+$', '' | Out-File -FilePath $Path -Encoding utf8
+        return $true
+    }
+
+    $raw = Get-Content -Raw -Path $Path
+    if ($raw -notmatch '<jsplugins') {
+        Write-Warn2 "publish.xml 已存在但不是加载项清单（没有 <jsplugins>），不动它：$Path"
+        return $false
+    }
+
+    # 删掉自己上次那条（幂等）；行尾换行可选，兼容"我们那条恰好在文件末尾"
+    $cleaned = $raw -replace "(?m)^[ \t]*<jsplugin\s+name=`"$([regex]::Escape($Name))`"[^>]*/?>[ \t]*\r?\n?", ''
+    $idx = $cleaned.LastIndexOf('</jsplugins>')
+    if ($idx -lt 0) {
+        Write-Warn2 "publish.xml 里找不到 </jsplugins> 收尾，不动它：$Path"
+        return $false
+    }
+    # 结尾的换行必须去掉：Out-File 自己会补一个行尾，带着原来的换行写会每次多一个空行
+    # （实测重复部署三次，文件尾部堆出三个空行 —— 幂等就是这么悄悄坏掉的）。
+    ($cleaned.Substring(0, $idx) + $line + "`r`n" + $cleaned.Substring($idx)) -replace '\s+$', '' |
+        Out-File -FilePath $Path -Encoding utf8
+    return $true
+}
+
+# ============================================================================
 # 部署 WPS 加载项（%APPDATA%\kingsoft\wps\jsaddons\wps-claude-addon_）
 # ============================================================================
 function Install-WpsAddon {
@@ -288,14 +345,13 @@ function Install-WpsAddon {
         Write-Ok "已复制到: $target"
     }
 
-    # publish.xml：WPS 靠它扫描加载项（目录名尾部 _ 是必须的）
+    # publish.xml：WPS 靠它扫描加载项（目录名尾部 _ 是必须的）。
+    # 这里【合并】条目而不是整文件覆盖 —— 该文件是全机所有加载项的共享清单，
+    # 覆盖会清掉别人厂商的条目（详见 Merge-PublishXmlEntry 的注释）。
     $publishXml = Join-Path $addonsDir 'publish.xml'
-    @'
-<?xml version="1.0" encoding="UTF-8"?>
-<jsplugins>
-  <jsplugin name="wps-claude-addon" type="wps,et,wpp" url="wps-claude-addon_/" enable="enable_dev"/>
-</jsplugins>
-'@ | Out-File -FilePath $publishXml -Encoding utf8
+    $null = Merge-PublishXmlEntry -Path $publishXml `
+        -Name 'wps-claude-addon' `
+        -Entry '<jsplugin name="wps-claude-addon" type="wps,et,wpp" url="wps-claude-addon_/" enable="enable_dev"/>'
     Write-Ok "publish.xml: $publishXml"
     return $true
 }

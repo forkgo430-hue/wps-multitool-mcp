@@ -31,6 +31,7 @@ import {
   McpError,
 } from '../utils/error';
 import { getToolMeta } from './tool-metadata';
+import { resolveToolAlias, isToolAlias, TOOL_ALIASES } from './tool-aliases.generated';
 
 /** 搜索命中项（比之前多了别名与正/反例） */
 export interface ToolSearchHit {
@@ -160,17 +161,29 @@ export class ToolRegistry {
   }
 
   /**
-   * 获取Tool定义
+   * 获取Tool定义。
+   *
+   * 旧名（见 tool-aliases.generated.ts）在这里解析成规范名 —— 只解析一次、只在一个地方解析，
+   * 调用方不用"先判断是不是别名再取"。别名本身不在 tools 表里，所以先查真名再查别名不会误伤。
    */
   getTool(name: string): RegisteredTool | undefined {
-    return this.tools.get(name);
+    return this.tools.get(name) ?? this.tools.get(resolveToolAlias(name));
   }
 
   /**
-   * 检查Tool是否存在
+   * 检查Tool是否存在。
+   * 旧名算存在（会解析成规范名）—— 否则 mcp-server 与 batch 的入口守卫会把旧名挡在门外。
    */
   hasTool(name: string): boolean {
-    return this.tools.has(name);
+    return this.tools.has(resolveToolAlias(name));
+  }
+
+  /**
+   * 旧名解析结果（给"你用的名字已合并"这类提示用；不是别名则返回 undefined）。
+   * 为什么不直接暴露 TOOL_ALIASES：调用方要的是"这个名字要转成谁"，不是整张表。
+   */
+  aliasTargetOf(name: string): string | undefined {
+    return isToolAlias(name) ? TOOL_ALIASES[name] : undefined;
   }
 
   /**
@@ -395,6 +408,29 @@ export class ToolRegistry {
    * 返回最近似的几个工具名与它们所在组。
    */
   suggestSimilar(name: string, limit = 3): Array<{ name: string; group: string; loaded: boolean }> {
+    const near = this.scoreSimilar(name, limit);
+
+    // 旧名直接给答案：它已经不是"像哪个"的问题，而是"就是哪个"。
+    // 排在第一位，后面的近似项照旧给（旧名残片可能还指向别的工具，删掉反而少信息）。
+    const canonical = resolveToolAlias(name);
+    if (canonical !== name) {
+      const hit = this.tools.get(canonical);
+      if (hit) {
+        const group = groupOfTool(hit.definition);
+        return [
+          { name: canonical, group, loaded: this.loadedGroups.has(group) },
+          ...near.filter((n) => n.name !== canonical),
+        ].slice(0, limit);
+      }
+    }
+    return near;
+  }
+
+  /** 按名字词元算近似度（suggestSimilar 的打分部分，拆出来是为了别名那条路能复用） */
+  private scoreSimilar(
+    name: string,
+    limit: number
+  ): Array<{ name: string; group: string; loaded: boolean }> {
     const tokens = (name || '')
       .toLowerCase()
       .split(/[^a-z0-9]+/)
@@ -422,15 +458,20 @@ export class ToolRegistry {
    * 这是核心方法，处理Tool调用请求
    */
   async callTool(request: ToolCallRequest): Promise<ToolCallResult> {
-    const { id, name, arguments: args } = request;
+    const { id, name: requestedName, arguments: args } = request;
     const startTime = Date.now();
 
-    logger.debug(`Calling tool: ${name}`, { id, args });
+    // 旧名在这里收敛成规范名：注解、验证状态、warnings、日志【全部】挂在规范名上。
+    // 若在这里分叉（旧名单独跑一套），两套必然漂，而漂的那一套通常是没人看的那套。
+    const name = resolveToolAlias(requestedName);
+    const viaAlias = name !== requestedName;
+
+    logger.debug(`Calling tool: ${requestedName}${viaAlias ? ` (alias → ${name})` : ''}`, { id, args });
 
     // 检查Tool是否存在
     const tool = this.tools.get(name);
     if (!tool) {
-      throw new ToolNotFoundError(name);
+      throw new ToolNotFoundError(requestedName);
     }
 
     try {
@@ -451,12 +492,26 @@ export class ToolRegistry {
       const duration = Date.now() - startTime;
 
       if (error instanceof McpError) {
-        logger.error(`Tool execution failed: ${name}`, error, { id, duration });
+        // 旧名调用最常见的失败不是"工具没了"，而是"参数名也一起变了"。
+        // 只说 Missing required parameter: startRow，调用方会以为是新工具有毛病 ——
+        // 所以这里补一句"你用的是旧名、它已合并到谁、现在的必填项是什么"，让人能直接改对。
+        const message =
+          viaAlias && error instanceof InvalidParamsError
+            ? `${error.message}\n旧名 ${requestedName} 已合并为 ${name}（别名，仍可调用），` +
+              `它现在的必填参数：${(tool.definition.inputSchema.required || []).join(', ') || '无'}。` +
+              '旧参数名不再生效，请按规范名的参数表重发一次；不要重试原参数。'
+            : error.message;
+
+        logger.error(
+          `Tool execution failed: ${requestedName}${viaAlias ? ` (alias → ${name})` : ''}`,
+          error,
+          { id, duration }
+        );
         return {
           id,
           success: false,
-          content: [{ type: 'text', text: error.message }],
-          error: error.message,
+          content: [{ type: 'text', text: message }],
+          error: message,
           errorType: error.wpsType,
           retryable: error.retryable,
         };

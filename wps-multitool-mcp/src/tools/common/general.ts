@@ -7,7 +7,6 @@
  * 包含：
  * - wps_common_save: 保存当前文档
  * - wps_common_save_as: 另存为
- * - wps_common_ping: 检测WPS连接
  * - wps_common_wire_check: 检查通信线路
  * - wps_common_get_app_info: 获取WPS应用信息
  * - wps_common_get_selected_text: 获取选中文本
@@ -194,66 +193,6 @@ export const saveAsHandler: ToolHandler = async (
       id: uuidv4(),
       success: false,
       content: [{ type: 'text', text: `另存为出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-// ============================================================
-// 3. wps_common_ping - 检测WPS连接
-// ============================================================
-
-export const pingDefinition: ToolDefinition = {
-  name: 'wps_common_ping',
-  description: `检测WPS应用连接状态。
-
-使用场景：
-- "WPS连上了吗"
-- "检查一下WPS是否在线"
-- "测试WPS连接"
-
-特点：
-- 快速检测WPS加载项是否可达
-- 返回连接状态信息`,
-  category: ToolCategory.COMMON,
-  inputSchema: {
-    type: 'object',
-    properties: {},
-    required: [],
-  },
-};
-
-export const pingHandler: ToolHandler = async (
-  _args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  try {
-    const response = await wpsClient.executeMethod<{
-      success: boolean;
-      message: string;
-    }>('ping', {});
-
-    if (response.success) {
-      return {
-        id: uuidv4(),
-        success: true,
-        content: [
-          { type: 'text', text: `WPS连接正常！${response.data?.message || 'pong'}` },
-        ],
-      };
-    } else {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `WPS连接失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `WPS连接检测出错: ${errMsg}` }],
       error: errMsg,
     };
   }
@@ -710,7 +649,6 @@ export const quitHandler: ToolHandler = async (
 export const generalTools: RegisteredTool[] = [
   { definition: saveDefinition, handler: saveHandler },
   { definition: saveAsDefinition, handler: saveAsHandler },
-  { definition: pingDefinition, handler: pingHandler },
   { definition: wireCheckDefinition, handler: wireCheckHandler },
   { definition: getAppInfoDefinition, handler: getAppInfoHandler },
   { definition: getSelectedTextDefinition, handler: getSelectedTextHandler },

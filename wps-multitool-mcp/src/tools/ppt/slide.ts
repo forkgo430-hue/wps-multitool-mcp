@@ -456,22 +456,10 @@ export const setFontColorHandler: ToolHandler = async (
  */
 export const alignObjectsDefinition: ToolDefinition = {
   name: 'wps_ppt_align_objects',
-  description: `对齐幻灯片中的对象。
-
-支持的对齐方式：
-- left: 左对齐
-- center: 水平居中
-- right: 右对齐
-- top: 顶部对齐
-- middle: 垂直居中
-- bottom: 底部对齐
-- distribute_h: 水平等距分布
-- distribute_v: 垂直等距分布
-
-使用场景：
-- "把这些元素居中对齐"
-- "让所有对象左对齐"
-- "等距分布这些形状"`,
+  description:
+    '[DEPRECATED·改用 wps_ppt_align_shapes] 对齐幻灯片中的对象。\n\n' +
+    '什么时候用：已被 wps_ppt_align_shapes 取代（同一个 alignShapes 动作），' +
+    '且新工具必须给 shapeIndices（要操作哪些形状），旧工具靠 names —— 别两个混着用。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',

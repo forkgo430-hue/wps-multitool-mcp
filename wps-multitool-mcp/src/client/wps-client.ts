@@ -312,16 +312,6 @@ export class WpsClient {
     return response.success ? response.data || null : null;
   }
 
-  async getCellValue(sheet: string | number, row: number, col: number): Promise<unknown> {
-    const response = await this.invokeAction<{ value: unknown }>('getCellValue', { sheet, row, col });
-    return response.data?.value;
-  }
-
-  async setCellValue(sheet: string | number, row: number, col: number, value: unknown): Promise<boolean> {
-    const response = await this.invokeAction('setCellValue', { sheet, row, col, value });
-    return response.success;
-  }
-
   async getRangeData(sheet: string | number, range: string): Promise<unknown[][]> {
     const response = await this.invokeAction<{ data: unknown[][] }>('getRangeData', { sheet, range });
     return response.data?.data || [];
@@ -346,11 +336,6 @@ export class WpsClient {
 
   async createDocument(): Promise<boolean> {
     const response = await this.invokeAction('createDocument');
-    return response.success;
-  }
-
-  async insertText(text: string, position?: number): Promise<boolean> {
-    const response = await this.invokeAction('insertText', { text, position });
     return response.success;
   }
 

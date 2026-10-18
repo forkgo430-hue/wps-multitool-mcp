@@ -103,8 +103,6 @@ export {
   insertHeaderHandler,
   insertFooterDefinition,
   insertFooterHandler,
-  generateDocTocDefinition,
-  generateDocTocHandler,
   insertSectionBreakDefinition,
   insertSectionBreakHandler,
   setLineSpacingDefinition,

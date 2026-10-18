@@ -24,6 +24,7 @@ import {
   isIdempotentAction,
 } from '../bridge/cancellable';
 import { TOOL_ACTIONS } from './tool-annotations.generated';
+import { resolveToolAlias } from './tool-aliases.generated';
 
 /** MCP 规范里的工具注解（字段名与规范一致，别改） */
 export interface ToolAnnotations {
@@ -102,19 +103,23 @@ const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
  * 算一个工具的注解。
  * 拿不到动作名（工具没在映射表里、也不在 EXTRA 里）就返回 undefined ——
  * 宁可没有注解，也不要给一个猜出来的错注解（客户端可能拿它做安全决策）。
+ *
+ * 旧名（别名）先解析成规范名：注解挂在规范名上，旧名必须拿到同一份 ——
+ * 否则会出现"旧名没有破坏性提示"这种安全缺口，而客户端正是拿这个决定要不要弹确认。
  */
 export function getToolAnnotations(toolName: string): ToolAnnotations | undefined {
-  if (cache.has(toolName)) return cache.get(toolName);
+  const name = resolveToolAlias(toolName);
+  if (cache.has(name)) return cache.get(name);
 
-  const extra = EXTRA_ANNOTATIONS[toolName];
+  const extra = EXTRA_ANNOTATIONS[name];
   if (extra) {
-    cache.set(toolName, extra);
+    cache.set(name, extra);
     return extra;
   }
 
-  const actions = TOOL_ACTIONS[toolName];
+  const actions = TOOL_ACTIONS[name];
   if (!actions || !actions.length) {
-    cache.set(toolName, undefined);
+    cache.set(name, undefined);
     return undefined;
   }
 
@@ -131,7 +136,7 @@ export function getToolAnnotations(toolName: string): ToolAnnotations | undefine
     openWorldHint: false,
   };
 
-  cache.set(toolName, ann);
+  cache.set(name, ann);
   return ann;
 }
 

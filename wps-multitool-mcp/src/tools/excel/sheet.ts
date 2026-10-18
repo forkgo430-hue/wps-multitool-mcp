@@ -579,7 +579,10 @@ export const getSelectionHandler: ToolHandler = async (
  */
 export const deleteRowDefinition: ToolDefinition = {
   name: 'wps_excel_delete_row',
-  description: '删除指定行。可指定起始行号和删除行数。',
+  description:
+    '[DEPRECATED·改用 wps_excel_delete_rows] 删除指定行。可指定起始行号和删除行数。\n\n' +
+    '什么时候用：已被 wps_excel_delete_rows 取代（同一个 deleteRows 动作），' +
+    '旧参数名是 row，新工具用 startRow —— 别两个混着用。',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
@@ -636,140 +639,6 @@ export const deleteRowHandler: ToolHandler = async (
       id: uuidv4(),
       success: false,
       content: [{ type: 'text', text: `删除行出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-/**
- * 插入列
- */
-export const insertColumnDefinition: ToolDefinition = {
-  name: 'wps_excel_insert_column',
-  description: '在指定位置插入列。可指定起始列号和插入列数。',
-  category: ToolCategory.SPREADSHEET,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      column: {
-        type: 'number',
-        description: '要插入的列号（从1开始）',
-      },
-      count: {
-        type: 'number',
-        description: '要插入的列数，默认1',
-      },
-    },
-    required: ['column'],
-  },
-};
-
-export const insertColumnHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { column, count = 1 } = args as { column: number; count?: number };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      insertedColumns: number;
-    }>(
-      'insertColumns',
-      { column, count },
-      WpsAppType.SPREADSHEET
-    );
-
-    if (!response.success) {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `插入列失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-
-    return {
-      id: uuidv4(),
-      success: true,
-      content: [
-        {
-          type: 'text',
-          text: `已在第${column}列处成功插入${count}列`,
-        },
-      ],
-    };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `插入列出错: ${errMsg}` }],
-      error: errMsg,
-    };
-  }
-};
-
-/**
- * 删除指定列
- */
-export const deleteColumnDefinition: ToolDefinition = {
-  name: 'wps_excel_delete_column',
-  description: '删除指定列。可指定起始列号和删除列数。',
-  category: ToolCategory.SPREADSHEET,
-  inputSchema: {
-    type: 'object',
-    properties: {
-      column: {
-        type: 'number',
-        description: '要删除的起始列号（从1开始）',
-      },
-      count: {
-        type: 'number',
-        description: '要删除的列数，默认1',
-      },
-    },
-    required: ['column'],
-  },
-};
-
-export const deleteColumnHandler: ToolHandler = async (
-  args: Record<string, unknown>
-): Promise<ToolCallResult> => {
-  const { column, count = 1 } = args as { column: number; count?: number };
-
-  try {
-    const response = await wpsClient.executeMethod<{
-      deletedColumns: number;
-    }>(
-      'deleteColumns',
-      { column, count },
-      WpsAppType.SPREADSHEET
-    );
-
-    if (!response.success) {
-      return {
-        id: uuidv4(),
-        success: false,
-        content: [{ type: 'text', text: `删除列失败: ${response.error}` }],
-        error: response.error,
-      };
-    }
-
-    return {
-      id: uuidv4(),
-      success: true,
-      content: [
-        {
-          type: 'text',
-          text: `已成功删除第${column}列起共${count}列`,
-        },
-      ],
-    };
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    return {
-      id: uuidv4(),
-      success: false,
-      content: [{ type: 'text', text: `删除列出错: ${errMsg}` }],
       error: errMsg,
     };
   }
@@ -855,7 +724,10 @@ export const freezePanesHandler: ToolHandler = async (
  */
 export const autoFillDefinition: ToolDefinition = {
   name: 'wps_excel_auto_fill',
-  description: '自动填充单元格区域。根据源区域的数据模式自动填充到目标区域。',
+  description:
+    '[DEPRECATED·改用 wps_excel_fill_series] 自动填充单元格区域。根据源区域的数据模式自动填充到目标区域。\n\n' +
+    '什么时候用：已被 wps_excel_fill_series 取代（同一个 fillSeries 动作），' +
+    '旧参数是 sourceRange/targetRange，新工具用 range/direction/step/type —— 别两个混着用。',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
@@ -1154,8 +1026,6 @@ export const sheetTools: RegisteredTool[] = [
   { definition: moveSheetDefinition, handler: moveSheetHandler },
   { definition: getSelectionDefinition, handler: getSelectionHandler },
   { definition: deleteRowDefinition, handler: deleteRowHandler },
-  { definition: insertColumnDefinition, handler: insertColumnHandler },
-  { definition: deleteColumnDefinition, handler: deleteColumnHandler },
   { definition: freezePanesDefinition, handler: freezePanesHandler },
   { definition: autoFillDefinition, handler: autoFillHandler },
   { definition: setNamedRangeDefinition, handler: setNamedRangeHandler },

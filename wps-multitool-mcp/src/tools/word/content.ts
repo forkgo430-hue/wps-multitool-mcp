@@ -550,7 +550,10 @@ export const insertPageBreakHandler: ToolHandler = async (
 
 export const setFontStyleDefinition: ToolDefinition = {
   name: 'wps_word_set_font_style',
-  description: '设置选中文字的字体样式属性',
+  description:
+    '[DEPRECATED·改用 wps_word_set_font] 设置选中文字的字体样式属性\n\n' +
+    '什么时候用：已被 wps_word_set_font 取代（同一个 setFont 动作），' +
+    '旧参数是 fontName/fontSize，新工具用 font_name/font_size，而且多了 range/color/underline —— 别两个混着用。',
   category: ToolCategory.DOCUMENT,
   inputSchema: {
     type: 'object',

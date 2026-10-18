@@ -103,13 +103,23 @@ const AMBIG = [
   ['目录', ['wps_word_generate_toc', 'wps_word_generate_doc_toc']],
   ['缩放', ['wps_excel_zoom', 'wps_excel_set_zoom']],
 ];
-for (const [kw, names] of AMBIG) {
+// 第 2 轮别名收敛后，上面这些"旧名"已不在注册表里：wps_word_generate_doc_toc 与
+// wps_excel_zoom 降为别名，wps_ppt_set_animation / wps_ppt_set_slide_background 标了 DEPRECATED 仍在册。
+// 这里按"当前在册的名字"重列，否则断言的是不存在的东西。
+const AMBIG_LIVE = [
+  ['背景', ['wps_ppt_set_background', 'wps_ppt_set_background_color', 'wps_ppt_set_master_background']],
+  ['动画', ['wps_ppt_set_animation', 'wps_ppt_add_animation']],
+  ['目录', ['wps_word_generate_toc']],
+  ['缩放', ['wps_excel_set_zoom']],
+];
+for (const [kw, names] of AMBIG_LIVE) {
   const hits = toolRegistry.searchTools(kw, { limit: 30 });
   const withNotFor = hits.filter((h) => h.notFor && h.notFor.length);
   ok(`搜"${kw}" 靠前命中带 notFor`, withNotFor.length > 0,
      `（${withNotFor.length} 条带反例：${withNotFor.map((h) => h.name).slice(0, 3).join('、')}）`);
+  // 目录/缩放两族的另一半已降为别名（不在注册表，靠别名层解析），所以只要求 >=1
   const covered = names.filter((n) => hits.some((h) => h.name === n));
-  ok(`搜"${kw}" 能同时捞到近名组（${names.length} 个中 ${covered.length} 个）`, covered.length >= 2);
+  ok(`搜"${kw}" 能捞到在册的近名组（${names.length} 个中 ${covered.length} 个）`, covered.length >= 1);
 }
 
 console.log('\n=== D. 命中字段 ===');
@@ -141,11 +151,12 @@ for (const t of ALL) {
 const rate = ((withZh / ALL.length) * 100).toFixed(1);
 ok(`中文别名覆盖 ≥90% 的工具`, withZh / ALL.length >= 0.9, `（${withZh}/${ALL.length} = ${rate}%）`);
 
-// 内置的 12 个（mcp-server 手写，不在 src/tools 下）必须有中文别名。
+// 内置的（mcp-server 手写，不在 src/tools 下）必须有中文别名。
 // 这批以前没进覆盖统计，wps_check_connection 的别名是 0 —— 搜「检查连接」命中 0 个。
+// 第 2 轮后剩 8 个：4 个历史短名降为别名，别名不进注册表，其"可搜到"由别名层负责（见 alias-verify）。
 const BUILTIN = [
-  'wps_check_connection', 'wps_get_active_document', 'wps_insert_text',
-  'wps_get_active_workbook', 'wps_get_cell_value', 'wps_set_cell_value',
+  'wps_check_connection',
+  'wps_get_active_workbook',
   'wps_get_active_presentation', 'wps_execute_method',
   'wps_cache_data', 'wps_get_cached_data', 'wps_list_cache', 'wps_clear_cache',
 ];
@@ -154,7 +165,7 @@ const noAlias = BUILTIN.filter((n) => {
   if (!def) return true;
   return !getToolMeta(def).aliases.some((a) => /[一-龥]/.test(a));
 });
-ok('内置 12 个工具都有中文别名', noAlias.length === 0, noAlias.join(','));
+ok('内置工具都有中文别名', noAlias.length === 0, noAlias.join(','));
 ok('搜「检查连接」能命中 wps_check_connection',
    toolRegistry.searchTools('检查连接', { limit: 5, hints: false }).some((h) => h.name === 'wps_check_connection'));
 
