@@ -1,25 +1,20 @@
 {
-  "name": "wps-mcp-skills",
+  "name": "wps-multitool-mcp",
   "owner": {
-    "name": "lc2panda",
-    "email": "lc2panda@github.com"
+    "name": "赢容",
+    "email": "yingrong@local"
   },
   "metadata": {
-    "description": "WPS Office AI Assistant Skills - Control WPS Office with natural language",
-    "version": "1.0.0"
+    "description": "WPS Office 多面手 MCP —— 用自然语言操控 WPS 文字/表格/演示",
+    "version": "1.1.0"
   },
   "plugins": [
     {
-      "name": "wps-office-skills",
-      "description": "Complete WPS Office automation skills including Excel formula generation, Word formatting, PPT beautification, and cross-app operations",
+      "name": "wps-multitool",
+      "description": "WPS Office 自动化技能包：文字排版、表格公式与图表、演示美化、跨应用操作",
       "source": "./",
       "strict": false,
-      "skills": [
-        "./skills/wps-excel",
-        "./skills/wps-word",
-        "./skills/wps-ppt",
-        "./skills/wps-office"
-      ]
+      "skills": ["./wps-multitool-mcp/skills/wps-multitool"]
     }
   ]
 }

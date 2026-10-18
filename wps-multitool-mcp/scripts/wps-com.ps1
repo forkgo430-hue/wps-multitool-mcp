@@ -2124,7 +2124,7 @@ switch ($Action) {
         Output-Json @{ success = $true; data = @{ sheets = $sheets; count = $sheets.Count; activeSheet = $excel.ActiveSheet.Name } }
     }
 
-    # ===== 第 4 期补齐（对齐 dsh-plugin-wps-office-next 的高频缺口）=====
+    # ===== 第 4 期补齐（常见高频缺口：表内查找 / 图表删除 / 透视表 / 页面设置）=====
     # 逐条说明"为什么缺它会真的卡住"，不是凑数。
     # 真机支持情况见 __probeCaps 的对应项；未验的一律走 warnings，不假装成功。
 
