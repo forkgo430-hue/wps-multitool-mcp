@@ -3370,7 +3370,7 @@ switch ($Action) {
         # 所以这里不猜、不硬关：明确报错让调用方先 save_as，或显式 saveChanges=false。
         if ($saveChanges) {
             $hasPath = $false
-            try { $hasPath = -not [string]::IsNullOrEmpty([string]$wb.FullName) } catch {}
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$wb.Path) } catch {}
             if (-not $hasPath) {
                 Output-Json @{ success = $false; error = "[勿重试·先另存为] 工作簿「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道（120 秒）。请先另存为（wps_excel_save_as），或显式传 save=false 放弃保存" }
                 return
@@ -3462,7 +3462,7 @@ switch ($Action) {
         # 所以这里不猜、不硬关：明确报错让调用方先 save_as，或显式 saveChanges=false。
         if ($saveChanges) {
             $hasPath = $false
-            try { $hasPath = -not [string]::IsNullOrEmpty([string]$docItem.FullName) } catch {}
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$docItem.Path) } catch {}
             if (-not $hasPath) {
                 Output-Json @{ success = $false; error = "文档「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道。请先另存为（wps_word_save_as），或显式传 saveChanges=false 放弃保存" }
                 return
@@ -4280,7 +4280,7 @@ switch ($Action) {
         $saveChanges = if ($null -ne $p.saveChanges) { [bool]$p.saveChanges } else { $true }
         if ($saveChanges) {
             $hasPath = $false
-            try { $hasPath = -not [string]::IsNullOrEmpty([string]$pres.FullName) } catch {}
+            try { $hasPath = -not [string]::IsNullOrEmpty([string]$pres.Path) } catch {}
             if (-not $hasPath) {
                 Output-Json @{ success = $false; error = "[勿重试·先另存为] 演示文稿「$name」从未保存过，直接关闭会弹出「另存为」对话框卡住通道（120 秒）。请先另存为（wps_ppt_save_as），或显式传 save=false 放弃保存" }
                 return
