@@ -192,7 +192,13 @@ export const autoBeautifySlideHandler: ToolHandler = async (
         adjust_text_size: '调整文字大小',
       };
 
-      response.data.operations.forEach((op) => {
+      // PS 侧只回 {style,count}（老版本）时 operations 不存在，直接 .forEach 会把整个工具打崩
+      // —— 与 wps_ppt_beautify 同一个坑，那边已经兜过，这里漏了。
+      const ops = Array.isArray(response.data.operations) ? response.data.operations : [];
+      if (ops.length === 0) {
+        output += '- 没有可优化的文本（本页可能是空占位符，或元素都没有文字）\n';
+      }
+      ops.forEach((op) => {
         output += `- ${opNames[op.operation] || op.operation}: 处理了 ${op.count} 个元素${op.details ? ` (${op.details})` : ''}\n`;
       });
 

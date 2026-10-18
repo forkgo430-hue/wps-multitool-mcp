@@ -75,7 +75,16 @@ export const getSlideMasterHandler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `母版信息获取成功！\n${JSON.stringify(response.data.master, null, 2)}`,
+            // PS 回的是 {shapeCount, shapes}，handler 以前读 data.master（不存在）→ 只打印一句"成功"，
+            // 一个字的信息都没有，看着像空壳。两个形状都认。
+            text:
+              `母版信息获取成功！\n` +
+              (() => {
+                const d = response.data as unknown as Record<string, unknown>;
+                const master = (d.master ?? d) as Record<string, unknown>;
+                const n = Number(master.shapeCount ?? 0);
+                return `母版元素: ${n} 个\n${JSON.stringify(master.shapes ?? master, null, 2)}`;
+              })(),
           },
         ],
       };
