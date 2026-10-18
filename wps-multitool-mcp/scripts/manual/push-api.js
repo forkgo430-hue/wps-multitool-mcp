@@ -45,6 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const argv = process.argv.slice(2);
 const dry = argv.includes('--dry');
 const force = argv.includes('-f') || argv.includes('--force');
+const historyMode = argv.includes('--history');
 const bIdx = argv.indexOf('--branch');
 const branch = bIdx >= 0 ? argv[bIdx + 1] : 'main';
 const taken = new Set([...(bIdx >= 0 ? [argv[bIdx], argv[bIdx + 1]] : [])]);
@@ -145,6 +146,158 @@ function blobContent(sha) {
   });
 }
 
+// ---------- 模式 B：按真实历史推送（--history） ----------
+// 快照模式会把历史压成一个无父级提交；--history 则逐个重放本地提交，
+// 让远端拥有可追溯的提交链。每一步都建在【已创建的上一个提交】之上，
+// 所以新仓库的父链是完整的 —— GitHub 不会因为缺祖先而拒绝。
+
+function parseCommit(sha) {
+  const raw = execFileSync('git', ['cat-file', 'commit', sha], {
+    cwd: REPO_ROOT, maxBuffer: 1 << 28,
+  }).toString('utf8');
+  const cut = raw.indexOf('\n\n');
+  const header = cut >= 0 ? raw.slice(0, cut) : raw;
+  const message = cut >= 0 ? raw.slice(cut + 2) : '';
+  const info = { tree: '', parents: [], author: '', committer: '' };
+  for (const line of header.split('\n')) {
+    if (line.startsWith('tree ')) info.tree = line.slice(5).trim();
+    else if (line.startsWith('parent ')) info.parents.push(line.slice(7).trim());
+    else if (line.startsWith('author ')) info.author = line.slice(7);
+    else if (line.startsWith('committer ')) info.committer = line.slice(10);
+  }
+  const ident = (s) => {
+    const m = s.match(/^(.*) <(.*)> (\d+) ([+-]\d{4})$/);
+    if (!m) return { name: 'unknown', email: 'unknown@example.com', date: new Date().toISOString() };
+    return { name: m[1], email: m[2], date: new Date(Number(m[3]) * 1000).toISOString() };
+  };
+  return { ...info, message, authorObj: ident(info.author), committerObj: ident(info.committer) };
+}
+
+/** 该提交相对父提交改了哪些文件（根提交用 --root 全量列出） */
+function changedFiles(sha) {
+  const out = execFileSync(
+    'git',
+    ['-c', 'core.quotepath=false', 'diff-tree', '-r', '--no-commit-id', '--name-status', '--root', sha],
+    { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 1 << 26 }
+  );
+  const rows = [];
+  for (const line of out.split('\n')) {
+    if (!line.trim()) continue;
+    const tab = line.indexOf('\t');
+    const status = line.slice(0, tab).trim().charAt(0); // A/M/D/R...
+    const p = line.slice(tab + 1);
+    if (status === 'D') {
+      rows.push({ status: 'D', path: p });
+      continue;
+    }
+    const meta = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-tree', sha, '--', p], {
+      cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 1 << 20,
+    }).trim();
+    const [mode, type, blob] = meta.split('\t')[0].split(/\s+/);
+    if (type !== 'blob') continue; // 子模块之类，Git Data API 不收
+    rows.push({ status: 'A', path: p, mode, blob });
+  }
+  return rows;
+}
+
+async function pushHistory({ owner, repo, token }) {
+  const base = `/repos/${owner}/${repo}`;
+  const localTree = run('git show -s --format=%T HEAD').trim();
+  const list = run('git rev-list --reverse HEAD').trim().split('\n').filter(Boolean);
+  console.log(`重放 ${list.length} 个提交 → ${owner}/${repo}@${branch}（目标树 ${localTree.slice(0, 7)}）`);
+
+  const mapped = new Map(); // 旧 sha → 新 sha
+  const treeOf = new Map(); // 旧 sha → 新 tree sha
+  const uploaded = new Set(); // 已上传过的 blob sha（同一内容只传一次）
+  let uploadedCount = 0;
+
+  for (let i = 0; i < list.length; i++) {
+    const sha = list[i];
+    const c = parseCommit(sha);
+    const parentNew = c.parents.map((p) => mapped.get(p)).filter(Boolean);
+    const baseTree = c.parents[0] ? treeOf.get(c.parents[0]) : undefined;
+    const files = changedFiles(sha);
+
+    // 先并行把缺的 blob 传上去（串行会慢到看不下去：几百个 blob × 每次几百毫秒）
+    const missing = files.filter((f) => f.status !== 'D' && !uploaded.has(f.blob));
+    for (const f of missing) uploaded.add(f.blob); // 先占位，避免同一提交内重复
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(6, missing.length || 1) }, async () => {
+        while (cursor < missing.length) {
+          const f = missing[cursor++];
+          const content = execFileSync('git', ['cat-file', 'blob', f.blob], {
+            cwd: REPO_ROOT, maxBuffer: 1 << 28,
+          }).toString('base64');
+          const res = await withRetry(`blob ${f.path}`, () =>
+            api('POST', `${base}/git/blobs`, token, { content, encoding: 'base64' }));
+          if (res.json.sha !== f.blob) throw new Error(`blob sha 不符：${f.path}`);
+          uploadedCount++;
+          process.stdout.write(`\r  提交 ${i + 1}/${list.length}  blob ${uploadedCount}   `);
+        }
+      })
+    );
+
+    const items = [];
+    for (const f of files) {
+      if (f.status === 'D') {
+        items.push({ path: f.path, mode: '100644', type: 'blob', sha: null });
+        continue;
+      }
+      items.push({ path: f.path, mode: f.mode, type: 'blob', sha: f.blob });
+    }
+
+    const treeRes = await withRetry(`tree ${sha.slice(0, 7)}`, () =>
+      api('POST', `${base}/git/trees`, token, baseTree ? { base_tree: baseTree, tree: items } : { tree: items }));
+    const newTree = treeRes.json.sha;
+
+    const commitRes = await withRetry(`commit ${sha.slice(0, 7)}`, () =>
+      api('POST', `${base}/git/commits`, token, {
+        message: c.message,
+        tree: newTree,
+        parents: parentNew,
+        author: c.authorObj,
+        committer: c.committerObj,
+      }));
+
+    mapped.set(sha, commitRes.json.sha);
+    treeOf.set(sha, newTree);
+    process.stdout.write(`\r  提交 ${i + 1}/${list.length}（blob ${uploadedCount}）   `);
+  }
+  console.log('');
+
+  const newTip = mapped.get(list[list.length - 1]);
+  const tipTree = treeOf.get(list[list.length - 1]);
+  if (tipTree !== localTree) {
+    console.error(`✗ 远端树 ${tipTree} ≠ 本地 ${localTree}，不移动 ref`);
+    process.exit(1);
+  }
+  console.log(`✓ 重建完成：${list.length} 个提交，tip ${newTip.slice(0, 7)}，树与本地一致`);
+
+  if (dry) {
+    console.log('--dry：ref 未动');
+    return;
+  }
+
+  try {
+    await withRetry('update ref', () =>
+      api('PATCH', `${base}/git/refs/heads/${branch}`, token, { sha: newTip, force: true }));
+  } catch (e) {
+    if (!`${e.message}`.includes('404')) throw e;
+    await withRetry('create ref', () =>
+      api('POST', `${base}/git/refs`, token, { ref: `refs/heads/${branch}`, sha: newTip }));
+  }
+
+  const check = await withRetry('自检', () => api('GET', `${base}/commits/heads/${branch}`, token));
+  const head = check.json;
+  const remoteTree = head && (head.commit ? head.commit.tree.sha : head.tree && head.tree.sha);
+  if (remoteTree !== localTree) {
+    console.error(`✗ 推完仍不一致：远端 ${remoteTree} vs 本地 ${localTree}`);
+    process.exit(1);
+  }
+  console.log(`✓ 远端 ${branch} = ${newTip.slice(0, 7)}，${list.length} 个真实提交，树 ${remoteTree.slice(0, 7)}`);
+}
+
 // ---------- 主流程 ----------
 (async () => {
   const { owner, repo } = originUrl();
@@ -152,6 +305,11 @@ function blobContent(sha) {
   const localTree = run('git show -s --format=%T HEAD').trim(); // %T 而非 HEAD^{tree}：cmd 会吃掉 ^
   const base = `/repos/${owner}/${repo}`;
   console.log(`本地树 ${localTree.slice(0, 7)} -> ${owner}/${repo}@${branch}${dry ? '（--dry，不动 ref）' : ''}`);
+
+  if (historyMode) {
+    await pushHistory({ owner, repo, token });
+    process.exit(0);
+  }
 
   // 0. 远端已经是同一棵树就别白跑
   if (!force) {
