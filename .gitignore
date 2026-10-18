@@ -201,6 +201,10 @@ __pycache__/
 venv/
 .venv/
 
+# 推送/调试脚本的临时输出（Start-Process 重定向会造出这些，别提交）
+wps-multitool-mcp/*.log
+wps-multitool-mcp/*.err
+
 # 其他 Claude 相关文件
 CLAUDE.md
 # 包内 CHANGELOG 由 changesets 生成，属发版产物，要进库；
