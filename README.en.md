@@ -6,7 +6,20 @@
 [![CI](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/forkgo430/wps-multitool-mcp/actions/workflows/ci.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/wps-multitool-mcp)](https://www.npmjs.com/package/wps-multitool-mcp) [![release](https://img.shields.io/github/v/release/forkgo430/wps-multitool-mcp)](https://github.com/forkgo430/wps-multitool-mcp/releases) [![tools](https://img.shields.io/badge/tools-284-brightgreen.svg)](#capabilities) [![platform](https://img.shields.io/badge/platform-Windows%20only-lightgrey.svg)](#requirements)
 <!-- AUTO:badges:end -->
 
-> Let AI drive the WPS Office windows **you already have open**.
+> Let AI drive the WPS Office windows you already have open.
+>
+> It doesn't only edit. It builds. A document with a table of contents and charts, starting from a
+> blank page. Numbers in a spreadsheet turned into charts and pivot tables, then dropped into a deck.
+> A whole presentation restyled. Everything exported to images and PDF.
+>
+> **Every requirement, the whole stack.** Three apps, five stages, and every cell has a tool behind
+> it. For anything not wrapped as a tool, `wps_execute_method` reaches all 314 low-level actions.
+
+| | Read | Write | Generate | Layout | Export |
+|---|:--:|:--:|:--:|:--:|:--:|
+| WPS Writer | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WPS Spreadsheets | ✓ | ✓ | ✓ | ✓ | ✓ |
+| WPS Presentation | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 <sub>Author & maintainer: **赢容** · [npm](https://www.npmjs.com/package/wps-multitool-mcp) · [Release](https://github.com/forkgo430/wps-multitool-mcp/releases)</sub>
 
@@ -37,136 +50,47 @@ Want the in-WPS panel (snapshots / undo / status)? Install the add-in:
 irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install.ps1 | iex
 ```
 
-## Why not "just another WPS plugin"
+<a id="capabilities"></a>
 
-| Problem | Mechanism |
+## What it can do
+
+| What you get | How |
 |---|---|
-| Hundreds of tools blow up the context | Essential tier only; the rest via `wps_search_tools` + `wps_load_tool_group` |
-| Writes fail halfway and nobody can say what changed | `warnings` as a third state: done, but N things didn't land |
-| Look-alike tools silently edit the wrong place | Every tool carries `notFor`; required reading in search results |
-| A broken edit cannot be undone | Auto snapshot before risky writes (`wps_common_batch` built in) + operation log |
-| No idea which tools actually work | Every tool carries its real-machine verification status; the default tier only lists verified ones |
+| A finished document from a blank page | Create the file, add pages, write titles and body, apply a theme, add animations and transitions, add page numbers. One chain, no tool switching |
+| Spreadsheet numbers turned into a report | Build charts or pivot tables straight off the data, export them as images, drop them into the deck. The copy-paste step is gone |
+| Presentation building blocks | Timelines, flow charts, org charts, gauges, donut charts, progress bars, KPI cards, mini charts, 3D text, styled tables. Each is a tool, not a pile of shapes you position by hand |
+| Whole-deck consistency | `beautify_all_slides` applies one style across the deck, `unify_font` sets one font everywhere, `auto_layout` arranges, `smart_distribute` evens out spacing |
+| Chinese document and academic layout | Table of contents, bibliography index, cross-references, footnotes, tracked changes, headers and footers, template field filling |
+| Formulas that go past writing | Generate a formula, and diagnose why one errors. Array formulas, and pivot tables with create / refresh / update / query / clear |
+| Export | Slide images, chart and range images, format conversion, PDF |
+| Batch runs with a safety net | `wps_common_batch` runs several steps at once, snapshots before any destructive step, and can roll back to the on-disk version afterwards |
 
-COM is not transactional, so failures carry a retry tag: `[retryable]` resend freely,
-`[do-not-retry · possibly half-applied]` read back first.
+Four more that make daily use smoother:
 
-## How it gets things right
-
-The table above lists the problems each mechanism solves. This section is about **where those
-mechanisms are attached** — because whether a problem is really prevented depends on whether the
-guard lives in 284 separate files or on a single choke point.
-
-Every row below cites `file:line` so you can check it yourself. Line numbers match the current HEAD.
-
-| Mechanism | Where it lives | Why it's worth calling out |
-|---|---|---|
-| **One exit for every action** | `wps-multitool-mcp/src/client/wps-client.ts:248` `execWpsAction` | All 314 COM actions (`src/client/action-routes.generated.ts:6`) go through this one function; nothing else talks to PowerShell directly |
-| **Guards don't live inside tools** | snapshot `src/server/tool-registry.ts:596`; warnings extraction `src/client/wps-client.ts:35`; cancellation `src/server/mcp-server.ts:158`; error tags `src/server/mcp-server.ts:206` | Not one line of guard logic in the 284 handlers — those four identifiers appear **0 times** under `src/tools/**`. Four edits cover every tool, now and if the count doubles |
-| **Cancellation needs no tool signature changes** | `src/server/mcp-server.ts:158` (AsyncLocalStorage) | The cancel signal travels through context into the depth of the call chain, never into any tool's parameter schema. Adding cancellation touched **zero** of the 284 tools |
-| **Exactly one fallback path, and only for "never sent"** | `src/client/wps-client.ts:261-268` | Falling back to a direct run happens only when the bridge can't start. Timeout-class errors are **re-thrown as-is, never auto-retried** — the request may already have half-executed inside WPS, and a replay would execute it twice |
-| **One risk criterion for the whole project** | `src/bridge/cancellable.ts:123`, shared with `src/tools/common/batch.ts:38` | Batch and single calls must agree on "is this action destructive". The code comment says it outright: "口径不一致会让人以为单调用也安全" (inconsistent criteria make people think a single call is safe) |
-| **Verification status has exactly two states** | `wps-multitool-mcp/scripts/manual/tool-verification.json:3` (single source of truth; `:5` forbids a third state) | There is no "basically works" tier — a third state always ends up being read as "good enough". The default tier only lists `live` (`src/server/tool-registry.ts:244`) |
-| **Docs must match the ledger** | `wps-multitool-mcp/scripts/manual/skill-content-truth.js:44,136`, gated at `skill-verify.js:131` | If a doc written for AI claims a verification status that contradicts the ledger, the gate goes red. This rule exists because of a real incident: the docs long claimed PPT was unverified while isolated verification had long been green |
-| **Aliases can carry parameter mappings** | `wps-multitool-mcp/scripts/manual/tool-aliases.json:42`, applied at `src/server/tool-registry.ts:586` **before** required-argument validation | When tool families are merged, old parameter names (`preset` → `effect`) are carried along. Renaming without carrying them makes old calls either fail for a missing argument or, worse, **silently ignored and applied with defaults** |
-
-## Seven traps in WPS's object model (all measured, none of them raise an error)
-
-The previous section is about where the guards hang. This one is about **WPS itself** — its COM
-object model has a few places where you pass A, it does B, and **nothing throws**. These seven
-were hit one by one on real machines and fixed. They are written down because they share one
-property: **all of them are silent**. The tool returns `success`, the document does change —
-just not the part you asked for.
-
-| # | Trap | What it actually looked like | Where it's fixed |
-|---|---|---|---|
-| 1 | **A mismatched parameter name equals not passing it** | Every slide's transition was **silently set to `fade`** — you asked for push, you got fade. No gate went red, because nothing does | Parameter mapping at `scripts/wps-com.ps1:640` — `'applyTransitionToAll' = @{ effect = 'transition' }`; commit `57ed9a2` |
-| 2 | **An empty shape list isn't an error, it's "the whole slide"** | `Shapes.Range($null)` doesn't throw in WPS — it means the entire slide. `align_objects` reported "objects aligned" while **moving the page's tables, images and placeholders along with them** | Now it fails loudly: `scripts/wps-com.ps1:5417`; `shapeIndices` is now required: `src/tools/ppt/slide.ts:504`; commit `57ed9a2` |
-| 3 | **Single-element arrays get unrolled in a pipeline** | `create_kpi_cards` returned `success` and **built zero cards** — `$cards.Count` came back empty, so the `for` loop never ran once | `scripts/wps-com.ps1:5754` wraps it as `@(if ($p.cards) { $p.cards })`; `create_mini_charts` likewise at `:6004`; commit `57ed9a2` |
-| 4 | **Effect IDs drift between versions** | 30 entrance + 30 emphasis values copied from elsewhere produced **effects that didn't match the presets**. It took 30 tries to calibrate one comparison table | `src/tools/ppt/animation.ts:35` `EFFECT_ID_NAME_MAP` |
-| 5 | **Placeholder indices can't be copied from docs** | `set_slide_subtitle` / `set_slide_content` **always** failed with `placeholder not found`. Measured indices are subtitle `Type=4`, body `2` — the code looked for 2 and 7 respectively, **both wrong** | `scripts/wps-com.ps1:4745`, `:4770`; commit `57ed9a2` |
-| 6 | **`AddEffect`'s third argument is Level, not the trigger** | Adding **one** animation produced **two** identical effects; delete one and another remains, which looks like "it won't delete" | `scripts/wps-com.ps1:5561` passes `msoAnimateLevelNone(0)`; commit `57ed9a2` |
-| 7 | **Looking up a shape by name finds nothing** | `Shapes.Item($shapeName)` while the tool passes `shapeIndex` → an empty object calls `AddEffect` → **every `Shapes`/`Background` access on that page goes Null**, while the deck list still looks fine. **The symptom reads as "69 PPT tools broke at once"**; the root cause is one parameter name | Now both `shapeName` and `shapeIndex` are accepted: `scripts/wps-com.ps1:5528`; commit `0be2617` |
-
-Trap 7 is the one worth remembering: **it doesn't break just one tool.** It puts the whole page
-into an error state, so every read touching that page fails too — which is easy to misdiagnose
-as "a large chunk of functionality is missing" when the cause is a single parameter name.
-
-**All seven are now guarded by assertions**, not by anyone's memory:
-
-| Gate | Which traps | How it's shaped |
-|---|---|---|
-| `scripts/manual/param-shape-verify.js` | 1, 7 | Specifically targets "TS passes it, PS doesn't read it". Any new candidate outside the allowlist turns it red; a fixed entry that nobody removed turns it red too (forcing the list to only shrink) |
-| `scripts/manual/ppt-isolated-verify.js` + `docs/agents/PPT_SMOKE_MATRIX.md` | all 7 | A 103-row matrix where **every assertion is built on "something changed", not on "the call didn't throw"**. The judges for the seven above are, in order: read-back / coordinate delta / count delta / count delta / read-back value / count delta / count delta |
-| The matrix's "read-back value" judge | 1, 5 | After calling the target tool, call **a different tool** to read the result back and assert the target string appears in its output. The old "response isn't empty" check was too loose — a tool returning `success` with all-`undefined` content still passed |
-
-> That last family — `success` with `undefined` content (reading `textboxes` while PS returns
-> `textBoxes`, reading `filePath` while PS returns `path`, reading `cardCount` while PS returns
-> `count`) — was **entirely green** under the old judge. Tightening the judge is what exposed it.
-
-## Who it's for
-
-**Use it if** you work in WPS on Windows and want to edit the document that is *already open*.
-
-- WPS Writer / Spreadsheets / Presentation is your daily driver (contracts, papers, reports, decks)
-- The target is the file in front of you — with its comments, tracked changes, headers, unsaved edits
-- You need the Chinese-language details: academic layout, tracked revisions, template filling, TOC and cross-references
-- You accept that an AI can be wrong, so you want it to snapshot before it writes
-
-**Skip it if** — these are not "missing features", they are the wrong tool.
-
-- macOS / Linux: this path is Windows COM. It doesn't run on your machine, and there is a
-  **separately completed design** for a cross-platform route (see "How far this can extend" below)
-- Headless CI / servers: it needs an interactive desktop and a logged-in session with WPS running
-- Batch processing thousands of files: that is a job for file-level libraries (`python-docx` / `openpyxl`)
-- Read-only extraction: if you don't need the app open, a parser is faster and safer
-
-**WPS only, no MS Office** — a trade-off, not an oversight. WPS and Office are two different COM object
-models (`Ket/Kwps/Kwpp` vs `Excel/Word/PowerPoint`). Supporting both means writing every action twice and
-verifying it in two environments — double the maintenance for a fraction of the users. Everything here is
-tuned for WPS users (Chinese document conventions, revisions, academic layout). Rather than being mediocre
-on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MCP servers — pick the right one.
-
-## How far this can extend
-
-**Today exactly one route actually works** (WPS COM automation is Windows-only).
-What follows is a **completed design** and **where it is blocked** — not a roadmap promise.
-
-**The cross-platform route**: Windows COM doesn't exist on Linux (WPS for Linux ships no COM/OLE and
-no VBA macros), so this can't be "ported" — it needs a different channel: the **WPS add-in JSAPI**,
-executing actions inside the WPS process.
-
-**What is already delivered**:
-
-- The design and its constraints are written down: four non-negotiable constraints (Windows COM path
-  stays untouched / no sharing with the existing channel / no fault propagation / no latency change),
-  a staged plan, and a risk register (`docs/agents/PLAN-LINUX-BACKEND.md`)
-- The code has a clean insertion point: `wps-multitool-mcp/src/client/wps-client.ts:79` `pickTransport`
-  selects the channel, `:223` `runTransport` runs it — adding a third channel later doesn't touch the
-  two Windows ones
-- The capability probe is in place: `wps-multitool-mcp/scripts/manual/linux-s0-probe.js`. Run it once
-  on a machine with WPS for Linux and you get a coverage table of how many actions the WPS JSAPI
-  actually supports
-
-**Blocked on two hard prerequisites — both are "missing", not "difficult"**:
-
-| Blocker | Status |
+| Feature | Detail |
 |---|---|
-| How to **install and enable** the WPS add-in on Linux | **No public source right now** — WPS's own "add-in availability" documentation covers Windows only |
-| Coverage of WPS JSAPI across the **314 actions** | **Unknown**. Writing a transport layer before measuring is a gamble |
+| Route in one sentence | `wps_route_intent` maps "make me a deck" to the presentation group. When it can't tell, it says so and asks you to rephrase instead of picking something at random |
+| Search tools in Chinese | `wps_search_tools` takes plain Chinese keywords, and results carry `notFor` counter-examples. Six `background` tools and five `animation` tools are told apart by that, not by name |
+| Safety labels on every tool | All 284 carry `readOnly` / `destructive` / `idempotent`. The model can see which one deletes content and which one is safe to repeat |
+| Renames don't break old calls | Aliases carry parameter mappings. After a tool is renamed the old name still works, and its parameters move to the new fields automatically |
 
-**Explicitly out of scope** (so they don't read as "coming eventually"): no Wine, no xdotool-style GUI
-automation, and the read-only status port will never be reused as an execution channel.
+<!-- AUTO:tool-table:start -->
+| App | Tools | Highlights |
+|-----|-------|-----------|
+| Excel | 89 | formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export |
+| Word | 67 | formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references |
+| PPT | 101 | slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export |
+| Common | 27 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
+| Built-in | 8 (already counted above) | connection check, generic method, data cache |
+<!-- AUTO:tool-table:end -->
 
-Until both prerequisites have answers, this project's verification status for Linux stays `static` —
-by the repository's own rule, nothing that hasn't run on real hardware is called "supported".
+Counts are generated from the live registry by `scripts/manual/gen-doc-stats.js` — do not edit by
+hand (CI enforces a diff gate). Same scope as the stats block below: built-in tools are counted
+inside their app group (core inside Common), so the "Built-in" row is not additive.
 
-## Scale
-
-<!-- AUTO:tool-stats:start -->
-- **284 tools** (8 built-in + 276 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
-- Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 101
-- Annotations (measured): read-only 53 / destructive 33 / non-idempotent 105 — coverage 284/284
-<!-- AUTO:tool-stats:end -->
+The full list of all 284 tools (name / default tier / annotations / live-verification status) is in
+**[TOOLS.md](TOOLS.md)** — generated from the registry, so it can never drift from the code.
+Another 31 old-name aliases resolve to their current tools at call time.
 
 ## Architecture
 
@@ -188,24 +112,86 @@ flowchart TB
     C --> W
 ```
 
-~5 s cold start, then 2–3 ms per call. One process per app, so a stuck Writer never blocks Spreadsheets.
+Cold start runs about 5 seconds, bringing up the resident bridge and four resident PowerShell
+processes. After that each call costs 2 to 3 ms. MCP talks to WPS over a named pipe: no HTTP
+polling, and no new script process per call. Twenty format edits in a row cost twenty times two
+milliseconds.
 
-## Capabilities
+One process per app. If Writer wedges, Spreadsheets keeps working.
 
-Counts are generated from the live registry by `scripts/manual/gen-doc-stats.js` — do not edit by hand (CI enforces a diff gate).
-Same scope as the stats block above: built-in tools are counted inside their app group (core inside Common), so the "Built-in" row is not additive.
+Most guards live in exactly one place:
 
-<!-- AUTO:tool-table:start -->
-| App | Tools | Highlights |
-|-----|-------|-----------|
-| Excel | 89 | formulas, data, charts, pivot tables, sheets, formatting, workbooks, rows/columns, comments & protection, image export |
-| Word | 67 | formatting, content, document management, headers/footers, comments, bookmarks, tables, templates, academic layout, revisions, index, cross-references |
-| PPT | 101 | slides, shapes, images, tables, beautify, animations, charts, 3D, data viz, image export |
-| Common | 27 | save, connection check, text selection, format conversion, tool groups, intent routing, batch |
-| Built-in | 8 (already counted above) | connection check, generic method, data cache |
-<!-- AUTO:tool-table:end -->
+| Guard | Where | What it buys |
+|---|---|---|
+| Action exit | `src/client/wps-client.ts:248` `execWpsAction` | All 314 COM actions pass through this one function; nothing else talks to PowerShell directly |
+| Snapshot, warnings, cancellation, error tags | `tool-registry.ts:596`, `wps-client.ts:35`, `mcp-server.ts:158`, `mcp-server.ts:206` | Those four identifiers appear **0 times** under `src/tools/**`. Going from 284 tools to 500 won't miss one |
+| Cancellation signal | `mcp-server.ts:158` (`AsyncLocalStorage`) | Never enters any tool's parameter schema. Adding cancellation touched **zero** of the 284 tools |
+| Fallback retry | `wps-client.ts:261` | Only when the request was never sent. Timeouts are re-thrown as-is instead of guessed at |
 
-The full list of all 306 tools (name / default tier / annotations / live-verification status) is in **[TOOLS.md](TOOLS.md)** — generated from the registry, so it can never drift from the code.
+Transports are pluggable: `pickTransport` picks one, `runTransport` runs it (`wps-client.ts:79` /
+`:223`). Adding a third channel later, say the Linux add-in JSAPI, leaves both Windows paths alone.
+
+The side panel and the MCP server share one bridge. Installing the panel doesn't affect MCP;
+skipping it doesn't either.
+
+## Who it's for
+
+You work in WPS on Windows and you want to edit the document that is already open.
+
+- Writer, Spreadsheets and Presentation are your daily drivers: contracts, papers, reports, decks
+- The target is the file in front of you, comments and tracked changes and headers and unsaved edits included
+- You need the Chinese-language details: table of contents and cross-references, bibliography index, tracked revisions, template field filling
+- You accept that an AI can be wrong, so you want a snapshot before it writes
+
+All 284 tools are built against WPS's COM model (`Ket` / `Kwps` / `Kwpp`). The Chinese document
+conventions, revision tracking and academic layout are tuned for how WPS users actually work.
+For MS Office there are dedicated servers in the community; use whichever fits.
+
+> The cross-platform route goes through the WPS add-in JSAPI. The design is finished; what's
+> missing is a public source on how to install and enable add-ins on Linux. The design document is
+> `docs/agents/PLAN-LINUX-BACKEND.md`, kept alongside the project but not committed.
+
+## Six mechanisms that hold it up
+
+| Problem | Mechanism |
+|---|---|
+| Hundreds of tools blow up the context | Essential tier only; the rest via `wps_search_tools` + `wps_load_tool_group` |
+| Writes fail halfway and nobody can say what changed | `warnings` as a third state: done, but N things didn't land |
+| Look-alike tools silently edit the wrong place | Every tool carries `notFor`; required reading in search results |
+| A broken edit cannot be undone | Auto snapshot before risky writes (`wps_common_batch` built in) + operation log |
+| No idea which tools actually work | Every tool carries its real-machine verification status; the default tier only lists verified ones |
+
+COM is not transactional, so failures carry a retry tag: `[retryable]` resend freely,
+`[do-not-retry · possibly half-applied]` read back first.
+
+## How it gets things right
+
+The previous section lists the problems each mechanism solves. This one is about where those
+mechanisms are attached. Whether a problem is really prevented depends on whether the guard lives in
+284 separate files or on a single choke point.
+
+Every row below cites `file:line` so you can check it yourself. Line numbers match the current HEAD.
+
+| Mechanism | Where it lives | Why it's worth calling out |
+|---|---|---|
+| **One exit for every action** | `wps-multitool-mcp/src/client/wps-client.ts:248` `execWpsAction` | All 314 COM actions (`src/client/action-routes.generated.ts:6`) go through this one function; nothing else talks to PowerShell directly |
+| **Guards don't live inside tools** | snapshot `src/server/tool-registry.ts:596`; warnings extraction `src/client/wps-client.ts:35`; cancellation `src/server/mcp-server.ts:158`; error tags `src/server/mcp-server.ts:206` | Not one line of guard logic in the 284 handlers — those four identifiers appear **0 times** under `src/tools/**`. Four edits cover every tool, now and if the count doubles |
+| **Cancellation needs no tool signature changes** | `src/server/mcp-server.ts:158` (AsyncLocalStorage) | The cancel signal travels through context into the depth of the call chain, never into any tool's parameter schema. Adding cancellation touched **zero** of the 284 tools |
+| **Exactly one fallback path, and only for "never sent"** | `src/client/wps-client.ts:261-268` | Falling back to a direct run happens only when the bridge can't start. Timeout-class errors are **re-thrown as-is, never auto-retried** — the request may already have half-executed inside WPS, and a replay would execute it twice |
+| **One risk criterion for the whole project** | `src/bridge/cancellable.ts:123`, shared with `src/tools/common/batch.ts:38` | Batch and single calls must agree on "is this action destructive". The code comment says it outright: "口径不一致会让人以为单调用也安全" (inconsistent criteria make people think a single call is safe) |
+| **Verification status has exactly two states** | `wps-multitool-mcp/scripts/manual/tool-verification.json:3` (single source of truth; `:5` forbids a third state) | There is no "basically works" tier — a third state always ends up being read as "good enough". The default tier only lists `live` (`src/server/tool-registry.ts:244`) |
+| **Docs must match the ledger** | `wps-multitool-mcp/scripts/manual/skill-content-truth.js:44,136`, gated at `skill-verify.js:131` | If a doc written for AI claims a verification status that contradicts the ledger, the gate goes red. This rule exists because of a real incident: the docs long claimed PPT was unverified while isolated verification had long been green |
+| **Aliases can carry parameter mappings** | `wps-multitool-mcp/scripts/manual/tool-aliases.json:42`, applied at `src/server/tool-registry.ts:586` **before** required-argument validation | When tool families are merged, old parameter names (`preset` → `effect`) are carried along. Renaming without carrying them makes old calls either fail for a missing argument or, worse, **silently ignored and applied with defaults** |
+
+## Scale
+
+<!-- AUTO:tool-stats:start -->
+- **284 tools** (8 built-in + 276 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
+- Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 101
+- Annotations (measured): read-only 53 / destructive 33 / non-idempotent 105 — coverage 284/284
+<!-- AUTO:tool-stats:end -->
+
+<a id="requirements"></a>
 
 ## Install
 
@@ -428,6 +414,43 @@ See [SECURITY.md](SECURITY.md) for the full threat model.
 | "arguments error" | Re-run `scripts/install.ps1`, restart WPS |
 | One-liner hangs | No GitHub access; use the manual install |
 | Anything else | [Open an issue](https://github.com/forkgo430/wps-multitool-mcp/issues) |
+
+<details>
+<summary>Appendix: seven traps in WPS's object model (all measured, all silent)</summary>
+
+<br>
+
+A few places in the COM object model where you pass A, it does B, and nothing throws. All seven
+were hit on real machines and fixed. What they share is that they are silent: the tool returns
+`success`, the document does change, just not the part you asked for.
+
+| # | Trap | What it actually looked like | Where it's fixed |
+|---|---|---|---|
+| 1 | **A mismatched parameter name equals not passing it** | Every slide's transition was **silently set to `fade`** — you asked for push, you got fade. No gate went red, because nothing does | Parameter mapping at `scripts/wps-com.ps1:640` — `'applyTransitionToAll' = @{ effect = 'transition' }`; commit `57ed9a2` |
+| 2 | **An empty shape list isn't an error, it's "the whole slide"** | `Shapes.Range($null)` doesn't throw in WPS — it means the entire slide. `align_objects` reported "objects aligned" while **moving the page's tables, images and placeholders along with them** | Now it fails loudly: `scripts/wps-com.ps1:5417`; `shapeIndices` is now required: `src/tools/ppt/slide.ts:504`; commit `57ed9a2` |
+| 3 | **Single-element arrays get unrolled in a pipeline** | `create_kpi_cards` returned `success` and **built zero cards** — `$cards.Count` came back empty, so the `for` loop never ran once | `scripts/wps-com.ps1:5754` wraps it as `@(if ($p.cards) { $p.cards })`; `create_mini_charts` likewise at `:6004`; commit `57ed9a2` |
+| 4 | **Effect IDs drift between versions** | 30 entrance + 30 emphasis values copied from elsewhere produced **effects that didn't match the presets**. It took 30 tries to calibrate one comparison table | `src/tools/ppt/animation.ts:35` `EFFECT_ID_NAME_MAP` |
+| 5 | **Placeholder indices can't be copied from docs** | `set_slide_subtitle` / `set_slide_content` **always** failed with `placeholder not found`. Measured indices are subtitle `Type=4`, body `2` — the code looked for 2 and 7 respectively, **both wrong** | `scripts/wps-com.ps1:4745`, `:4770`; commit `57ed9a2` |
+| 6 | **`AddEffect`'s third argument is Level, not the trigger** | Adding **one** animation produced **two** identical effects; delete one and another remains, which looks like "it won't delete" | `scripts/wps-com.ps1:5561` passes `msoAnimateLevelNone(0)`; commit `57ed9a2` |
+| 7 | **Looking up a shape by name finds nothing** | `Shapes.Item($shapeName)` while the tool passes `shapeIndex` → an empty object calls `AddEffect` → **every `Shapes`/`Background` access on that page goes Null**, while the deck list still looks fine. **The symptom reads as "69 PPT tools broke at once"**; the root cause is one parameter name | Now both `shapeName` and `shapeIndex` are accepted: `scripts/wps-com.ps1:5528`; commit `0be2617` |
+
+Trap 7 is the one worth remembering: it doesn't break just one tool. It puts the whole page
+into an error state, so every read touching that page fails too, which is easy to misdiagnose
+as "a large chunk of functionality is missing" when the cause is a single parameter name.
+
+All seven are now guarded by assertions, not by anyone's memory:
+
+| Gate | Which traps | How it's shaped |
+|---|---|---|
+| `scripts/manual/param-shape-verify.js` | 1, 7 | Specifically targets "TS passes it, PS doesn't read it". Any new candidate outside the allowlist turns it red; a fixed entry that nobody removed turns it red too (forcing the list to only shrink) |
+| `scripts/manual/ppt-isolated-verify.js` + `docs/agents/PPT_SMOKE_MATRIX.md` | all 7 | A 103-row matrix where **every assertion is built on "something changed", not on "the call didn't throw"**. The judges for the seven above are, in order: read-back / coordinate delta / count delta / count delta / read-back value / count delta / count delta |
+| The matrix's "read-back value" judge | 1, 5 | After calling the target tool, call **a different tool** to read the result back and assert the target string appears in its output. The old "response isn't empty" check was too loose — a tool returning `success` with all-`undefined` content still passed |
+
+> That last family — `success` with `undefined` content (reading `textboxes` while PS returns
+> `textBoxes`, reading `filePath` while PS returns `path`, reading `cardCount` while PS returns
+> `count`) — was **entirely green** under the old judge. Tightening the judge is what exposed it.
+
+</details>
 
 ## License
 
