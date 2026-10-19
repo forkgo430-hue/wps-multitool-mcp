@@ -1,5 +1,41 @@
 # wps-multitool-mcp
 
+## 1.1.0
+
+### Minor Changes
+
+- 11de418: 写入可恢复、验证状态、一键接入、自动发版
+  
+  - 新增 `wps_common_snapshot_create` / `snapshot_list` / `snapshot_restore`：写入前存一份磁盘快照，改坏了能退回去。`wps_common_batch` 检测到破坏性步骤时自动快照，并把快照路径写进结果。
+  - 每个工具标注真机验证状态（`live` / `static`）。默认档改为"基础档 ∩ 真机验证"，PPT 整组（101 个）在真机验证前不占默认名额；`wps_search_tools` 与 `wps_list_tool_groups` 会显示状态。
+  - 新增 `wps-multitool-mcp install` 子命令：自动识别 CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor，写前备份、写后回读校验、失败自动还原。支持 `--dry-run` / `--print`。
+  - 新增生成的 [TOOLS.md](TOOLS.md)：284 个工具的可浏览清单，由注册表产出，CI 做 diff 门禁。
+  - 新增 [SECURITY.md](SECURITY.md)：威胁模型、隐私边界、高风险工具清单；桥的只读状态端点 CORS 由 `*` 收紧为仅 `file://`。
+  - 引入 changesets + GitHub Actions 自动发版（npm trusted publishing，无需每次输 OTP）。
+  - PPT 基础档 8 个工具完成真机验证（新建 / 加页 / 标题 / 备注 / 插图 / 导出图片 / 列文稿），默认档恢复到 40 个。
+  - 修复 `wps_ppt_create_presentation` 永远报"失败: undefined"（PS 侧只回 success 不回 data，handler 却要求两者都有）。
+  - 清理：移除未使用的 `axios` 依赖，以及指向不存在目录的 jest 配置与相关 devDependencies。
+- 9d5712d: PPT 工具族合并与后端修复：动画/切换两族 7 个工具并成 2 个，24 条别名（其中 7 条带参数映射）
+  
+  - `wps_ppt_set_animation` 现在一个工具干两件事：`op:'add'` 加动画（`category` 分入场/强调/退场），`op:'reorder'` 调顺序。旧名 `add_animation` / `add_animation_preset` / `add_emphasis_animation` / `set_animation_order` 全部降为别名，旧名 + 旧参数仍可直接调用。
+  - `wps_ppt_set_transition` 一个工具管单页与整份：`target:'slide'|'all'`，取消切换用 `effect:'none'`（不再需要单独的 remove 工具）。旧名 `set_slide_transition` / `apply_transition_to_all` / `remove_slide_transition` 降为别名。
+  - **别名层新增参数映射**：`tool-aliases.json` 的值可以是 `{ to, rename, set }`，生成 `TOOL_ALIAS_PARAMS` + `applyAliasParams()`，在 `callTool` 的必填校验之前应用。族合并时旧参数名（`preset` / `newOrder` / `target`）若不搬运，旧调用会 `Missing required parameter`，或更糟 —— 参数被静默忽略后按默认值乱改。
+  - 修复 `applyTransitionToAll` 读错参数名（读 `transition` 而工具传 `effect`），导致**所有页的切换效果被静默设成 fade**。
+  - 修复 `setSlideTransition` 把效果名字符串直接赋给 `PpEntryEffect` 枚举会抛错、且不认 `none`（取消切换必炸）；补 `duration`。
+  - `set_animation` 的 `category` 不再是装饰参数：`category:'exit' + effect:'fade'` 会真的合成 `fadeOut` 发给 WPS（此前"加了退场动画"实际加的还是入场）。
+  - 补齐 `addAnimation` 的效果名映射表（入场 30 余种 + 强调 pulse/spin/grow/teeter）；认不出的名字明确报错而不是把坏值喂给 COM。
+  - 移除 `set_transition` 的 `sound` 参数：WPS COM 没有"切换音效"接口（那是 PowerPoint 的 `AddMediaObject2`），留一个永远不生效的参数比不提供更糟。
+  - `auto_layout` / `smart_distribute` 的形状收集与赋值改为逐个 `try/catch`：页面里有 3D/表格/图片时读 `Width/Height` 会抛"指定的转换无效"，此前会让整页排版失败；现在跳过读不到尺寸的形状并在结果里回报 `skipped` 计数。
+  - 工具总数 291 → 284，默认档仍为 40 个。
+
+### Patch Changes
+
+- d957ad1: 每个工具都重新说清了它会不会动你的文档
+  
+  一批工具此前在工具清单里不带任何读写提示，AI 只能去读描述猜它们能不能改文档 —— 猜错的话，动手之前不会问你。现在 284 个工具全部带上了只读 / 破坏性 / 非幂等标记（此前是 266 个）。
+  
+  顺带修掉了一个让这张表时好时坏的问题：生成它的脚本靠"跑一遍看这个工具发了什么命令"来取值，慢的工具有时跑完、有时被判超时，同一个工具这一次和下一次给出的结果不一样。现在这些取值直接查源码写定，不再看这一趟跑得快不快。
+
 ## 1.0.2
 
 ### Patch Changes
