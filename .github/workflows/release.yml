@@ -38,16 +38,18 @@ jobs:
     # 但统一平台能少一类"本地能过 CI 不过"的意外。
     runs-on: windows-latest
 
-    env:
-      # Windows runner 不设 HOME（只用 USERPROFILE），而 changesets/action 在
+    steps:
+      # Windows runner 只设 USERPROFILE，不设 HOME；而 changesets/action 在
       # "setting GitHub credentials" 时会往 $HOME/.netrc 写 GitHub 凭据。
       # HOME 为空 → 拼成 "<cwd>/undefined/.netrc" → ENOENT 直接崩，
-      # 连 publish 那一步都到不了。实测 Release run 就是这样死的：
+      # build / 对账 / publish 一个都没跑到。实测 Release run 就这么死的：
       #   ##[error] ENOENT ... open 'D:\a\...\wps-multitool-mcp\undefined\.netrc'
-      # 给它一个可写目录即可，内容与环境无关。
-      HOME: ${{ runner.temp }}
-
-    steps:
+      #
+      # 为什么写成 step 而不是 job 级 env：runner context 只在 step 级可用，
+      # 写进 job.env 会让 GitHub 在【编译 workflow】时就判无效 —— 表现是
+      # run 没有 job、名字退化成文件路径，看不出真实原因。踩过一次。
+      - name: 设置 HOME（Windows runner 默认不设）
+        run: echo "HOME=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - uses: actions/checkout@v4
         with:
           # changesets/action 需要完整历史才能判断 tag 与版本
