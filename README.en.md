@@ -50,6 +50,59 @@ irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install
 COM is not transactional, so failures carry a retry tag: `[retryable]` resend freely,
 `[do-not-retry · possibly half-applied]` read back first.
 
+## How it gets things right
+
+The table above lists the problems each mechanism solves. This section is about **where those
+mechanisms are attached** — because whether a problem is really prevented depends on whether the
+guard lives in 284 separate files or on a single choke point.
+
+Every row below cites `file:line` so you can check it yourself. Line numbers match the current HEAD.
+
+| Mechanism | Where it lives | Why it's worth calling out |
+|---|---|---|
+| **One exit for every action** | `wps-multitool-mcp/src/client/wps-client.ts:248` `execWpsAction` | All 314 COM actions (`src/client/action-routes.generated.ts:6`) go through this one function; nothing else talks to PowerShell directly |
+| **Guards don't live inside tools** | snapshot `src/server/tool-registry.ts:596`; warnings extraction `src/client/wps-client.ts:35`; cancellation `src/server/mcp-server.ts:158`; error tags `src/server/mcp-server.ts:206` | Not one line of guard logic in the 284 handlers — those four identifiers appear **0 times** under `src/tools/**`. Four edits cover every tool, now and if the count doubles |
+| **Cancellation needs no tool signature changes** | `src/server/mcp-server.ts:158` (AsyncLocalStorage) | The cancel signal travels through context into the depth of the call chain, never into any tool's parameter schema. Adding cancellation touched **zero** of the 284 tools |
+| **Exactly one fallback path, and only for "never sent"** | `src/client/wps-client.ts:261-268` | Falling back to a direct run happens only when the bridge can't start. Timeout-class errors are **re-thrown as-is, never auto-retried** — the request may already have half-executed inside WPS, and a replay would execute it twice |
+| **One risk criterion for the whole project** | `src/bridge/cancellable.ts:123`, shared with `src/tools/common/batch.ts:38` | Batch and single calls must agree on "is this action destructive". The code comment says it outright: "口径不一致会让人以为单调用也安全" (inconsistent criteria make people think a single call is safe) |
+| **Verification status has exactly two states** | `wps-multitool-mcp/scripts/manual/tool-verification.json:3` (single source of truth; `:5` forbids a third state) | There is no "basically works" tier — a third state always ends up being read as "good enough". The default tier only lists `live` (`src/server/tool-registry.ts:244`) |
+| **Docs must match the ledger** | `wps-multitool-mcp/scripts/manual/skill-content-truth.js:44,136`, gated at `skill-verify.js:131` | If a doc written for AI claims a verification status that contradicts the ledger, the gate goes red. This rule exists because of a real incident: the docs long claimed PPT was unverified while isolated verification had long been green |
+| **Aliases can carry parameter mappings** | `wps-multitool-mcp/scripts/manual/tool-aliases.json:42`, applied at `src/server/tool-registry.ts:586` **before** required-argument validation | When tool families are merged, old parameter names (`preset` → `effect`) are carried along. Renaming without carrying them makes old calls either fail for a missing argument or, worse, **silently ignored and applied with defaults** |
+
+## Seven traps in WPS's object model (all measured, none of them raise an error)
+
+The previous section is about where the guards hang. This one is about **WPS itself** — its COM
+object model has a few places where you pass A, it does B, and **nothing throws**. These seven
+were hit one by one on real machines and fixed. They are written down because they share one
+property: **all of them are silent**. The tool returns `success`, the document does change —
+just not the part you asked for.
+
+| # | Trap | What it actually looked like | Where it's fixed |
+|---|---|---|---|
+| 1 | **A mismatched parameter name equals not passing it** | Every slide's transition was **silently set to `fade`** — you asked for push, you got fade. No gate went red, because nothing does | Parameter mapping at `scripts/wps-com.ps1:640` — `'applyTransitionToAll' = @{ effect = 'transition' }`; commit `57ed9a2` |
+| 2 | **An empty shape list isn't an error, it's "the whole slide"** | `Shapes.Range($null)` doesn't throw in WPS — it means the entire slide. `align_objects` reported "objects aligned" while **moving the page's tables, images and placeholders along with them** | Now it fails loudly: `scripts/wps-com.ps1:5417`; `shapeIndices` is now required: `src/tools/ppt/slide.ts:504`; commit `57ed9a2` |
+| 3 | **Single-element arrays get unrolled in a pipeline** | `create_kpi_cards` returned `success` and **built zero cards** — `$cards.Count` came back empty, so the `for` loop never ran once | `scripts/wps-com.ps1:5754` wraps it as `@(if ($p.cards) { $p.cards })`; `create_mini_charts` likewise at `:6004`; commit `57ed9a2` |
+| 4 | **Effect IDs drift between versions** | 30 entrance + 30 emphasis values copied from elsewhere produced **effects that didn't match the presets**. It took 30 tries to calibrate one comparison table | `src/tools/ppt/animation.ts:35` `EFFECT_ID_NAME_MAP` |
+| 5 | **Placeholder indices can't be copied from docs** | `set_slide_subtitle` / `set_slide_content` **always** failed with `placeholder not found`. Measured indices are subtitle `Type=4`, body `2` — the code looked for 2 and 7 respectively, **both wrong** | `scripts/wps-com.ps1:4745`, `:4770`; commit `57ed9a2` |
+| 6 | **`AddEffect`'s third argument is Level, not the trigger** | Adding **one** animation produced **two** identical effects; delete one and another remains, which looks like "it won't delete" | `scripts/wps-com.ps1:5561` passes `msoAnimateLevelNone(0)`; commit `57ed9a2` |
+| 7 | **Looking up a shape by name finds nothing** | `Shapes.Item($shapeName)` while the tool passes `shapeIndex` → an empty object calls `AddEffect` → **every `Shapes`/`Background` access on that page goes Null**, while the deck list still looks fine. **The symptom reads as "69 PPT tools broke at once"**; the root cause is one parameter name | Now both `shapeName` and `shapeIndex` are accepted: `scripts/wps-com.ps1:5528`; commit `0be2617` |
+
+Trap 7 is the one worth remembering: **it doesn't break just one tool.** It puts the whole page
+into an error state, so every read touching that page fails too — which is easy to misdiagnose
+as "a large chunk of functionality is missing" when the cause is a single parameter name.
+
+**All seven are now guarded by assertions**, not by anyone's memory:
+
+| Gate | Which traps | How it's shaped |
+|---|---|---|
+| `scripts/manual/param-shape-verify.js` | 1, 7 | Specifically targets "TS passes it, PS doesn't read it". Any new candidate outside the allowlist turns it red; a fixed entry that nobody removed turns it red too (forcing the list to only shrink) |
+| `scripts/manual/ppt-isolated-verify.js` + `docs/agents/PPT_SMOKE_MATRIX.md` | all 7 | A 103-row matrix where **every assertion is built on "something changed", not on "the call didn't throw"**. The judges for the seven above are, in order: read-back / coordinate delta / count delta / count delta / read-back value / count delta / count delta |
+| The matrix's "read-back value" judge | 1, 5 | After calling the target tool, call **a different tool** to read the result back and assert the target string appears in its output. The old "response isn't empty" check was too loose — a tool returning `success` with all-`undefined` content still passed |
+
+> That last family — `success` with `undefined` content (reading `textboxes` while PS returns
+> `textBoxes`, reading `filePath` while PS returns `path`, reading `cardCount` while PS returns
+> `count`) — was **entirely green** under the old judge. Tightening the judge is what exposed it.
+
 ## Who it's for
 
 **Use it if** you work in WPS on Windows and want to edit the document that is *already open*.
@@ -61,7 +114,8 @@ COM is not transactional, so failures carry a retry tag: `[retryable]` resend fr
 
 **Skip it if** — these are not "missing features", they are the wrong tool.
 
-- macOS / Linux: this path is Windows COM; there is no port planned
+- macOS / Linux: this path is Windows COM. It doesn't run on your machine, and there is a
+  **separately completed design** for a cross-platform route (see "How far this can extend" below)
 - Headless CI / servers: it needs an interactive desktop and a logged-in session with WPS running
 - Batch processing thousands of files: that is a job for file-level libraries (`python-docx` / `openpyxl`)
 - Read-only extraction: if you don't need the app open, a parser is faster and safer
@@ -71,6 +125,40 @@ models (`Ket/Kwps/Kwpp` vs `Excel/Word/PowerPoint`). Supporting both means writi
 verifying it in two environments — double the maintenance for a fraction of the users. Everything here is
 tuned for WPS users (Chinese document conventions, revisions, academic layout). Rather than being mediocre
 on both sides, we go deep on one. For MS Office there are dedicated Excel/PPT MCP servers — pick the right one.
+
+## How far this can extend
+
+**Today exactly one route actually works** (WPS COM automation is Windows-only).
+What follows is a **completed design** and **where it is blocked** — not a roadmap promise.
+
+**The cross-platform route**: Windows COM doesn't exist on Linux (WPS for Linux ships no COM/OLE and
+no VBA macros), so this can't be "ported" — it needs a different channel: the **WPS add-in JSAPI**,
+executing actions inside the WPS process.
+
+**What is already delivered**:
+
+- The design and its constraints are written down: four non-negotiable constraints (Windows COM path
+  stays untouched / no sharing with the existing channel / no fault propagation / no latency change),
+  a staged plan, and a risk register (`docs/agents/PLAN-LINUX-BACKEND.md`)
+- The code has a clean insertion point: `wps-multitool-mcp/src/client/wps-client.ts:79` `pickTransport`
+  selects the channel, `:223` `runTransport` runs it — adding a third channel later doesn't touch the
+  two Windows ones
+- The capability probe is in place: `wps-multitool-mcp/scripts/manual/linux-s0-probe.js`. Run it once
+  on a machine with WPS for Linux and you get a coverage table of how many actions the WPS JSAPI
+  actually supports
+
+**Blocked on two hard prerequisites — both are "missing", not "difficult"**:
+
+| Blocker | Status |
+|---|---|
+| How to **install and enable** the WPS add-in on Linux | **No public source right now** — WPS's own "add-in availability" documentation covers Windows only |
+| Coverage of WPS JSAPI across the **314 actions** | **Unknown**. Writing a transport layer before measuring is a gamble |
+
+**Explicitly out of scope** (so they don't read as "coming eventually"): no Wine, no xdotool-style GUI
+automation, and the read-only status port will never be reused as an execution channel.
+
+Until both prerequisites have answers, this project's verification status for Linux stays `static` —
+by the repository's own rule, nothing that hasn't run on real hardware is called "supported".
 
 ## Scale
 
@@ -161,7 +249,7 @@ and `-InstallDir`.
 </details>
 
 <details>
-<summary><b>MCP config only (no add-in)</b></summary>
+<summary><b>One-command setup: writes your MCP config for you</b></summary>
 
 Don't hand-copy paths — let the program write them:
 
@@ -169,19 +257,156 @@ Don't hand-copy paths — let the program write them:
 node wps-multitool-mcp/dist/index.js install
 ```
 
-It detects CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor (only ones you already have — it never
-creates a directory for you), backs up each config before writing, reads it back to verify, and restores
-the backup if anything fails.
+**What it does**: writes this MCP server's launch entry into each client's config file — one
+command, no hunting for paths, no hand-copying JSON. Standard stdio server (spec 2025-11-25).
+
+**It knows these five clients** (each in its own native format, not one generic template):
+
+| Client | File it writes | Format |
+|---|---|---|
+| CodeBuddy | `~/.codebuddy/mcp.json` | JSON |
+| WorkBuddy | `~/.workbuddy/mcp.json` | JSON |
+| Codex CLI | `~/.codex/config.toml` | TOML |
+| Claude Code | `~/.claude.json` (or `~/.claude/settings.json`) | JSON |
+| Cursor | `~/.cursor/mcp.json` | JSON |
+
+**It only touches clients you already have** — detected by the config file existing, or that
+client's own directory existing. It won't create a directory out of thin air. (There's a trap
+here: the parent directory of `~/.claude.json` *is* your home directory and always exists, so a
+directory-only check would create a `.claude.json` on every machine.)
+For clients it can't detect, it prints a ready-to-paste snippet.
+
+**Three safety properties**:
+
+| Property | What it does |
+|---|---|
+| **Backs up before writing** | Every config it will touch gets a `.bak-<timestamp>` copy in the same directory |
+| **Reads back after writing** | Writes, then **reads the file back and validates it** — JSON must parse and contain our entry under `mcpServers`; TOML must read back its header. **Writing isn't success; being able to read it back is** |
+| **Restores on failure** | If the read-back check fails, it immediately restores from that backup and returns an error, rather than leaving you a broken config |
+
+Two switches:
 
 ```powershell
-node dist/index.js install --dry-run    # show what would change
-node dist/index.js install --print      # print snippets, touch nothing
+node dist/index.js install --dry-run    # rehearse: reports which files it would touch, writes nothing
+node dist/index.js install --print      # prints config snippets only, touches nothing
 ```
 
-For clients it can't detect, it prints a ready-to-paste snippet.
-Standard stdio server (spec 2025-11-25) — works with any MCP client.
+Actual `--print` output (it **only lists clients installed on this machine**; undetected ones are
+never written to disk, only printed as a snippet):
+
+```
+wps-multitool-mcp install
+启动项：node C:\Users\金东权\wps-skills\wps-multitool-mcp\dist\index.js
+
+# CodeBuddy — C:\Users\金东权\.codebuddy\mcp.json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\金东权\\wps-skills\\wps-multitool-mcp\\dist\\index.js"
+      ]
+    }
+  }
+}
+
+# WorkBuddy — C:\Users\金东权\.workbuddy\mcp.json
+{ ... same shape ... }
+```
 
 </details>
+
+## Side panel: the one that lives inside WPS
+
+Besides MCP, there's a **GUI** route: `wps-multitool-addon/` — a WPS **task pane** that loads
+into the sidebar. Pure-CLI tools usually have no such layer.
+
+**What it is**: a WPS add-in (`manifest.xml` + `ribbon.xml` + a task pane page). The ribbon has
+9 buttons in 4 groups; the sidebar panel re-reads bridge status every 2 seconds.
+
+**What it does — read-only status, it does not modify documents**:
+
+| What the panel shows | Where it comes from |
+|---|---|
+| Whether the bridge is up, how many apps are online | The bridge's read-only status endpoint, `http://127.0.0.1:27731/status` |
+| Whether there's an active document | Same |
+| Recent calls | Summaries the bridge records on the named pipe (**no document body**) |
+
+⚠️ **The panel is read-only.** It shows state; it **cannot change documents** — that goes
+through the MCP server side. The "basic tier, 40 tools" text in the panel is hard-coded copy
+(the bridge can't reach the MCP server's registry).
+
+**It shares the same bridge as the MCP server.** That's why the two don't fight: both entry
+points connect to the same named pipe with the same credentials, in any order.
+**Installing the panel doesn't affect MCP, and not installing it doesn't either** —
+they aren't primary/standby, they're two ways to work side by side.
+
+> The task pane runs inside an embedded browser and can't reach a named pipe (a kernel object,
+> visible only within the owning process), so the bridge also opens a **read-only** localhost
+> HTTP endpoint for the panel alone.
+
+**The deployed directory is named `wps-claude-addon_` and was deliberately not renamed** with
+the repo. The add-in directory inside the repo *was* renamed, but the one under
+`%APPDATA%\kingsoft\wps\jsaddons\` was **intentionally left alone**, so existing users notice
+nothing: nothing to reinstall, no config to change, nothing to read up on.
+(Decisions like "should a rename accommodate existing users" read as oversights, so it's
+written down here.)
+
+<details>
+<summary><b>Deploying the add-in by hand</b></summary>
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy-addon.ps1          # deploy
+powershell -ExecutionPolicy Bypass -File scripts\deploy-addon.ps1 -Check   # show differences only
+```
+
+The deploy script uses **Copy-Item, not a symlink** (symlinks need admin rights; it falls back
+to copying), so the target directory is a **copy** — editing the repo without redeploying leaves
+WPS showing the old contents no matter how many times you restart it.
+You must **fully quit WPS and reopen it** afterwards (right-click the taskbar icon and exit,
+not just close the window).
+
+</details>
+
+## Skill package: how an AI learns to use it
+
+`wps-multitool-mcp/skills/wps-multitool/` is one SKILL.md plus 3 reference files, read by an
+AI. **It is not the same thing as "give me JSON and generate a PPT"** — it doesn't describe
+capabilities, it prescribes an **order**.
+
+**Why that distinction matters**: a capability list goes stale (change one tool, the list is
+wrong), but an **order doesn't**. So this skill **deliberately lists no tools**; it only teaches
+how to find, how to choose, and how to confirm. The list is left to the runtime
+(`tools/list` / `wps_search_tools`); the skill only owns the chain.
+**So it doesn't go stale when the next version adds tools.**
+
+**The five-step chain**:
+
+| Step | One line | What it solves |
+|---|---|---|
+| **1. Probe** | `wps_common_status` first — is the bridge up, is WPS running, is there an active document | Skip this and every later step may be wasted work |
+| **2. Pick the group** | `wps_route_intent` maps the request to word / excel / ppt / common | 284 tools are unfindable ungrouped; when the wording is vague it tells you not to guess |
+| **3. Load the group** | Only 40 basic tools are listed by default; the rest need `wps_load_tool_group` | **"That tool doesn't exist" usually means the group isn't loaded**, not that the capability is missing |
+| **4. Choose** | `wps_search_tools` takes plain Chinese keywords, but **`notFor` in the results must be read** | This MCP has many near-identical names (6 × `background`, 5 × `animation`) that you can't tell apart by name. Choosing wrong raises nothing — it just changes the wrong thing |
+| **5. Confirm before writing** | Lock onto the target document first, then snapshot | COM writes are **not transactional — there's no undo**; you may have several documents open, and one window switch writes to the wrong file |
+
+**Three red lines** (each exists because something was hit for real):
+
+- **Never replay a `no-retry` error verbatim** — the returned prefix already says whether a retry
+  is safe. Timeouts and COM errors are in the "may have half-executed" class; replaying blindly
+  writes the same content twice and stacks styles three deep.
+- **Confirm destructive tools with the user first** — every tool in `tools/list` carries
+  `annotations`; the ones with `destructiveHint: true` delete content, drop unsaved edits, or
+  convert formats in place.
+- **`static` does not mean "unusable"** — it means "nobody has verified this one on a real
+  machine". If you use one, tell the user so honestly ("this tool has only static checks"),
+  and **don't treat 'it didn't error' as 'it did the right thing'**.
+
+> One gate in the repo watches this skill specifically: `scripts/manual/skill-verify.js`
+> (**30 assertions**). It reconciles every "group + verification conclusion" in the docs against
+> the `tool-verification.json` ledger — if a doc claims a group was never verified while the
+> ledger holds `live` tools, the gate goes red. That rule came out of a real incident: the docs
+> long claimed "PPT is unverified" while isolated verification had long been green.
 
 ## Privacy
 

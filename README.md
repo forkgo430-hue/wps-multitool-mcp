@@ -49,6 +49,55 @@ irm https://cdn.jsdelivr.net/gh/forkgo430/wps-multitool-mcp@main/scripts/install
 
 COM 不是事务，所以**失败带重试标签**：`[可重试]` 直接重发，`[勿重试·可能已执行一半]` 先读回来再决定。
 
+## 它是怎么做对的
+
+上面那张表讲的是"解决了什么坑"。这一节讲的是**这些机制挂在哪儿**——
+因为同一个坑能不能被真正堵住，取决于它是散在 284 个文件里，还是挂在唯一一个出入口上。
+
+下面每一条都给了 `文件:行号`，可以自己核。行号对应本仓库当前 HEAD。
+
+| 机制 | 挂在哪 | 为什么值得单独说 |
+|---|---|---|
+| **一个动作只有一个出口** | `wps-multitool-mcp/src/client/wps-client.ts:248` `execWpsAction` | 314 个 COM 动作（`src/client/action-routes.generated.ts:6`）全部经由这一个函数，没有第二个地方直连 PowerShell |
+| **守卫不散落在工具里** | 快照 `src/server/tool-registry.ts:596`；warnings 提取 `src/client/wps-client.ts:35`；取消 `src/server/mcp-server.ts:158`；错误前缀 `src/server/mcp-server.ts:206` | 284 个 handler 里**没有一行**守卫逻辑——`src/tools/**` 下这四个标识符各出现 0 次。四处守卫一次加好，工具数量再翻倍也不会漏 |
+| **取消不用改工具签名** | `src/server/mcp-server.ts:158`（AsyncLocalStorage） | 取消信号走上下文传递到链路深处，不进任何工具的参数表。所以加取消能力时，284 个工具**一个都不用改** |
+| **降级只有一处，且只对"压根没送出去"降级** | `src/client/wps-client.ts:261-268` | 桥起不来才退回直跑；超时类错误**如实抛出、不自动重放**——请求可能已在 WPS 里执行了一半，重放就是执行两次 |
+| **风险判据全项目只有一份** | `src/bridge/cancellable.ts:123`，被 `src/tools/common/batch.ts:38` 共用 | 批量与单次调用对"这个动作破不破坏性"的判断必须一致。代码注释原话：「口径不一致会让人以为单调用也安全」 |
+| **验证状态只有 `live` / `static` 两档** | `wps-multitool-mcp/scripts/manual/tool-verification.json:3`（唯一真相源，`:5` 写明不许加第三档） | 没有"基本可用"这种中间态——第三档最后一定会被当成"差不多能用"。默认档只收 `live`（`src/server/tool-registry.ts:244`） |
+| **文档里的验证结论要对得上台账** | `wps-multitool-mcp/scripts/manual/skill-content-truth.js:44,136`，门禁在 `skill-verify.js:131` | 给 AI 看的说明文档里若写了与台账矛盾的验证状态，门禁会红。这条是被一次真实事故逼出来的：文档曾长期声称"PPT 未在真机验证"，而隔离验证早已全绿 |
+| **别名可以带参数映射** | `wps-multitool-mcp/scripts/manual/tool-aliases.json:42`，在 `src/server/tool-registry.ts:586` 于必填校验**之前**应用 | 合并工具族时旧参数名（`preset` → `effect`）会一并搬运。只改名字不搬参数，旧调用要么报缺参数，要么**被静默忽略后按默认值乱改** |
+
+## WPS 对象模型有七个坑（实测，都不报错）
+
+上一节讲的是守卫挂在哪儿。这一节讲 **WPS 自己** —— 它的 COM 对象模型有几处，
+你传了 A，它做 B，**而且不抛异常**。这七条是本项目在真机上逐条踩到并修好的，
+写出来是因为它们的共同点是：**全部静默**。工具回 `success`，文档也变了，
+变的不是你说的那一处。
+
+| # | 坑 | 当时的表现 | 修好的位置 |
+|---|---|---|---|
+| 1 | **参数名对不上就等于没传** | 整份文稿的切换效果被**静默设成 `fade`** —— 你要 push，拿到的是 fade。门禁全绿，因为没有任何一处会红 | `scripts/wps-com.ps1:640` 的参数映射 `'applyTransitionToAll' = @{ effect = 'transition' }`；提交 `57ed9a2` |
+| 2 | **空形状清单不是错误，是"整页"** | `Shapes.Range($null)` 在 WPS 上不报错，含义是整页。`align_objects` 回"对象对齐完成"，实际把**同页的表格、图片、占位符一起搬走了** | 现在空清单**响亮报错**：`scripts/wps-com.ps1:5417`；`shapeIndices` 改为必填：`src/tools/ppt/slide.ts:504`；提交 `57ed9a2` |
+| 3 | **单元素数组在管道里被摊平** | `create_kpi_cards` 回 `success`，但**一张卡片都没建** —— `$cards.Count` 变成空值，`for` 循环一次都不跑 | `scripts/wps-com.ps1:5754` 用 `@(if ($p.cards) { $p.cards })` 兜住；`create_mini_charts` 同理 `:6004`；提交 `57ed9a2` |
+| 4 | **效果 ID 会随版本漂移** | 30 个入场 + 30 个强调值照抄别处，**发出去的效果和预设对不上**。逐个试了 30 次才校准出一张对照表 | `src/tools/ppt/animation.ts:35` `EFFECT_ID_NAME_MAP` |
+| 5 | **占位符编号不能照抄文档** | `set_slide_subtitle` / `set_slide_content` **必然**报 `placeholder not found`。实测编号是：副标题 `Type=4`、正文 `2`，而代码里写的是副标题找 2、正文找 7，**两个都不对** | `scripts/wps-com.ps1:4745`、`:4770`；提交 `57ed9a2` |
+| 6 | **`AddEffect` 第三个参数是 Level，不是触发时机** | 加**一个**动画生成**两条**一模一样的效果；删一条还剩一条，看起来像"删不掉" | `scripts/wps-com.ps1:5561` 传 `msoAnimateLevelNone(0)`；提交 `57ed9a2` |
+| 7 | **按名字取形状取不到** | `Shapes.Item($shapeName)` 而工具传的是 `shapeIndex` → 空对象调 `AddEffect` → **该页 `Shapes`/`Background` 全部报 Null**，而文稿列表仍正常。**症状是"69 个 PPT 工具同时坏了"，根因只有一个** | 现在同时认 `shapeName` 与 `shapeIndex`：`scripts/wps-com.ps1:5528`；提交 `0be2617` |
+
+第 7 条是这七条里最值得记的：**它不只坏一个工具**。它让整页进入异常状态，
+所有碰这一页的读操作一起报错 —— 排查时很容易误判成"大面积功能缺失"，
+而真正的原因只有一个参数名。
+
+**这七条现在都有判据守着**，不是靠人记：
+
+| 门禁 | 守哪几条 | 形状 |
+|---|---|---|
+| `scripts/manual/param-shape-verify.js` | 1、7 | 专治「TS 传了、PS 不读」这一类静默错位。白名单外出现新候选就红；白名单里的条目**修好后忘记删也红**（逼着它只减不增） |
+| `scripts/manual/ppt-isolated-verify.js` + `docs/agents/PPT_SMOKE_MATRIX.md` | 全部 7 条 | 103 行矩阵，**每条判据建在"换了东西"上，不是建在"调用没报错"上**。上表七条对应的判据分别是：读回 / 坐标差 / 数量差 / 数量差 / 读回值 / 数量差 / 数量差 |
+| 矩阵里的「读回值」判据 | 1、5 | 调完目标工具之后，**再调另一个工具把结果读回来**，断言目标字符串出现在它的输出里。原来那条"回包不是空话"太松 —— 回 `success` 但内容全是 `undefined` 的工具照样绿 |
+
+> 「回 success 但内容全是 `undefined`」那一族（读 `textboxes` 但 PS 回的是 `textBoxes`、读 `filePath` 但 PS 回的是 `path`、读 `cardCount` 但 PS 回的是 `count`）在旧判据下**全是绿的**，是收紧判据之后才暴露的。
+
 ## 适用对象
 
 **该用**：Windows 上用 WPS 干活、并且想直接改**已经开着的**文档的人。
@@ -60,12 +109,42 @@ COM 不是事务，所以**失败带重试标签**：`[可重试]` 直接重发�
 
 **不该用**：下面这些场景它帮不上忙，换工具更省事。
 
-- macOS / Linux —— 这条路走的是 Windows COM，没有移植计划
+- macOS / Linux —— 这条路走的是 Windows COM。本机跑不了，**跨平台路线另有一份已完成的设计**（见下方「能扩展到哪」）
 - 无人值守的 CI / 服务器 —— 它需要交互式桌面和一个开着 WPS 的登录会话
 - 成千上万个文件的批处理 —— 那是文件解析类库的活（`python-docx` / `openpyxl`），不是 COM 的强项
 - 只想读文档内容做检索 —— 不需要开 Office 的场景，用解析库更快更稳
 
 **只做 WPS，不做 MS Office** —— 这是取舍，不是遗漏。WPS 与 Office 是两套 COM 对象模型（`Ket/Kwps/Kwpp` vs `Excel/Word/PowerPoint`），双栈意味着每个动作都要写两遍、在两种环境各验一遍，维护成本翻倍而收益只覆盖一部分用户。这套工具的细节（中文公文格式、修订、学术排版）本来就是冲着 WPS 用户去的 —— 与其两头都半桶水，不如一头做到底。用 MS Office 的话，社区里有专门的 Excel/PPT MCP，各取所需。
+
+## 能扩展到哪
+
+**目前只有 Windows 一条路真的通**（WPS 的 COM 自动化只在 Windows 可用）。
+下面说的是**已经写完的设计**和**它卡在哪**，不是路线图承诺。
+
+**跨平台路线**：Windows COM 在 Linux 上不存在（WPS Linux 版无 COM/OLE，也不支持 VBA 宏），
+所以跨平台不能"移植"，只能换一条通道 —— 走 **WPS 加载项的 JSAPI**，在 WPS 进程内执行动作。
+
+**已交付的部分**：
+
+- 设计与约束已写完：不可动摇的四条约束（Windows COM 链路零改动 / 不与现有通道共用 /
+  故障不传导 / 延迟不变）、分批计划、风险登记（`docs/agents/PLAN-LINUX-BACKEND.md`）
+- 代码留了干净的插入点：`wps-multitool-mcp/src/client/wps-client.ts:79` `pickTransport` 选通道、
+  `:223` `runTransport` 跑通道 —— 将来加第三条通道不碰 Windows 那两条
+- 能力探针就位：`wps-multitool-mcp/scripts/manual/linux-s0-probe.js`。
+  在一台装了 WPS Linux 的机器上跑一次，就能得到"WPS JSAPI 到底覆盖多少动作"的覆盖率表
+
+**卡在两个硬前置，都不是"难"，是"缺"**：
+
+| 阻塞 | 现状 |
+|---|---|
+| WPS 加载项在 Linux 上**怎么装、怎么启用** | **目前无公开来源** —— 官方《加载项可用性》文档全文只讲 Windows |
+| WPS JSAPI 对 **314 个动作**的覆盖率 | **未知**。没测过就动手写传输层，是在赌 |
+
+**明确不做的**（免得被当成"迟早会做"）：不做 Wine、不做 xdotool 这类 GUI 自动化、
+不复用只读状态端口做执行通道。
+
+在这两个前置有答案之前，本项目对 Linux 的验证状态一律是 `static` ——
+按仓库自己的规矩，没在真机上跑过的东西不叫"支持"。
 
 ## 规模
 
@@ -154,25 +233,149 @@ powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 </details>
 
 <details>
-<summary><b>只配 MCP，不装加载项</b></summary>
+<summary><b>一键接入：一条命令写好 MCP 配置</b></summary>
 
-不用手抄路径，让程序自己找：
+不想手抄路径，让程序自己找：
 
 ```powershell
 node wps-multitool-mcp/dist/index.js install
 ```
 
-它会自动识别 CodeBuddy / WorkBuddy / Codex / Claude Code / Cursor（只认已经装过的，不会给你新建目录），
-写前备份原文件、写后回读校验，失败自动还原。常用的两个开关：
+**它做什么**：把本 MCP Server 的启动项写进各客户端的配置文件 —— 一条命令，不用找路径、
+不用抄 JSON。标准 stdio 实现（spec 2025-11-25）。
+
+**认这五个客户端**（各写各的原生格式，不是一个通用模板硬套）：
+
+| 客户端 | 写哪个文件 | 格式 |
+|---|---|---|
+| CodeBuddy | `~/.codebuddy/mcp.json` | JSON |
+| WorkBuddy | `~/.workbuddy/mcp.json` | JSON |
+| Codex CLI | `~/.codex/config.toml` | TOML |
+| Claude Code | `~/.claude.json`（或 `~/.claude/settings.json`） | JSON |
+| Cursor | `~/.cursor/mcp.json` | JSON |
+
+**只认已经装过的客户端** —— 判据是配置文件存在，或它专属的目录存在，
+不会给你凭空建一个目录。（这里有个坑：`~/.claude.json` 的父目录就是用户主目录，
+永远存在，只看目录的话会给每台机器都新建一个 `.claude.json`。）
+没识别到的客户端，它会把可直接粘贴的片段打印出来。
+
+**三个安全特性**：
+
+| 特性 | 做什么 |
+|---|---|
+| **写前备份** | 每个要改的配置先存一份 `.bak-<时间戳>`，同目录留底 |
+| **写后回读** | 写完**再读回来校验** —— JSON 要能解析、且 `mcpServers` 里找得到本条目；TOML 要能读回表头。**写完不算成功，读得回来才算** |
+| **失败自动还原** | 回读校验不过，立刻用刚才的备份还原，命令返回失败，而不是留一个坏配置 |
+
+两个开关：
 
 ```powershell
-node dist/index.js install --dry-run    # 只看会改什么
+node dist/index.js install --dry-run    # 演练：只报告会改哪些文件，一个字节都不写
 node dist/index.js install --print      # 只打印配置片段，一个文件都不动
 ```
 
-没识别到的客户端，它会打印可直接粘贴的片段。标准 stdio 实现（spec 2025-11-25），任何 MCP 客户端都能接。
+`--print` 的实际输出（它**只列装了本机的**，未识别的不写盘、只给片段）：
+
+```
+wps-multitool-mcp install
+启动项：node C:\Users\金东权\wps-skills\wps-multitool-mcp\dist\index.js
+
+# CodeBuddy — C:\Users\金东权\.codebuddy\mcp.json
+{
+  "mcpServers": {
+    "wps-multitool-mcp": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\金东权\\wps-skills\\wps-multitool-mcp\\dist\\index.js"
+      ]
+    }
+  }
+}
+
+# WorkBuddy — C:\Users\金东权\.workbuddy\mcp.json
+{ ... 同构 ... }
+```
 
 </details>
+
+## 侧边面板：装在 WPS 里的那一个
+
+除了 MCP，还有一条**带界面的**路：`wps-multitool-addon/` —— 装进 WPS 的**任务窗格**，
+在侧边栏里。纯 CLI 工具通常没有这一层。
+
+**它是什么**：一个 WPS 加载项（`manifest.xml` + `ribbon.xml` + 任务窗格页面）。
+功能区有 9 个按钮分 4 组，侧边栏面板每 2 秒读一次桥的状态。
+
+**能干什么 —— 只读状态，不改文档**：
+
+| 面板显示 | 来源 |
+|---|---|
+| 桥通不通、几个应用在线 | 桥的只读状态端点 `http://127.0.0.1:27731/status` |
+| 有没有活动文档 | 同上 |
+| 最近调用 | 桥在命名管道上记录的**摘要**（不记文档正文） |
+
+⚠️ **面板是只读的**。它显示状态，**不能改文档** —— 改文档走 MCP Server 那边。
+面板里的「工具组 基础 40」是写死的说明文字（桥拿不到 MCP server 的注册表）。
+
+**和 MCP Server 共用同一个桥**。这是它俩不互相打架的原因：两个入口连同一个命名管道、
+同一套凭据，谁先谁后都一样。**装面板不影响 MCP，不装面板也不影响 MCP** ——
+不是主备关系，是并排的两种用法。
+
+> 任务窗格跑在内嵌浏览器里，连不到命名管道（内核对象，仅限本进程），
+> 所以桥额外开了一个**只读**的 localhost HTTP 端点专供面板用。
+
+**部署目录名是 `wps-claude-addon_`，没跟着仓库改名** —— 这是**故意的**。
+仓库里的加载项目录改过名，但 `%APPDATA%\kingsoft\wps\jsaddons\` 下那个
+**刻意保持原样**，为了让已装的用户零感知：不用重装、不用改配置、不用知道这件事。
+（这类"改名要不要照顾老用户"的决定很容易被当成疏漏，所以写在这里。）
+
+<details>
+<summary><b>手动部署加载项</b></summary>
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy-addon.ps1          # 部署
+powershell -ExecutionPolicy Bypass -File scripts\deploy-addon.ps1 -Check   # 只查差异
+```
+
+部署脚本用的是 **Copy-Item 而不是符号链接**（符号链接要管理员权限，失败时回退复制），
+所以目标目录是一份**副本** —— 只改仓库不重新部署，WPS 重启多少次都还是旧内容。
+部署后必须**完全退出 WPS 再重开**（任务栏右键退出，不是关窗口）。
+
+</details>
+
+## skill 包：AI 怎么学着用它
+
+`wps-multitool-mcp/skills/wps-multitool/` 是一个 SKILL.md + 3 份 references，
+给 AI 读。**它和"给我 JSON 生成 PPT"是两种东西** —— 它不描述能力，它规定**顺序**。
+
+**为什么这是区别**：能力清单会过期（工具一改，清单就错），而**顺序不会过期**。
+所以这个 skill **故意不列工具清单**，只教怎么找、怎么选、怎么确认；
+清单交给运行时（`tools/list` / `wps_search_tools`），skill 只管链路。
+**所以它不会因为下一版加工具而作废。**
+
+**五步主链路**：
+
+| 步 | 一句话 | 解决什么 |
+|---|---|---|
+| **1 探活** | 先 `wps_common_status`，看桥通不通、WPS 在不在、有没有活动文档 | 不探活就动手，后面每一步都可能白做 |
+| **2 定组** | `wps_route_intent` 把诉求映射到 word / excel / ppt / common | 284 个工具不分组没法找；表述含糊时它会明说别硬猜 |
+| **3 加载组** | 默认只列 40 个基础工具，其余用 `wps_load_tool_group` 显式加载 | **"工具不存在"通常不是没这个能力，是组没加载** |
+| **4 选型** | `wps_search_tools` 直接用中文搜，**结果里的 `notFor` 必须读** | 本 MCP 有一批近名工具（6 个 `background`、5 个 `animation`），光看名字分不出来。选错不报错，只是把事情改到别处去 |
+| **5 写前确认** | 先锁定目标文档，再建快照 | COM 写入**不是事务，没有撤销**；用户可能开着多个文档，切一次窗口就写到别的文件去了 |
+
+**三条红线**（每条都是因为踩过）：
+
+- **`勿重试` 的错误绝不原样重放** —— 返回值前缀已写明能不能重试。
+  超时和 COM 错误属"可能已执行一半"那类，盲目重放 = 同一段内容写两遍、样式叠三层。
+- **破坏性工具要先跟用户确认** —— `tools/list` 里每个工具都带 `annotations`，
+  `destructiveHint: true` 的那批会删内容、丢未保存改动或原地转换格式。
+- **`static` 不是"不能用"** —— 它是"没人在真机上验证过这一条"。
+  用它做完事，要如实告诉用户"这个工具只做过静态校验"，**别把"没报错"当成"做对了"**。
+
+> 仓库里有一条门禁专门盯着这份 skill：`scripts/manual/skill-verify.js`（**30 条断言**），
+> 会把文档里每个"分组 + 验证结论"与 `tool-verification.json` 台账**逐句对账** ——
+> 文档说某组没验证过、而台账里有 `live` 工具，门禁就红。
+> 这条是被一次真实事故逼出来的：文档曾长期声称"PPT 未在真机验证"，而隔离验证早已全绿。
 
 ## 隐私
 

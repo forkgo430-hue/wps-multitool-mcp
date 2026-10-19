@@ -27,7 +27,7 @@ export const TOOL_ACTIONS: Readonly<Record<string, readonly string[]>> = {
   "wps_common_snapshot_create": [],
   "wps_common_snapshot_list": [],
   "wps_common_snapshot_restore": [],
-  "wps_common_status": ['status'],
+  "wps_common_status": ['wpsStatus'],
   "wps_common_wire_check": ['wireCheck'],
   "wps_convert_format": ['convertFormat'],
   "wps_convert_to_pdf": ['convertToPDF'],
