@@ -87,6 +87,13 @@ jobs:
       - name: Version PR / Publish
         uses: changesets/action@v1
         with:
+          # 这个仓库的 npm 包在【子目录】wps-multitool-mcp/ 里（仓库根是同名目录，
+          # 下面还有 wps-multitool-addon/）。上面每个 step 都单独写了
+          # working-directory，但 changesets/action 默认在仓库根跑 ——
+          # 那里既没有 package.json 也没有 .changeset/，于是它报
+          #   There is no .changeset directory in this project
+          # 连 npm publish 都没开始。必须显式指过去。
+          cwd: wps-multitool-mcp
           # 有 changeset 时：开（或更新）Version Packages PR
           # PR 合并后（没有 changeset 且版本已 bump）：执行 publish
           version: npm run version
