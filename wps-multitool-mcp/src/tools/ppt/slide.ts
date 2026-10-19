@@ -475,8 +475,11 @@ export const alignObjectsDefinition: ToolDefinition = {
   name: 'wps_ppt_align_objects',
   description:
     '[DEPRECATED·改用 wps_ppt_align_shapes] 对齐幻灯片中的对象。\n\n' +
-    '什么时候用：已被 wps_ppt_align_shapes 取代（同一个 alignShapes 动作），' +
-    '且新工具必须给 shapeIndices（要操作哪些形状），旧工具靠 names —— 别两个混着用。',
+    '什么时候用：已被 wps_ppt_align_shapes 取代（同一个 alignShapes 动作、同一套参数），' +
+    '新调用一律用 wps_ppt_align_shapes，别两个混着用。\n\n' +
+    '注意：shapeIndices 现在是**必填**。这个工具原来没有形状清单参数，底层拿到空清单时' +
+    '不是报错，而是"把整页所有形状一起对齐" —— 实测会把同页的表格和图片也搬走，' +
+    '而工具照样回 success。要对齐的形状必须显式列出来。',
   category: ToolCategory.PRESENTATION,
   inputSchema: {
     type: 'object',
@@ -490,17 +493,25 @@ export const alignObjectsDefinition: ToolDefinition = {
         description: '对齐方式',
         enum: ['left', 'center', 'right', 'top', 'middle', 'bottom', 'distribute_h', 'distribute_v'],
       },
+      shapeIndices: {
+        type: 'array',
+        items: { type: 'number' },
+        description:
+          '要参与对齐的形状索引数组（从1开始）。**必填**：不给的话底层会退化成"整页所有形状一起对齐"，' +
+          '把没打算动的表格/图片也搬走。要对齐全部就别用这个工具，用 wps_ppt_align_shapes 并显式列出。',
+      },
     },
-    required: ['slideIndex', 'alignment'],
+    required: ['slideIndex', 'alignment', 'shapeIndices'],
   },
 };
 
 export const alignObjectsHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { slideIndex, alignment } = args as {
+  const { slideIndex, alignment, shapeIndices } = args as {
     slideIndex: number;
     alignment: string;
+    shapeIndices: number[];
   };
 
   try {
@@ -510,7 +521,7 @@ export const alignObjectsHandler: ToolHandler = async (
       count?: number;
     }>(
       'alignShapes',
-      { slideIndex, alignment },
+      { slideIndex, shapeIndices, alignment },
       WpsAppType.PRESENTATION
     );
 

@@ -132,7 +132,12 @@ export const openPresentationHandler: ToolHandler = async (
       success: boolean;
       message: string;
       name: string;
-      filePath: string;
+      // PS openPresentation 回的是 path（和 slideCount）；这里历史上读 filePath → 永远
+      // 打印"路径: undefined"。两个键都接，path 优先。slideCount 也没人读，顺手打出来 ——
+      // "打开了但里面几页"是调用方唯一想知道的下一件事。
+      path?: string;
+      filePath?: string;
+      slideCount?: number;
     }>(
       'openPresentation',
       { filePath, path: filePath },
@@ -140,13 +145,16 @@ export const openPresentationHandler: ToolHandler = async (
     );
 
     if (response.success && response.data) {
+      const realPath = response.data.path ?? response.data.filePath ?? '';
       return {
         id: uuidv4(),
         success: true,
         content: [
           {
             type: 'text',
-            text: `演示文稿打开成功！\n名称: ${response.data.name}\n路径: ${response.data.filePath}`,
+            text:
+              `演示文稿打开成功！\n名称: ${response.data.name}\n路径: ${realPath}` +
+              (response.data.slideCount === undefined ? '' : `\n页数: ${response.data.slideCount}`),
           },
         ],
       };
@@ -597,13 +605,17 @@ export const insertSlideImageHandler: ToolHandler = async (
   };
 
   try {
-    // 参数对齐：insertImage handler 读取 path/filePath，需同时发送
+    // 动作必须是 insertPptImage（PPT 段的），不能是 insertImage ——
+    // wps-com.ps1 里的 insertImage 是【Word】动作（Get-WpsWord + InlineShapes.AddPicture），
+    // PPT 工具调它必然拿不到 $doc，于是每调用一次就报一次"不能对 Null 值表达式调用方法"。
+    // 这个工具从上线起就没成功过一次。
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
+      name?: string;
     }>(
-      'insertImage',
-      { slideIndex, imagePath, path: imagePath, filePath: imagePath, left, top },
+      'insertPptImage',
+      { slideIndex, path: imagePath, filePath: imagePath, left, top },
       WpsAppType.PRESENTATION
     );
 

@@ -27,10 +27,17 @@ import {
 import { wpsClient } from '../../client/wps-client';
 import { WpsAppType } from '../../types/wps';
 
-const TRIGGER_NAME_MAP: Record<string, string> = {
-  onClick: '单击时',
-  withPrevious: '与上一动画同时',
-  afterPrevious: '上一动画之后',
+/**
+ * MsoAnimEffect 编号 → 中文名。表抄自 wps-com.ps1 里 addAnimation 的 $effectMap（同一份真相），
+ * 补上入口/强调里常用的几个。getAnimations 回的是编号，不是名字。
+ * 认不出的就显示"效果 (#编号)"，不猜。
+ */
+const EFFECT_ID_NAME_MAP: Record<number, string> = {
+  1: '出现', 2: '飞入', 3: '百叶窗', 4: '框', 5: '棋盘', 6: '圆形', 7: '爬行',
+  8: '菱形', 9: '溶解', 10: '淡入', 12: '切入', 13: '加号', 14: '随机条',
+  15: '旋转', 22: '擦除', 23: '百叶窗', 26: '弹跳', 28: '摆动', 30: '上浮',
+  34: '升起', 36: '细线', 37: '展开', 38: '鞭状', 46: '收缩', 50: '伸展',
+  53: '缩放', 59: '放大', 62: '强调颜色', 63: '脉冲',
 };
 
 // ==================== 1. 移除动画效果 ====================
@@ -149,11 +156,17 @@ export const getAnimationsHandler: ToolHandler = async (
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
+      // PS 回的是 effectType（MsoAnimEffect 枚举数字）与 duration，
+      // 历史这里按 effect / trigger（字符串）读 —— 两个都不存在，
+      // 列表打印成 "1. [矩形 1] undefined - undefined"，等于没有读回。
+      // 名字可选：认得出就给人看的名字，认不出就老实给数字。
       animations: Array<{
         index: number;
-        effect: string;
-        trigger: string;
         shapeName: string;
+        effectType?: number;
+        effect?: string | number;
+        duration?: number;
+        trigger?: string;
       }>;
     }>(
       'getAnimations',
@@ -178,7 +191,13 @@ export const getAnimationsHandler: ToolHandler = async (
 
       let output = `第 ${slideIndex} 页的动画效果（共 ${animations.length} 个）：\n`;
       animations.forEach((anim) => {
-        output += `  ${anim.index}. [${anim.shapeName}] ${anim.effect} - ${TRIGGER_NAME_MAP[anim.trigger] || anim.trigger}\n`;
+        const rawEffect = anim.effectType ?? anim.effect;
+        const effectText =
+          typeof rawEffect === 'number'
+            ? `${EFFECT_ID_NAME_MAP[rawEffect] ?? '效果'} (#${rawEffect})`
+            : String(rawEffect ?? '未知效果');
+        const dur = anim.duration === undefined || anim.duration === null ? '' : `，时长 ${anim.duration}s`;
+        output += `  ${anim.index}. [${anim.shapeName}] ${effectText}${dur}\n`;
       });
       output += `要调顺序用 wps_ppt_set_animation(op='reorder')，要删某一条用 wps_ppt_remove_animation。`;
 

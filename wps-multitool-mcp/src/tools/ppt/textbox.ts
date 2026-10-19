@@ -73,7 +73,9 @@ export const getTextboxesHandler: ToolHandler = async (
 ): Promise<ToolCallResult> => {
   const { slideIndex } = args as { slideIndex: number };
   try {
-    const response = await wpsClient.executeMethod<{ textboxes: unknown[] }>(
+    // PS 回的键是 textBoxes（大写 B），这里历史上读的是 textboxes → 永远拿到 undefined，
+    // 打印出来永远是"第N页文本框: []"，读回形同虚设。两个键都接。
+    const response = await wpsClient.executeMethod<{ textBoxes?: unknown[]; textboxes?: unknown[] }>(
       'getTextBoxes',
       { slideIndex },
       WpsAppType.PRESENTATION
@@ -81,7 +83,8 @@ export const getTextboxesHandler: ToolHandler = async (
     if (!response.success) {
       return { id: uuidv4(), success: false, content: [{ type: 'text', text: `获取文本框列表失败: ${response.error}` }], error: response.error };
     }
-    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `第${slideIndex}页文本框:\n${JSON.stringify(response.data?.textboxes || [], null, 2)}` }] };
+    const list = response.data?.textBoxes ?? response.data?.textboxes ?? [];
+    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `第${slideIndex}页文本框（${list.length} 个）:\n${JSON.stringify(list, null, 2)}` }] };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: `获取文本框列表出错: ${errMsg}` }], error: errMsg };

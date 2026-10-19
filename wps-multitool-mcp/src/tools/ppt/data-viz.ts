@@ -243,7 +243,9 @@ export const createMiniChartsHandler: ToolHandler = async (
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
-      chartCount: number;
+      // PS createMiniCharts 回的是 count；chartCount 是历史键，两个都接（chartCount 优先）。
+      count?: number;
+      chartCount?: number;
     }>(
       'createMiniCharts',
       { slideIndex, data },
@@ -257,7 +259,7 @@ export const createMiniChartsHandler: ToolHandler = async (
         content: [
           {
             type: 'text',
-            text: `迷你图表创建成功！\n幻灯片: 第 ${slideIndex} 页\n图表数量: ${response.data.chartCount} 个\n数据组数: ${data.length}`,
+            text: `迷你图表创建成功！\n幻灯片: 第 ${slideIndex} 页\n图表数量: ${response.data.chartCount ?? response.data.count ?? 0} 个\n数据组数: ${data.length}`,
           },
         ],
       };

@@ -69,6 +69,10 @@ const LIMIT = (() => {
  * 从 markdown 表里解析出 [{ tool, args, judge, note }]。
  * 只认 §2 主表的行（`| wps_xxx | \`{...}\` | 判据 | 备注 |`）。
  * 备注里的【末段】用于分段，所以必须原样带出来。
+ *
+ * 第 9 轮：矩阵多了第 5 列（setup / check），多步用例与"读回值"判据**本脚本跑不了**。
+ * 顺序跑本来就分不清"工具坏"和"靶子已经不是当初那个靶子"（第 7 轮的教训），
+ * 所以这里不猜、不硬跑 —— 直接跳过并说明该走 scripts/manual/ppt-isolated-verify.js。
  */
 function parseMatrix(file) {
   const text = fs.readFileSync(file, 'utf8');
@@ -76,11 +80,20 @@ function parseMatrix(file) {
   for (const line of text.split(/\r?\n/)) {
     if (!line.startsWith('| wps_')) continue;
     const cells = line.split('|').map((s) => s.trim());
-    // ['', tool, args, judge, note, ''] —— 备注可能为空
+    // ['', tool, args, judge, note, extra, ''] —— 备注可能为空
     const tool = cells[1];
     const rawArgs = (cells[2] || '').replace(/^`|`$/g, '').trim() || '{}';
     const judge = cells[3] || '';
     const note = cells[4] || '';
+    const extraRaw = (cells[5] || '').replace(/`/g, '').trim();
+    if (extraRaw) {
+      rows.push({ tool, args: null, judge: '交给隔离验证器', note: '第 5 列有多步前置/读回，顺序版跑不了：' + extraRaw });
+      continue;
+    }
+    if (judge.includes('读回值')) {
+      rows.push({ tool, args: null, judge: '交给隔离验证器', note: '「读回值」判据要第 5 列的 check，顺序版跑不了' });
+      continue;
+    }
     let args;
     try {
       args = JSON.parse(rawArgs);

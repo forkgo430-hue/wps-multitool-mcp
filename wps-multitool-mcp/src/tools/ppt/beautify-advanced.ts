@@ -377,7 +377,10 @@ export const createKpiCardsHandler: ToolHandler = async (
     const response = await wpsClient.executeMethod<{
       success: boolean;
       message: string;
-      cardCount: number;
+      // PS createKpiCards 回的是 count；cardCount 是历史键，两个都接（cardCount 优先）。
+      count?: number;
+      cardCount?: number;
+      cards?: string[];
     }>(
       'createKpiCards',
       { slideIndex, data },
@@ -385,7 +388,8 @@ export const createKpiCardsHandler: ToolHandler = async (
     );
 
     if (response.success && response.data) {
-      let output = `KPI卡片创建成功！\n幻灯片: 第 ${slideIndex} 页\n卡片数量: ${response.data.cardCount} 个\n\n指标列表：\n`;
+      const n = response.data.cardCount ?? response.data.count ?? 0;
+      let output = `KPI卡片创建成功！\n幻灯片: 第 ${slideIndex} 页\n卡片数量: ${n} 个\n\n指标列表：\n`;
       data.forEach((item) => {
         const trendIcon = item.trend === 'up' ? '↑' : item.trend === 'down' ? '↓' : '→';
         output += `- ${item.title}: ${item.value} ${item.trend ? trendIcon : ''}\n`;

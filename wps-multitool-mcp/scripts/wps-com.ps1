@@ -4477,7 +4477,13 @@ switch ($Action) {
             if ($txt.Length -gt 90) { $txt = $txt.Substring(0, 90) + "…" }
             $hasTxt = $false
             if ($shape.HasTextFrame) { $hasTxt = $true }
-            $shapes += @{ name = $shape.Name; type = "$($shape.Type)"; hasText = $hasTxt; text = $txt }
+            # placeholderType：Shape.Type 对所有占位符都是 14（msoPlaceholder），没法区分标题/副标题/正文。
+            # 而 setSlideSubtitle / setSlideContent 正是按 PlaceholderFormat.Type 找占位符的 ——
+            # 不报出来的话，那两个工具报"placeholder not found"时根本无从判断是哪种版式能写。
+            # ppPlaceholder 枚举：1=Title 2=Body 3=CenterTitle 4=Subtitle 7=Object
+            $phType = ""
+            try { if ($shape.Type -eq 14) { $phType = "$($shape.PlaceholderFormat.Type)" } } catch {}
+            $shapes += @{ name = $shape.Name; type = "$($shape.Type)"; placeholderType = $phType; hasText = $hasTxt; text = $txt }
         }
         Output-Json @{ success = $true; data = @{ index = $index; slideIndex = $index; shapeCount = $slide.Shapes.Count; shapesCount = $slide.Shapes.Count; shapes = $shapes; layout = "$($slide.Layout)" } }
     }
@@ -4736,13 +4742,15 @@ switch ($Action) {
             $shape = $slide.Shapes.Item($i)
             $placeholderType = $null
             try { $placeholderType = $shape.PlaceholderFormat.Type } catch {}
-            if ($placeholderType -eq 2) {
+            if ($placeholderType -eq 4) {
                 $shape.TextFrame.TextRange.Text = if ($p.subtitle) { $p.subtitle } else { "" }
                 Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex; subtitle = $p.subtitle } }
                 return
             }
         }
-        Output-Json @{ success = $false; error = "Subtitle placeholder not found" }
+        # 这两个工具的占位符编号是按 PlaceholderFormat.Type 匹配的，编号是【实测】出来的，
+        # 不是查表抄的（WPS 的版式与 PowerPoint 不完全一样）。见 getSlideInfo 的 placeholderType 字段。
+        Output-Json @{ success = $false; error = "[勿重试·先换版式] 本页没有副标题占位符（需要 PlaceholderFormat.Type=4）。WPS 上只有 layout='title' 的页有；空白页/标题+正文页没有。用 wps_ppt_add_slide(layout:'title') 新建一页，或改用 wps_ppt_set_slide_content 写正文占位符" }
     }
 
     "setSlideContent" {
@@ -4755,13 +4763,17 @@ switch ($Action) {
             $shape = $slide.Shapes.Item($i)
             $placeholderType = $null
             try { $placeholderType = $shape.PlaceholderFormat.Type } catch {}
-            if ($placeholderType -eq 7) {
+            # 2 = ppPlaceholderBody，7 = ppPlaceholderObject。
+            # 实测 WPS 的 title_content 版式给的是 2（不是 PowerPoint 常见的 7），
+            # 而这里原来只认 7 —— 于是"标题+正文"版式的页永远报 Content placeholder not found。
+            # two_column / comparison 版式还有多个正文占位符，取第一个。
+            if ($placeholderType -eq 2 -or $placeholderType -eq 7) {
                 $shape.TextFrame.TextRange.Text = if ($p.content) { $p.content } else { "" }
-                Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex } }
+                Output-Json @{ success = $true; data = @{ slideIndex = $slideIndex; content = $p.content } }
                 return
             }
         }
-        Output-Json @{ success = $false; error = "Content placeholder not found" }
+        Output-Json @{ success = $false; error = "[勿重试·先换版式] 本页没有正文占位符（需要 PlaceholderFormat.Type=2 或 7）。WPS 上 layout='title_content' / 'two_column' / 'comparison' 的页有；空白页没有。用 wps_ppt_add_slide(layout:'title_content') 新建一页，或改用 wps_ppt_add_textbox 自己放一个文本框" }
     }
 
     "addShape" {
@@ -5397,6 +5409,14 @@ switch ($Action) {
         $alignMap = @{ left = 1; center = 2; right = 3; top = 4; middle = 5; bottom = 6 }
         $align = $alignMap[$p.alignment]
         if ($null -eq $align) { $align = 1 }
+        # 没给形状清单就【不要】替用户选。
+        # Shapes.Range($null) 在 WPS 上不是报错，是"整页所有形状"——
+        # 于是一个只想对齐两个形状的调用，会把表格、图片、母版继承的占位符一起搬走，
+        # 而且工具回 success。宁可响亮失败（[勿重试·先改参数]），也不要静默改整页。
+        if (-not $p.names -or @($p.names).Count -eq 0) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] alignShapes 需要 shapeIndices（要参与对齐的形状序号数组）。不给就整页对齐会误伤表格/图片，请传 shapeIndices（1 起）" }
+            return
+        }
         $range = $slide.Shapes.Range($p.names)
         $range.Align($align, 1)
         Output-Json @{ success = $true; data = @{ alignment = $p.alignment } }
@@ -5483,8 +5503,12 @@ switch ($Action) {
         } else {
             51
         }
+        $before = $slide.Shapes.Count
         $shape = $slide.Shapes.AddChart($chartType, $left, $top, $width, $height)
-        Output-Json @{ success = $true; data = @{ name = $shape.Name; chartType = $chartType } }
+        # 回 chartIndex（= 插入后的形状总数，因为 AddChart 总是追加在最后）。
+        # TS 的 insertPptChartHandler 打印的是 data.chartIndex，原来不返回 → 用户永远看到
+        # "图表索引: undefined"，而后续 set_ppt_chart_data / set_ppt_chart_style 恰恰靠它定位图表。
+        Output-Json @{ success = $true; data = @{ name = $shape.Name; chartType = $chartType; chartIndex = $slide.Shapes.Count; previousShapeCount = $before } }
     }
 
     "addAnimation" {
@@ -5531,7 +5555,10 @@ switch ($Action) {
             return
         }
         try {
-            $slide.TimeLine.MainSequence.AddEffect($shape, $effectId, 1) | Out-Null
+            # 第三个参数是 Level（文本级别），不是"触发时机"。对没有文本的形状必须传
+            # msoAnimateLevelNone(0)：传 1 会让 WPS 建出【两条】一模一样的效果
+            # （实测 count=2，getAnimations 里两条同名同效果），删一条还剩一条，看起来像删不掉。
+            $slide.TimeLine.MainSequence.AddEffect($shape, $effectId, 0) | Out-Null
         } catch {
             Output-Json @{ success = $false; error = "添加动画失败：$(Get-CallError $_)" }
             return
@@ -5720,7 +5747,11 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
 
-        $cards = if ($p.cards) { $p.cards } else { @() }
+        # `@(...)` 不是多余的：写成 `$cards = if ($p.cards) { $p.cards }` 时，
+        # PowerShell 会把【单元素】数组在管道里摊平，$cards 变成裸 PSCustomObject，
+        # 它的 .Count 是空的 → 下面的 for 一次都不跑 → 工具返回 success 却一个形状都没建。
+        # （createMiniCharts / smartDistribute 是同一个写法，同一个坑。）
+        $cards = @(if ($p.cards) { $p.cards })
         $startX = if ($p.startX) { $p.startX } else { 50 }
         $startY = if ($p.startY) { $p.startY } else { 350 }
         $cardWidth = if ($p.cardWidth) { $p.cardWidth } else { 150 }
@@ -5970,7 +6001,7 @@ switch ($Action) {
         $slideIndex = if ($p.slideIndex) { $p.slideIndex } else { 1 }
         $slide = $pres.Slides.Item($slideIndex)
 
-        $items = if ($p.items) { $p.items } else { @() }
+        $items = @(if ($p.items) { $p.items })
         $startX = if ($p.startX) { $p.startX } else { 50 }
         $startY = if ($p.startY) { $p.startY } else { 400 }
         $itemWidth = if ($p.itemWidth) { $p.itemWidth } else { 100 }
@@ -5985,7 +6016,9 @@ switch ($Action) {
             $colorValue = Convert-HexColorToRgbInt([string]$color)
 
             $valueBox = $slide.Shapes.AddTextbox(1, $x, $startY, $itemWidth, 30)
-            $valueBox.TextFrame.TextRange.Text = if ($item.value) { $item.value } else { "0" }
+            # [string] 不是多余的：data[].value 从 JSON 过来是 Int32，
+            # 直接赋给 TextRange.Text 会抛"指定的转换无效"（同 setPptChartData 里 Value2 的坑）。
+            $valueBox.TextFrame.TextRange.Text = [string]$(if ($item.value) { $item.value } else { "0" })
             $valueBox.TextFrame.TextRange.Font.Size = 20
             $valueBox.TextFrame.TextRange.Font.Bold = $true
             if ($null -ne $colorValue) { $valueBox.TextFrame.TextRange.Font.Color.RGB = $colorValue }
@@ -6141,7 +6174,7 @@ switch ($Action) {
         $slide = $pres.Slides.Item($slideIndex)
 
         $direction = if ($p.direction) { $p.direction } else { "horizontal" }
-        $shapeNames = if ($p.shapes) { $p.shapes } else { @() }
+        $shapeNames = @(if ($p.shapes) { $p.shapes })
         $shapes = @()
 
         if ($shapeNames.Count -gt 0) {

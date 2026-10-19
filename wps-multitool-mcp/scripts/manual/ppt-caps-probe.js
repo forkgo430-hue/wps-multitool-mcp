@@ -260,7 +260,15 @@ const B2_TOOLS = [
 
     if (mine.length >= 3) {
       const beforeLeft = mine.map((s) => s.left);
-      const al = await call('wps_ppt_align_objects', { slideIndex: SHAPE_SLIDE, alignment: 'left' });
+      // 第 9 轮：align_objects 的 shapeIndices 变成必填 —— 以前不给清单时，底层
+      // Shapes.Range($null) 退化成"整页所有形状一起对齐"，连表格/图片都搬走。
+      // 现在 PS 侧对空清单直接报错，所以这里必须把要动的形状显式列出来。
+      // 下面的 collateral 观测保留：它现在应该恒为 0，是"修好了没有"的可判定证据。
+      const al = await call('wps_ppt_align_objects', {
+        slideIndex: SHAPE_SLIDE,
+        alignment: 'left',
+        shapeIndices: mine.map((s) => s.index),
+      });
       const afterAll = parseShapes(txt(await call('wps_ppt_get_shapes', { slideIndex: SHAPE_SLIDE })));
       const afterMine = afterAll.filter((s) => s.top === 260).sort((a, b) => a.index - b.index).map((s) => s.left);
       // 顺带数一下"没被要求的形状"有没有被一起动 —— 这是 align 系列能不能指定子集的关键
