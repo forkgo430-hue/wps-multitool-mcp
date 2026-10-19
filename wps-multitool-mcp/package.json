@@ -37,6 +37,14 @@
     "automation"
   ],
   "author": "赢容",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forkgo430/wps-multitool-mcp.git"
+  },
+  "homepage": "https://github.com/forkgo430/wps-multitool-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/forkgo430/wps-multitool-mcp/issues"
+  },
   "contributors": [],
   "license": "MIT",
   "dependencies": {
