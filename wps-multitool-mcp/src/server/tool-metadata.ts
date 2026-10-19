@@ -20,10 +20,25 @@
  * 别名是机器按词根拼的，会串味（搜"域"会命中"区域"，搜"组合"会命中 load_tool_group）。
  * 所以 searchTools 里 name(100) > description(40) > alias(25)，别让派生词压过人写的描述。
  *
+ * 查询侧扩展（第 9 轮补的，也是本文件最容易被忽略的一半）
+ * -------------------------------------------------------
+ * 上面这张词表一直是【单向】的：英文词根 → 中文。它只用来拼别名，**从不参与查询**，
+ * 于是搜"排版""格式设置"这类用户最常用的说法一个都搜不到 —— 工具名是英文、描述里
+ * 也不一定有"排版"两个字。词表明明在，却没接到查询上，这是最大的浪费。
+ * 现在补了两条通路（expandQuery）：
+ *   中文说法 → 反查英文词根（"背景色"→background/color）
+ *   英文词根 → 正查中文说法（"layout"→版式/布局）
+ * 扩展命中在 searchTools 里单列一档 matchedBy='synonym'，分比 alias 还低（20/18/12），
+ * 且只在原词【没命中】时才上场。理由：扩展是猜的，绝不能挤掉人写的描述与别名。
+ * QUERY_SYNONYMS 只收真同义不收上下位（"排版→格式化"收，"排版→美化"不收），
+ * 噪声的代价是把正确结果挤出 limit，那比搜不到更糟。
+ *
  * 设计取舍
  * --------
  * 不搞 embedding / 向量检索：近名工具的区别是"哪个管哪一页/哪种背景"这种事实差异，
  * 靠相似度算不出来，只能显式写；引入模型预分类属于过度设计。
+ * 中文纠偏（suggestSimilar）也只做字符 bigram 覆盖率，不做向量：错名多是错一两个字，
+ * bigram 足够，且不需要任何模型依赖。
  */
 
 import { ToolDefinition } from '../types/tools';
@@ -669,4 +684,84 @@ export function getToolMeta(def: ToolDefinition): ToolMeta {
 /** 清空缓存（测试用；生产里工具在启动时注册完就不再变） */
 export function __clearToolMetaCache(): void {
   cache.clear();
+}
+
+/**
+ * 反向索引：中文说法 → 英文词根。
+ *
+ * 为什么要有它（第 9 轮）
+ * ----------------------
+ * 上面的 TOKEN_ZH 是【正向】的：英文词根 → 中文。它只用来拼别名，从不参与查询。
+ * 于是搜"设置背景"能命中（描述里有），但搜"排版"一个都搜不到 ——
+ * 因为工具名是 `wps_word_set_paragraph_format` 这类英文，描述里也不一定有"排版"两个字。
+ * 这就是"别名是锦上添花、查询侧零语言学"的根因：词表存在，但没有接到查询上。
+ */
+const ZH_TO_TOKEN = new Map<string, string[]>();
+for (const [tok, zs] of Object.entries(TOKEN_ZH)) {
+  for (const z of zs) {
+    if (!z || /^[a-z0-9]+$/.test(z)) continue;
+    const arr = ZH_TO_TOKEN.get(z) || [];
+    if (!arr.includes(tok)) arr.push(tok);
+    ZH_TO_TOKEN.set(z, arr);
+  }
+}
+
+/**
+ * 任务级同义词：只收**真同义**，不收上下位。
+ *
+ * 这条界线很重要。"排版 → 格式化"是同义（同一件事两种说法）；
+ * "排版 → 美化"不是同义（beautify 会改配色和字号，用户说排版时不该被塞一个 beautify）；
+ * "表格 → 合并单元格"更不是。所以这张表故意短，宁可少扩展也不引入噪声 ——
+ * 噪声的代价是正确结果被挤出 limit，那比搜不到更糟。
+ */
+const QUERY_SYNONYMS: Record<string, string[]> = {
+  排版: ['格式化', '格式设置', '版式'],
+  版式: ['排版', '布局'],
+  布局: ['排版', '版式'],
+  格式: ['格式化', '排版'],
+  目录: ['toc', '大纲'],
+  背景色: ['背景', 'background', '底色'],
+  底色: ['背景', '背景色'],
+  表格: ['table', '表格单元格'],
+  页眉: ['页眉页脚', 'header'],
+  页脚: ['页眉页脚', 'footer'],
+  合并单元格: ['合并', 'merge'],
+  拆分: ['分割', '拆分单元格'],
+  目录级别: ['大纲级别'],
+  替换: ['查找替换', 'replace'],
+  查找: ['搜索', 'find'],
+  提取: ['抽取', '导出'],
+  批量: ['批量处理', '多个'],
+  模板: ['套用模板', '模板'],
+  居中: ['对齐', 'center'],
+  加粗: ['粗体', 'bold'],
+  斜体: ['italic'],
+  下划线: ['underline'],
+  页边距: ['margin', '边距'],
+  纸张: ['页面设置', 'pagesetup'],
+  压缩: ['压缩图片', 'compress'],
+  拆字: ['拆分字符', '分散对齐'],
+  水印: ['水印图片'],
+  目录刷新: ['更新目录'],
+  编号: ['编号列表', 'list'],
+  项目符号: ['bullet', '符号列表'],
+};
+
+/**
+ * 把用户查询扩展成一组等价查询词（含原词）。
+ *
+ * 三条来源，都很便宜：
+ *   1) 命中 QUERY_SYNONYMS → 人工审过的同义词
+ *   2) 该词是 TOKEN_ZH 里的中文说法 → 反查英文词根（"背景色"→color/style）
+ *   3) 该词本身是英文词根 → 展开成它的中文说法（"layout"→排版/布局）
+ * 上限 6 个词：再多就是噪声而不是帮助。
+ */
+export function expandQuery(keyword: string): string[] {
+  const raw = (keyword || '').trim().toLowerCase();
+  if (!raw) return [];
+  const out = new Set<string>([raw]);
+  for (const s of QUERY_SYNONYMS[raw] || []) out.add(s.toLowerCase());
+  for (const tok of ZH_TO_TOKEN.get(raw) || []) out.add(tok);
+  if (TOKEN_ZH[raw]) for (const z of TOKEN_ZH[raw]) out.add(z.toLowerCase());
+  return [...out].slice(0, 6);
 }

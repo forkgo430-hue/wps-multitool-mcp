@@ -30,9 +30,38 @@ import {
   InvalidParamsError,
   McpError,
 } from '../utils/error';
-import { getToolMeta } from './tool-metadata';
+import { getToolMeta, expandQuery } from './tool-metadata';
 import { resolveToolAlias, isToolAlias, applyAliasParams, TOOL_ALIASES } from './tool-aliases.generated';
 import { withAutoSnapshot } from './auto-snapshot';
+
+/**
+ * 中文相似度用的字符 bigram 集合。
+ * 为什么要字符级而不是词级：中文没有空格，"合并单元格"没法切词；而模型写错的名字
+ * 往往只错一两个字，字符 bigram 对这种错字最稳。
+ */
+function bigramSet(text: string): Set<string> {
+  const clean = (text || '').replace(/[\s\p{P}]+/gu, '');
+  const out = new Set<string>();
+  if (clean.length === 1) out.add(clean);
+  for (let i = 0; i + 1 < clean.length; i++) out.add(clean.slice(i, i + 2));
+  return out;
+}
+
+/**
+ * 覆盖率：查询的 bigram 有多少能在目标里找到（0~1）。
+ *
+ * 为什么不用 Dice：Dice 的分母两侧长度相近才合理，而这里查询只有 4 个 bigram、
+ * 工具描述有几百个 —— 分母被描述撑爆后连"一字不差"都只有 0.03，阈值根本没法定。
+ * 纠偏要回答的是"模型写的这个名字，有多少能在候选里找到"，那是覆盖率的问题。
+ */
+function coverage(query: Set<string>, target: string): number {
+  if (!query.size) return 0;
+  const t = bigramSet(target);
+  if (!t.size) return 0;
+  let hit = 0;
+  for (const g of query) if (t.has(g)) hit++;
+  return hit / query.size;
+}
 
 /** 搜索命中项（比之前多了别名与正/反例） */
 export interface ToolSearchHit {
@@ -344,6 +373,11 @@ export class ToolRegistry {
     // 正/反例默认只给前 5 条命中：285 个工具全带上会撑爆上下文
     const hintTop = opts.hints === false ? 0 : 5;
     const out: Array<ToolSearchHit & { score: number; matchedBy: string }> = [];
+    // 查询扩展（第 9 轮）：同义词/反查词根也算命中，但分比 alias 还低一档 ——
+    // 扩展词本身就是猜的，必须排在人写的描述之后。matchedBy 单独标 synonym，
+    // 这样搜索结果自带解释（"这条是靠扩展词命中的"），便于门禁和排障。
+    const terms = expandQuery(kw);
+    const isSynonymOnly = terms.length > 1;
 
     for (const t of this.tools.values()) {
       const def = t.definition;
@@ -359,20 +393,44 @@ export class ToolRegistry {
       if (!kw) {
         score = 1;
         matchedBy = 'all';
-      } else if (name === kw) {
-        score = 100;
-        matchedBy = 'name';
-      } else if (name.includes(kw)) {
-        score = 60;
-        matchedBy = 'name';
-      } else if (desc.includes(kw)) {
-        score = 40;
-        matchedBy = 'description';
-      } else if (aliasBlob.includes(kw)) {
-        // 别名是【机器拼出来的】，质量不如人写的描述，所以分排最低：
-        // 实测 66 个中文关键词里只有 17 个靠别名多捞到东西，别让它压过真命中。
-        score = 25;
-        matchedBy = 'alias';
+      } else {
+        // 原词按原权重匹配
+        if (name === kw) {
+          score = 100;
+          matchedBy = 'name';
+        } else if (name.includes(kw)) {
+          score = 60;
+          matchedBy = 'name';
+        } else if (desc.includes(kw)) {
+          score = 40;
+          matchedBy = 'description';
+        } else if (aliasBlob.includes(kw)) {
+          // 别名是【机器拼出来的】，质量不如人写的描述，所以分排最低：
+          // 实测 66 个中文关键词里只有 17 个靠别名多捞到东西，别让它压过真命中。
+          score = 25;
+          matchedBy = 'alias';
+        }
+        // 原词没命中，才让扩展词上场（不会覆盖真命中，只补空缺）
+        if (score === 0 && isSynonymOnly) {
+          for (const term of terms) {
+            if (term === kw) continue;
+            if (name === term || name.includes(term)) {
+              score = 20;
+              matchedBy = 'synonym';
+              break;
+            }
+            if (desc.includes(term)) {
+              score = 18;
+              matchedBy = 'synonym';
+              break;
+            }
+            if (aliasBlob.includes(term)) {
+              score = 12;
+              matchedBy = 'synonym';
+              break;
+            }
+          }
+        }
       }
       if (score === 0) continue;
 
@@ -432,23 +490,37 @@ export class ToolRegistry {
     name: string,
     limit: number
   ): Array<{ name: string; group: string; loaded: boolean }> {
-    const tokens = (name || '')
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length > 2);
-    if (!tokens.length) return [];
+    // 中文也得能纠偏（第 9 轮）：原来只切 ASCII 词元，模型写"合并单元格"或"设置背景色"
+    // 这种错名时直接返回空 —— 模型拿不到任何线索，只能瞎猜工具名。
+    // 中文没有空格可切，用字符 bigram 的 Dice 系数（0~1）；英文走原来的词元命中数。
+    const query = (name || '').trim().toLowerCase();
+    const tokens = query.split(/[^a-z0-9]+/).filter((t) => t.length > 2);
+    const zhQuery = /[一-龥]/.test(query);
+    if (!tokens.length && !zhQuery) return [];
+    const bigrams = zhQuery ? bigramSet(query) : new Set<string>();
 
     const scored: Array<{ name: string; group: string; loaded: boolean; score: number }> = [];
     for (const t of this.tools.values()) {
       const def = t.definition;
       const lower = def.name.toLowerCase();
-      const score = tokens.reduce((acc, tok) => (lower.includes(tok) ? acc + 1 : acc), 0);
+      const meta = getToolMeta(def);
+      // 中文要跟【中文面】比：工具名是英文，光比 def.name 一个中文都匹配不上。
+      // 只取别名 + 描述首段：描述全文动辄几百字，算出来永远是"什么都像一点"。
+      const zhAlias = coverage(bigrams, meta.aliases.join(' '));
+      const zhHead = coverage(bigrams, (def.description || '').split('\n').slice(0, 2).join(' '));
+      const score = zhQuery
+        ? Math.round(Math.max(zhAlias, zhHead * 0.9) * 100)
+        : tokens.reduce((acc, tok) => (lower.includes(tok) ? acc + 1 : acc), 0);
       const group = groupOfTool(def);
       if (score > 0) {
         scored.push({ name: def.name, group, loaded: this.loadedGroups.has(group), score });
       }
     }
+    // 中文是 0~100 的连续覆盖率，55% 意味着"模型写的名字大半能在候选里对上"；
+    // 再低就是噪声，列出来只会误导模型（比不给建议更糟）。
+    const min = zhQuery ? 55 : 0;
     return scored
+      .filter((s) => s.score >= min)
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
       .slice(0, limit)
       .map(({ score: _score, ...rest }) => rest);

@@ -17,7 +17,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
 
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
-const { getToolMeta, __clearToolMetaCache } = require(path.join(ROOT, 'dist', 'server', 'tool-metadata.js'));
+const { getToolMeta, __clearToolMetaCache, expandQuery } = require(path.join(ROOT, 'dist', 'server', 'tool-metadata.js'));
 const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
 const { WpsMcpServer } = require(path.join(ROOT, 'dist', 'server', 'mcp-server.js'));
 
@@ -176,6 +176,64 @@ const noAlias = BUILTIN.filter((n) => {
 ok('内置工具都有中文别名', noAlias.length === 0, noAlias.join(','));
 ok('搜「检查连接」能命中 wps_check_connection',
    toolRegistry.searchTools('检查连接', { limit: 5, hints: false }).some((h) => h.name === 'wps_check_connection'));
+
+console.log('\n=== F. 查询侧同义词扩展（第 9 轮：词表不能只用来拼别名）===');
+// 背景：190 个词根的 TOKEN_ZH 一直是【正向】的（英文→中文），只用来拼别名，
+// 从不参与查询。结果是"排版""格式设置"这类用户用词搜不到对应工具。
+// 这里断言三件事：扩展得出来、分得清高低、不许压过人写的描述。
+const SYNONYM_GROUPS = [['排版', '版式', '布局'], ['页眉', '页脚']];
+for (const group of SYNONYM_GROUPS) {
+  const linked = group.every((a) => expandQuery(a).some((t) => group.includes(t)));
+  ok(`同义词组互相可扩展：${group.join('/')}`, linked,
+    group.map((w) => `${w}→${expandQuery(w).join(',')}`).join(' ; '));
+}
+ok('英文词根能展开出中文（layout → 版式/布局）',
+   expandQuery('layout').some((t) => /[一-龥]/.test(t)), expandQuery('layout').join(','));
+ok('中文说法能反查英文词根',
+   expandQuery('背景色').includes('background'), expandQuery('背景色').join(','));
+
+// 分档红线：synonym 必须排在 alias 与 description 之后。
+// 注意不能去读 h.score —— 返回前就把 score 剥掉了（不给模型看打分），
+// 所以这里断言的是【排序行为】，那才是模型实际看到的。
+const orderViolations = [];
+let synSeen = 0;
+for (const kw of ['排版', '格式', '背景', '表格', '版式', '页眉', '目录']) {
+  const ranks = toolRegistry.searchTools(kw, { limit: 40, hints: false }).map((h) => h.matchedBy);
+  const firstSyn = ranks.indexOf('synonym');
+  if (firstSyn === -1) continue;
+  synSeen++;
+  const lastReal = Math.max(ranks.lastIndexOf('description'), ranks.lastIndexOf('alias'), ranks.lastIndexOf('name'));
+  if (lastReal > firstSyn) {
+    orderViolations.push(`${kw}(真命中@${lastReal + 1} > syn@${firstSyn + 1})`);
+  }
+}
+ok('synonym 不插到 description/alias/name 命中前面（7 个词实测）',
+   orderViolations.length === 0, orderViolations.length ? orderViolations.join(' ') : `走扩展的词 ${synSeen} 个`);
+
+// 扩展必须真的捞到东西，否则上面那些断言全是在测一个没接上的机制
+let synGain = 0;
+for (const kw of ['排版', '版式', '格式', '页脚', '合并']) {
+  synGain += toolRegistry.searchTools(kw, { limit: 30, hints: false })
+    .filter((h) => h.matchedBy === 'synonym').length;
+}
+ok('同义词扩展带来了真实命中（不是空转）', synGain > 0, `合计 ${synGain} 条 synonym 命中`);
+
+console.log('\n=== G. 中文错名纠偏（第 9 轮：原来中文一律返回空）===');
+// scoreSimilar 原来只切 ASCII 词元 → 模型写中文错名时拿不到任何线索。
+const TYPO_CASES = [
+  ['合并单元格', 'wps_excel_merge_cells'],
+  ['设置背景色', 'wps_ppt_set_background'],
+];
+for (const [bad, expect] of TYPO_CASES) {
+  const near = toolRegistry.suggestSimilar(bad, 3);
+  ok(`中文错名「${bad}」能纠到 ${expect}`, near[0]?.name === expect,
+     near.length ? near.map((x) => x.name).join(',') : '（返回空 —— 阈值太高或没生效）');
+}
+ok('英文错名没被改坏（回归）',
+   toolRegistry.suggestSimilar('set_merg_cells', 2)[0]?.name === 'wps_excel_merge_cells');
+ok('无关中文不瞎猜（宁可空也别误导模型）',
+   toolRegistry.suggestSimilar('今天天气怎么样', 3).length === 0,
+   JSON.stringify(toolRegistry.suggestSimilar('今天天气怎么样', 3).map((x) => x.name)));
 
 console.log(`\n汇总：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);
