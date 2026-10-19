@@ -446,8 +446,22 @@ export class ToolRegistry {
       });
     }
 
+    // 同分时不能只按名字排（第 10 轮 T3b）。
+    // 同分意味着"跟这句诉求的相关度差不多"，这时候真正该拉开差距的是
+    // **能不能直接用**和**验证过没有**：
+    //   - 已列入 tools/list 的（默认档/已加载组）比没列入的更可能被直接调用
+    //   - live 的比 static 的更可信
+    // 原来只按 name 字母序，于是 static、未列入的工具会和 listed+live 的混排，
+    // 模型看到的前几条反而是不该首选的那批。
+    // 口径复用现成判定：isListed() 与 isLiveVerified()，不另写一套。
     return out
-      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          Number(b.listed) - Number(a.listed) ||
+          Number(b.verified === 'live') - Number(a.verified === 'live') ||
+          a.name.localeCompare(b.name)
+      )
       .slice(0, limit)
       .map((h, i) => {
         const { score: _score, ...rest } = h;
@@ -499,7 +513,9 @@ export class ToolRegistry {
     if (!tokens.length && !zhQuery) return [];
     const bigrams = zhQuery ? bigramSet(query) : new Set<string>();
 
-    const scored: Array<{ name: string; group: string; loaded: boolean; score: number }> = [];
+    const scored: Array<{
+      name: string; group: string; loaded: boolean; score: number; listed: boolean; live: boolean;
+    }> = [];
     for (const t of this.tools.values()) {
       const def = t.definition;
       const lower = def.name.toLowerCase();
@@ -513,7 +529,17 @@ export class ToolRegistry {
         : tokens.reduce((acc, tok) => (lower.includes(tok) ? acc + 1 : acc), 0);
       const group = groupOfTool(def);
       if (score > 0) {
-        scored.push({ name: def.name, group, loaded: this.loadedGroups.has(group), score });
+        scored.push({
+          name: def.name,
+          group,
+          loaded: this.loadedGroups.has(group),
+          score,
+          // 同分排序的两个辅键，口径与 searchTools 完全一致（不许另写一套）：
+          //   建议"调不上的名字"时，模型下一步要么直接调用（那要 listed），
+          //   要么读它的 verified 字段再决定信不信。listed=false 的先靠后。
+          listed: this.isListed(def),
+          live: isLiveVerified(def.name),
+        });
       }
     }
     // 中文是 0~100 的连续覆盖率，55% 意味着"模型写的名字大半能在候选里对上"；
@@ -521,9 +547,16 @@ export class ToolRegistry {
     const min = zhQuery ? 55 : 0;
     return scored
       .filter((s) => s.score >= min)
-      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      // 同分四元：score → listed → live → name（第 10 轮 T3b，与 searchTools 同口径）
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          Number(b.listed) - Number(a.listed) ||
+          Number(b.live) - Number(a.live) ||
+          a.name.localeCompare(b.name)
+      )
       .slice(0, limit)
-      .map(({ score: _score, ...rest }) => rest);
+      .map(({ score: _score, listed: _listed, live: _live, ...rest }) => rest);
   }
 
   /**

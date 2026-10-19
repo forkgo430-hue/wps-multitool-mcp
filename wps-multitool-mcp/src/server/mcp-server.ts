@@ -25,6 +25,7 @@ import { createChildLogger } from '../utils/logger';
 import { McpError, formatWpsErrorTag, WpsErrorType } from '../utils/error';
 import { runWithCancel } from './cancel-context';
 import { getToolAnnotations } from './tool-annotations';
+import { getToolMeta } from './tool-metadata';
 import { serverInstructions, setToolCount } from './server-info';
 import { CancelError } from '../bridge/cancellable';
 import { MCP_NAME, MCP_VERSION } from '../version';
@@ -128,6 +129,12 @@ export class WpsMcpServer {
       return {
         tools: tools.map((tool) => {
           const annotations = getToolAnnotations(tool.name);
+          // examples 是【独立字段】，不拼进 description：
+          //   ① 搜索路径把 description 截成首行 120 字（tool-registry.ts），拼进去会被吃掉；
+          //   ② 拼进描述会污染模型的工具选择（描述是"这工具能干啥"，不是"用户怎么说"）。
+          // 定义上没写 examples 的，优先退回 CURATED 表（同 searchTools 的口径，两条路径一致）。
+          const meta = getToolMeta(tool);
+          const examples = tool.examples?.length ? tool.examples : meta.examples;
           return {
             name: tool.name,
             description: tool.description,
@@ -135,6 +142,7 @@ export class WpsMcpServer {
             // 注解必须【嵌套】在 annotations 里。铺在顶层客户端会整个忽略 ——
             // 这坑踩过：单测全绿，端到端才发现 40 个工具一个注解都没透出去。
             ...(annotations ? { annotations } : {}),
+            ...(examples?.length ? { examples } : {}),
           };
         }),
       };

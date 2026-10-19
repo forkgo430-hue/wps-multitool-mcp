@@ -95,7 +95,36 @@ check('核心管理工具都在', listedNames.has('wps_load_tool_group') && list
 console.log('\n=== 搜索（含未列出）===');
 const hits = toolRegistry.searchTools('ppt', { limit: 5 });
 check('搜得到 ppt 工具', hits.length > 0 && hits.some((h) => h.group === 'ppt'));
-check('搜到的 ppt 工具标记为未列出', hits.some((h) => h.group === 'ppt' && h.listed === false));
+// ⚠ 第 10 轮 T3b 改了同分排序，这两条断言跟着改了判据 —— 理由写在这里：
+//
+// 【原断言为什么不成立】
+//   原来是 `hits.some(h => h.group==='ppt' && h.listed===false)`，limit=5。
+//   T3b 把同分改成 (score, isListed, isLive, name) 四元之后，查询「ppt」的并列项里
+//   8 个 listed+live 的基础档工具（add_slide / get_slide_count / insert_image …）
+//   全部排到了前面，limit=5 截出来的 5 条**全是 listed**，于是原断言失败。
+//   但它想验的性质——「searchTools 能搜到【未列出】的工具」——并没有变，
+//   变的是"用哪个探针去验"。原来那个探针把"未列出的必须挤进前 5"当成了性质本身，
+//   而那从来不是性质，是排序实现的副作用。
+//
+// 【现在的判据】
+//   性质用【不受排序影响】的探针验：放大 limit，看未列出的 ppt 工具在不在结果集里。
+//   排序本身单开一条断言钉住，免得以后有人把 T3b 改回去。
+const allPptHits = toolRegistry.searchTools('ppt', { limit: 200 });
+const unlistedPpt = allPptHits.filter((h) => h.group === 'ppt' && h.listed === false);
+check(
+  '搜索能覆盖未列出的工具（放大 limit，不受同分排序影响）',
+  unlistedPpt.length > 0,
+  `未列出的 ppt 工具 ${unlistedPpt.length} 个`
+);
+const top5 = hits.filter((h) => h.group === 'ppt');
+const listedFirst = top5.every(
+  (h, i) => i === 0 || !top5[i - 1].listed || top5[i - 1].listed === h.listed
+);
+check(
+  '同分时已列出的排前面（T3b 四元排序）',
+  listedFirst,
+  top5.map((h) => `${h.listed ? 'listed' : '     '}:${h.name}`).join(' ')
+);
 
 console.log('\n=== 加载 ppt 组 ===');
 let notified = 0;

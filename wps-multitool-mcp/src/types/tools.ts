@@ -46,8 +46,19 @@ export interface ToolDefinition {
   description: string;
   /** 输入参数Schema */
   inputSchema: ToolInputSchema;
-  /** Tool分类，方便管理 */
+  /**
+   * Tool分类，方便管理
+   */
   category?: ToolCategory;
+  /**
+   * 用户真会说的话（口语），给模型做"意图 → 工具"的匹配用。
+   *
+   * ⚠️ 独立字段，**不要拼进 description**：
+   *    tool-registry.ts 的搜索路径把 description 截成【首行 120 字】，
+   *    examples 拼在描述尾部会被整段吃掉，等于白写。
+   *    走 tools/list 的路径则完全不过那道截断，所以必须是独立字段。
+   */
+  examples?: string[];
   /**
    * 工具组名。不填则按 category 推导（document→word / spreadsheet→excel /
    * presentation→ppt / common→common）。

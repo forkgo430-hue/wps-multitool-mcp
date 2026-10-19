@@ -267,10 +267,12 @@ const CURATED: Record<
     notFor: ['不是执行工具，只负责找；找到后要么直接调用，要么先 wps_load_tool_group'],
   },
   wps_load_tool_group: {
+    examples: ['把 ppt 组加载一下', '我要用 PPT 的工具，先加载那组'],
     aliases: ['加载组', '拉起组', '把PPT工具弄出来'],
     notFor: ['不是单个工具加载，是整组；只要一个工具也用这个'],
   },
   wps_route_intent: {
+    examples: ['我要改 Excel 里的公式，该开哪组', '这句话该用 word 还是 excel'],
     aliases: ['意图识别', '该用哪个组', '这句话是干嘛'],
     notFor: ['不是执行工具，只返回"该加载哪个组"的建议'],
   },
@@ -298,6 +300,7 @@ const CURATED: Record<
     notFor: ['查看/接受/拒绝已有修订用 wps_word_revisions'],
   },
   wps_word_add_heading: {
+    examples: ['在下面加一个二级标题"二、实施方案"', '加个一级标题"项目概述"'],
     aliases: ['加标题', '插入标题', '几级标题'],
     notFor: ['给已有段落套"标题样式"用 wps_word_apply_style'],
   },
@@ -384,14 +387,17 @@ const CURATED: Record<
     aliases: ['删除多行', '批量删行'],
   },
   wps_excel_set_cell_value: {
+    examples: ['把 B3 改成 1200', '在 A1 填个"已确认"'],
     aliases: ['写单元格', '填值', '设置单元格内容'],
     notFor: ['一次写一大片用 wps_excel_write_range；写公式用 wps_excel_set_formula'],
   },
   wps_excel_write_range: {
+    examples: ['从 A1 开始把这 3 行数据填进去', '把这张表贴到 Sheet2 的 A5'],
     aliases: ['批量写', '写区域', '一次写一片'],
     notFor: ['只写单个格子用 wps_excel_set_cell_value'],
   },
   wps_excel_set_formula: {
+    examples: ['在 D2 写 =SUM(B2:C2)', '把这列的公式改成 =B3/C3'],
     aliases: ['写公式', '设置公式', '填公式'],
     notFor: ['算一次就走（不求值）用 wps_excel_evaluate_formula；公式报错排查用 wps_excel_diagnose_formula'],
   },
@@ -447,6 +453,7 @@ const CURATED: Record<
   },
   // PPT：3 个 image 插入
   wps_ppt_insert_image: {
+    examples: ['第 3 页放这张截图', '把 logo 插到首页左上角'],
     aliases: ['插入图片', '加图片'],
     notFor: ['按页插用 insert_slide_image / insert_ppt_image（同族）；替换已有图片用 replace_ppt_image'],
   },
@@ -480,20 +487,24 @@ const CURATED: Record<
     notFor: ['改已有文本框内容用 set_textbox_text；删掉用 delete_textbox'],
   },
   wps_ppt_set_slide_title: {
+    examples: ['把第 1 页标题设成"季度汇报"', '这页标题改成"下一步计划"'],
     aliases: ['设置标题', '改标题'],
     notFor: ['读取标题用 wps_ppt_get_slide_title；副标题用 set_slide_subtitle'],
   },
 
   // ===== 通用 =====
   wps_convert_to_pdf: {
+    examples: ['把这份 Word 转成 PDF', 'PPT 转 PDF 发我'],
     aliases: ['转PDF', '导出PDF', '转成PDF'],
     notFor: ['转成别的 Office 格式（docx/xlsx 互转）用 wps_convert_format'],
   },
   wps_convert_format: {
+    examples: ['转成 docx', '把这个转成 md'],
     aliases: ['格式转换', '转格式', 'docx转xlsx'],
     notFor: ['转 PDF 用 wps_convert_to_pdf'],
   },
   wps_common_status: {
+    examples: ['先看看 WPS 通不通', '现在这个 MCP 是好的吗'],
     aliases: ['状态', '桥状态', '看看还活着吗', '诊断'],
     notFor: ['只是"看"；真要修复卡死用 wps_common_repair'],
   },
@@ -502,13 +513,16 @@ const CURATED: Record<
     notFor: ['会关掉未保存的文档（自救动作），只想看状态用 wps_common_status'],
   },
   wps_common_save: {
+    examples: ['保存一下', '存盘吧', '把改动存了'],
     aliases: ['保存', '存盘'],
     notFor: ['另存到新路径用 wps_common_save_as'],
   },
   wps_common_save_as: {
+    examples: ['另存为 D:\\out\\最终版.docx', '存成一份新的，原文件别动'],
     aliases: ['另存为', '存到'],
   },
   wps_execute_method: {
+    examples: ['直接调 closeDocument 把当前文档关了', '跑一个 wps-com.ps1 里的底层动作'],
     aliases: ['直接调COM', '万能方法', '没有对应工具'],
     notFor: ['逃生舱：优先用专用工具，只有确实没有对应工具时才用它裸调 COM'],
   },
@@ -610,6 +624,84 @@ const CURATED: Record<
     examples: ['第二页开始也要有表头'],
     notFor: ['横向/纸张/缩放用 wps_excel_set_sheet_page_setup'],
   },
+  // ===== 第 10 轮 T3a：默认档工具的 examples =====
+  // 写法照 wps_word_insert_table 的既有风格：用户真会说的口语，带上具体参数，
+  // 不要写成"设置公式"这种功能描述（那是 description 的活）。
+  // 注意：examples 是【独立字段】，不许拼进 description ——
+  //       tool-registry.ts 的搜索路径把 description 截成首行 120 字，拼进去会被吃掉。
+  wps_excel_read_range: {
+    examples: ['把 Sheet1 的 A1:D20 读出来', '看一下销售表前 10 行'],
+  },
+  wps_excel_create_chart: {
+    examples: ['给 A1:B10 画个柱状图', '把这几个月的销售额画成折线图'],
+  },
+  wps_excel_get_sheet_list: {
+    examples: ['这个 Excel 里有哪几个 sheet', '哪些表是当前打开的'],
+  },
+  wps_excel_open_workbook: {
+    examples: ['打开 D:\\报表\\2026.xlsx', '把那个预算表打开'],
+  },
+  wps_excel_get_open_workbooks: {
+    examples: ['我现在开着几个 Excel', '都有哪些表格是打开的'],
+  },
+  wps_excel_switch_workbook: {
+    examples: ['切到 预算表.xlsx', '我要改的是 明细.xlsx，别改错'],
+  },
+  wps_excel_get_cell_value: {
+    examples: ['看一下 Sheet1 的 B3 是多少', 'A1 现在是什么值'],
+  },
+  wps_word_insert_text: {
+    examples: ['在光标处插入一段"项目背景如下"', '把这三行补到第二段后面'],
+  },
+  wps_word_find_replace: {
+    examples: ['把"甲方"全部替换成"乙方"', '全文把"2025"改成"2026"'],
+  },
+  wps_word_get_open_documents: {
+    examples: ['我 WPS 里开着哪些 Word 文档', '列出所有打开的文档'],
+  },
+  wps_word_switch_document: {
+    examples: ['切到 合同.docx', '我要改的是 说明书，别动别的文件'],
+  },
+  wps_word_open_document: {
+    examples: ['打开 D:\\合同\\合同.docx', '把那份方案打开'],
+  },
+  wps_word_get_document_text: {
+    examples: ['把当前文档的正文读出来', '看看这篇写了什么'],
+  },
+  wps_word_get_outline: {
+    examples: ['这篇的标题层级是怎样的', '把大纲抽出来看看'],
+  },
+  wps_word_set_default_font: {
+    examples: ['正文默认字体改成宋体小四', '全文默认用微软雅黑'],
+  },
+  wps_ppt_add_slide: {
+    examples: ['再加一页，用标题+正文版式', '在第 2 页后面插一页空白页'],
+  },
+  wps_ppt_get_slide_count: {
+    examples: ['这个 PPT 一共多少页', '现在几页了'],
+  },
+  wps_ppt_add_speaker_notes: {
+    examples: ['给第 2 页加备注"这里停顿一下"', '备注里补一句数据来源'],
+  },
+  wps_ppt_create_presentation: {
+    examples: ['新建一个空白 PPT', '新建一份汇报用的演示文稿'],
+  },
+  wps_ppt_get_open_presentations: {
+    examples: ['现在开着几个 PPT', '有哪些演示文稿是打开的'],
+  },
+  wps_ppt_export_slide_as_image: {
+    examples: ['把第 1 页导出成 PNG 存到 D:\\out\\p1.png', '这一页给我导一张图'],
+  },
+  wps_common_show_window: {
+    examples: ['把 WPS 窗口调出来', '让我看一眼现在什么状态'],
+  },
+  wps_list_tool_groups: {
+    examples: ['有哪些工具组', 'PPT 组加载了没'],
+  },
+  wps_unload_tool_group: {
+    examples: ['把 excel 组卸了吧', '不用 PPT 了，卸载掉省点上下文'],
+  },
+
 };
 
 /** 把 wps_word_insert_table 拆成词根（丢掉应用前缀） */

@@ -7,9 +7,11 @@
     "  static = 只有静态证据：类型检查、生成器、注解对账、CI 门禁，但没在真机上跑过",
     "",
     "口径必须写死在证据里：'live' 目前是【组级覆盖】—— 该组有探测脚本跑过，不等于组内每个工具都有专用用例。",
-    "PPT 是例外：整组仍按 static 计，只有 tools 里逐条点名的那 8 个基础工具是真机跑通过的。",
-    "想给单个工具升 live，就在 tools 里加一条，并在 evidence 里写清脚本名与日期。",
-    "宁可写 static：把没验过的说成验过，是在拿用户的文档赌。"
+    "PPT 是例外：整组仍按 static 计，只有 tools 里逐条点名的那几个工具是真机跑通过的。",
+    "第 10 轮起：ppt 组的真机覆盖已大幅上量（见 evidence.ppt），但组级仍记 static ——",
+    "因为矩阵里仍有 5 条是【有据可查地跳过】的（有实测原因，不是漏跑）。宁可写 static：把没验过的说成验过，是在拿用户的文档赌。",
+    "SKILL.md 里凡是写分组验证结论的句子，都由 skill-verify.js 拿这份台账逐条对账，对不上就红。",
+    "想给单个工具升 live，就在 tools 里加一条，并在 evidence 里写清脚本名与日期。"
   ],
   "groups": {
     "core": "live",
@@ -43,6 +45,6 @@
     "common": "verify-all 的 annotation-e2e / warnings-batch-verify 真起 stdio server 跑通",
     "word": "scripts/manual/word-caps-probe.js + p01-smoke.js（真机，修订/表格/样式/交叉引用/索引）",
     "excel": "scripts/manual/excel-caps-probe.js（真机，公式/图表/透视表/格式）",
-    "ppt": "2026-10-18 scripts/manual/ppt-caps-probe.js 真机 18/18 通过（基础档 8 + 形状/文字/填充 + 表格 2 + 图表 3）；其余 PPT 工具仍为 static"
+    "ppt": "2026-10-19 scripts/manual/ppt-isolated-verify.js 真机逐条跑通，全部通过。矩阵行数=103（多出的行是旧名别名）执行条数=98 跳过条数=5（各有实测原因，不是漏跑）；PPT组工具数=100；逐条live数=18（见 tools）。2026-10-18 ppt-caps-probe.js 18/18。组级仍记 static：跳过的 5 条是 set_slide_theme / set_shape_shadow / add_ppt_hyperlink / remove_ppt_hyperlink / start_slide_show"
   }
 }

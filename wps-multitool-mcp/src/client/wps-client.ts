@@ -57,6 +57,41 @@ const USE_DAEMON = process.env.WPS_USE_DAEMON !== '0';
 // 守护进程一旦起不来就本次全程直跑，不再每次调用都白等 20 秒握手
 let daemonBroken = false;
 
+/**
+ * 通道种类（第 10 轮 T4 引入）
+ *
+ * 本轮【只拆结构、不加实现】：'addon' 是给 Linux 侧留的插入点，
+ * 现在没有任何地方会返回它。等真的要做 Linux 后端时，
+ * 只要往 pickTransport 里加一个判断、往 runTransport 里加一个 case，
+ * Windows 那两个分支一个字都不用碰（对应计划的约束 C1）。
+ */
+type TransportKind = 'daemon' | 'direct' | 'addon';
+
+/**
+ * 选通道 —— 一次决定，结果缓存（第 10 轮 T4）
+ *
+ * 口径与拆分前完全一致：USE_DAEMON 为假、或闩锁已落下 → 'direct'；否则 'daemon'。
+ * "缓存"指的是这个判断不再每次重算（原来每次调用都重跑一遍 `USE_DAEMON && !daemonBroken`）。
+ * 两者等价，是因为 daemonBroken 一旦为 true 就再也不会回 false（见 markDaemonBroken）。
+ */
+let cachedTransport: TransportKind | null = null;
+
+function pickTransport(): TransportKind {
+  if (cachedTransport) return cachedTransport;
+  // ★ Linux 侧的插入点就在这一行下面：
+  //   if (process.platform === 'linux' && USE_ADDON) cachedTransport = 'addon';
+  //   本轮【故意不加】—— 没有 Linux 环境，写了就是没有证据的代码。
+  cachedTransport = USE_DAEMON && !daemonBroken ? 'daemon' : 'direct';
+  return cachedTransport;
+}
+
+/** 闩锁：桥起不来 → 本进程后续一律直跑，并把缓存的通道选择一起翻过去 */
+function markDaemonBroken(reason: string): void {
+  daemonBroken = true;
+  cachedTransport = 'direct';
+  log.warn('桥不可用，本进程后续改用直跑模式', { reason });
+}
+
 // PowerShell脚本路径 (Windows)
 const PS_SCRIPT_PATH = path.join(__dirname, '../../scripts/wps-com.ps1');
 
@@ -179,31 +214,61 @@ async function execPowerShell(action: string, params: Record<string, unknown> = 
 }
 
 /**
+ * 跑通道（第 10 轮 T4）—— 只负责"把请求送出去"，不做任何选择/降级判断。
+ *
+ * 'addon' 分支本轮**不实现**：真要做的时候在这里加一个 case 即可，
+ * 上面 pickTransport 决定什么时候走它。故意留空而不是抛错占位，
+ * 是因为 TypeScript 的穷尽检查会逼着写一个跑不通的分支，那比没有更危险。
+ */
+async function runTransport(
+  kind: TransportKind,
+  action: string,
+  params: Record<string, unknown>,
+  app: AppKey
+): Promise<unknown> {
+  switch (kind) {
+    case 'daemon':
+      // 取消信号从 MCP 的 notifications/cancelled 一路传到这里（见 server/cancel-context）
+      return psDaemon.call(action, params, app, { signal: currentSignal() });
+    case 'direct':
+      return execPowerShell(action, params);
+    default:
+      throw new Error(`未实现的传输通道：${kind}`);
+  }
+}
+
+/**
  * 统一执行接口（仅 Windows）
  *   常驻桥优先；桥起不来则退回"一调用一进程"的直跑方式
+ *
+ * 第 10 轮 T4 拆成两层：pickTransport（选一次，缓存）/ runTransport（只管跑）。
+ * 【Windows 行为逐字未变】：延迟、降级时机、daemonBroken 闩锁语义、超时分类，
+ * 都在下面这几行里，与拆分前逐条对应。
  */
 async function execWpsAction(
   action: string,
   params: Record<string, unknown> = {},
   app: AppKey = 'common'
 ): Promise<unknown> {
-  if (USE_DAEMON && !daemonBroken) {
-    try {
-      // 取消信号从 MCP 的 notifications/cancelled 一路传到这里（见 server/cancel-context）
-      return await psDaemon.call(action, params, app, { signal: currentSignal() });
-    } catch (err) {
-      // 只有"请求压根没送出去"（桥起不来）才允许退回直跑。
-      // 超时那类错误请求可能已经在 WPS 里执行了一半，自动重放会变成执行两次 —— 一律如实抛出。
-      if (err instanceof DaemonUnavailableError) {
-        daemonBroken = true;
-        log.warn('桥不可用，本进程后续改用直跑模式', { reason: err.message });
-      } else {
-        throw err;
-      }
+  const kind = pickTransport();
+  if (kind === 'direct') {
+    return runTransport('direct', action, params, app);
+  }
+
+  try {
+    return await runTransport(kind, action, params, app);
+  } catch (err) {
+    // ↓↓↓ 降级口径，全仓只有这一份，拆分后仍只此一处 ↓↓↓
+    // 只有"请求压根没送出去"（桥起不来）才允许退回直跑。
+    // 超时那类错误请求可能已经在 WPS 里执行了一半，自动重放会变成执行两次 —— 一律如实抛出。
+    if (err instanceof DaemonUnavailableError) {
+      markDaemonBroken(err.message);
+    } else {
+      throw err;
     }
   }
 
-  return execPowerShell(action, params);
+  return runTransport('direct', action, params, app);
 }
 
 /**
