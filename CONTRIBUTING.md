@@ -11,11 +11,16 @@
 ```powershell
 cd wps-multitool-mcp
 npm run build          # TypeScript 构建
-npm run verify         # 快测门禁（9 项，秒级）
-npm run verify:all     # 全量门禁（14 项，含真机探测，约 1 分钟）
+npm run verify         # 快测门禁（FAST 14 项，秒级，不起 WPS）
+npm run verify:all     # 全量门禁（21 项 = FAST 14 + HEAVY 7，含真机探测，约 3 分钟）
 npm run gen:annotations  # 重新生成「工具 → PS 动作」映射表
 node scripts/manual/gen-doc-stats.js   # 重新生成 README / 面板里的统计数字
 ```
+
+> 门禁清单的唯一真源是 `scripts/manual/verify-all.js:29-44`（FAST）与 `:47-55`（HEAVY）。
+> **本文档里的项数可能过期，以那里为准** —— 这个仓库吃过"两处维护"漂移的亏。
+> 其中 6 项 HEAVY 需要真 WPS：excel/word/ppt 三个 caps-probe、snapshot-verify、bridge-test、cancel-verify。
+> 它们跑起来会占满本机的 COM 通道（见 `docs/agents/README.md` 的 WPS 锁）。
 
 ## 三条硬规矩
 
@@ -32,6 +37,20 @@ node scripts/manual/gen-doc-stats.js   # 重新生成 README / 面板里的统�
 3. **PS 动作改动要重跑路由表**
    改完 `scripts/wps-com.ps1` 就跑 `node scripts/gen-action-routes.js`（它按 case 体推断动作属于哪个应用）。
    同一个动作名出现两个 case 时 PowerShell 只认第一个，后者是死代码——加动作前先 `findstr` 确认没重名。
+   ⚠️ 漏跑**没有任何门禁会告诉你**：`src/client/action-routes.ts:53` 会静默回落成 `'common'`。
+
+4. **推送只有一条通道**
+   ```powershell
+   node scripts/manual/push-api.js --history
+   ```
+   `git push` 到 github.com:443 在本机一直被 `Connection was reset`，必须走 Git Data API。
+   禁用 `push-api.js -f`（无父级快照模式会把全部提交压成 1 个根提交）。
+   本地与远端 SHA 恒不同（API 重建的 SHA 由服务端生成），**校验同步要看 tree，不看 commit 数**。
+
+5. **真机验证要持锁**
+   全机 COM 通道只有一个。真机脚本（`*caps-probe*` / `snapshot-verify` / `bridge-test` / `cancel-verify` /
+   `verify:all` / `ppt-isolated-verify`）开跑前建 `docs/agents/WPS.lock`，跑完删除。
+   细节见 `docs/agents/README.md`。
 
 ## 新增一个工具的流程
 
