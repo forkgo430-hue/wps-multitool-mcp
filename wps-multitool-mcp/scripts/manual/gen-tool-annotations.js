@@ -57,6 +57,31 @@ const als = new AsyncLocalStorage();
 const { EXTRA_ANNOTATIONS_KEYS } = require(path.join(ROOT, 'scripts', 'manual', 'handwritten-annotations.js'));
 const HANDWRITTEN = new Set(EXTRA_ANNOTATIONS_KEYS);
 
+/**
+ * 静态动作名覆盖表 —— 这些工具真实会发的动作名【源码里查得到】，但观测探针拿不到。
+ * 拿不到的原因有三种，都不是"推不出来"，所以不该让注解跟着丢：
+ *
+ *   1) 空参探测走的是"参数校验失败"分支，压根没到出口
+ *      （wps_excel_write_range / wps_word_insert_comment 都先校验必填项再发命令）
+ *   2) 动作名走【变量】，一次探测只可能命中其中一个分支
+ *      （wps_ppt_set_background 的四个分支见 slide-ops.ts:1582-1587 的参数契约注释）
+ *   3) 慢 handler 被 150ms 超时判掉，时快时慢 —— wps_common_status 就是那个 flaky 源
+ *
+ * 写在这里 = 确定性：生成结果不再取决于"这次跑得快不快"。
+ * 代价是可能与源码漂移，所以下面会：① 每个名字对着 wps-com.ps1 的 case 校一遍；
+ * ② 观测到的值若与这里不一致，打印告警（不退出，否则又把抖动请回来了）。
+ */
+const STATIC_ACTIONS = {
+  wps_common_status: ['wpsStatus'],
+  wps_excel_write_range: ['setRangeData'],
+  wps_word_insert_comment: ['addComment'],
+  wps_ppt_set_animation: ['addAnimation', 'setAnimationOrder'],
+  wps_ppt_set_background: ['setMasterBackground', 'setBackgroundColor', 'setSlideBackground', 'getSlideCount'],
+  wps_ppt_set_transition: ['applyTransitionToAll', 'setSlideTransition'],
+};
+/** 观测值与静态表不一致的工具（漂移线索，只告警不退出） */
+const drift = [];
+
 // ---- 1. 换掉真正的出口，装上记录器 ----------------------------------------
 wpsClient.invokeAction = async (action, params, appKey) => {
   // 只记合法的动作名。wps_execute_method 的动作名是【调用时传入的参数】，
@@ -106,6 +131,14 @@ wpsClient.invokeAction = async (action, params, appKey) => {
     if (HANDWRITTEN.has(name)) {
       // 编排类/逃生舱类：动作名不由它自己决定，映射记空，注解走手写表
       map[name] = [];
+    } else if (STATIC_ACTIONS[name]) {
+      // 静态表优先：观测可能只命中一个分支、也可能被超时判掉，输出必须是确定的那一个
+      const observed = [...rec.actions].sort().join(',');
+      const expected = STATIC_ACTIONS[name].slice().sort().join(',');
+      if (rec.actions.size && observed !== expected) {
+        drift.push(`${name}: 观测 [${observed}] ≠ 静态 [${expected}]`);
+      }
+      map[name] = STATIC_ACTIONS[name].slice();
     } else if (rec.actions.size) {
       map[name] = [...rec.actions];
     } else {
@@ -124,6 +157,41 @@ wpsClient.invokeAction = async (action, params, appKey) => {
       .replace(/^(word|excel|ppt|common)_/, '');
     return act.replace(/_([a-z0-9])/g, (_m, c) => c.toUpperCase());
   };
+
+  /**
+   * wps-com.ps1 里真实存在的动作名全集。
+   *
+   * 为什么必须校验：150ms 超时之下，**慢 handler 会在走到出口之前就被判超时**，
+   * 于是它落进 infer() 兜底 —— 而 infer 是纯字符串变换，推出来的名字**不一定存在**。
+   *
+   * 实测踩过：wps_common_status 先 await psDaemon.bridgeStatus()（真实命名管道调用），
+   * 超时时还没走到 executeMethod('wpsStatus')，于是被推成 'status' ——
+   * 而 wps-com.ps1 里根本没有 "status" 这个 case，只有 "wpsStatus"（:1050）。
+   *
+   * 后果不是注解表难看：这张表喂 tool-annotations.ts 的 destructiveHint /
+   * idempotentHint，写进去一个不存在的动作名，判定就基于假输入做决策。
+   *
+   * 所以：**推断出来的名字必须在 wps-com.ps1 里查得到，否则不许写。**
+   */
+  const realActions = new Set(
+    fs
+      .readFileSync(path.join(ROOT, 'scripts', 'wps-com.ps1'), 'utf8')
+      .split('\n')
+      .map((l) => l.match(/^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\{/))
+      .filter(Boolean)
+      .map((m) => m[1])
+  );
+
+  // 静态表本身也要受同一条约束：写进去的名字必须在 ps1 里真有这个 case。
+  // 不然"消灭 flaky"就变成了"把一个假名字固化下来"，比抖动更糟。
+  const badStatic = Object.entries(STATIC_ACTIONS).flatMap(([tool, acts]) =>
+    acts.filter((a) => !realActions.has(a)).map((a) => `${tool} → ${a}`)
+  );
+  if (badStatic.length) {
+    console.error(`✗ 静态表里有 wps-com.ps1 中不存在的动作名：${badStatic.join(', ')}`);
+    process.exit(1);
+  }
+
   // unresolved 保留作调试线索：这些工具到了出口但动作名是运行期参数
   const unresolved = [];
   const inferred = [];
@@ -135,9 +203,20 @@ wpsClient.invokeAction = async (action, params, appKey) => {
       map[name] = [];
       unresolved.push(name);
     } else {
-      // 压根没走到出口（参数校验就抛错了），名字推断基本等价于真实动作名
-      map[name] = [infer(name)];
-      inferred.push(name);
+      // 压根没走到出口（参数校验就抛错了，或慢 handler 被 150ms 超时判掉）。
+      // 名字推断【必须】对着 wps-com.ps1 的真实 case 校验：推不存在的名字等于往
+      // 注解表里塞假输入，而这张表喂的是 destructiveHint / idempotentHint。
+      const guessed = infer(name);
+      if (realActions.has(guessed)) {
+        map[name] = [guessed];
+        inferred.push(name);
+      } else {
+        // 推出来的名字不存在 → 当成"静态推不出来"，交手写注解表。
+        // 绝不写一个不存在的动作名进去 —— 那比留空更危险：留空是"没有注解"，
+        // 填错是"用假输入做了安全判定"。
+        map[name] = [];
+        unresolved.push(name);
+      }
     }
   }
 
@@ -170,6 +249,7 @@ wpsClient.invokeAction = async (action, params, appKey) => {
   console.log(`工具总数（真实注册路径）: ${tools.length}`);
   console.log(`  运行时观测到动作      : ${tools.length - missed.length - HANDWRITTEN.size}`);
   console.log(`  名字推断兜底          : ${inferred.length}${inferred.length ? ' → ' + inferred.slice(0, 6).join(', ') : ''}`);
+  console.log(`  推断不出且未手写      : ${unresolved.length}${unresolved.length ? ' → ' + unresolved.join(', ') : ''}`);
   console.log(`  手写注解（不推断）    : ${HANDWRITTEN.size} → ${[...HANDWRITTEN].join(', ')}`);
   console.log(`一工具多动作    : ${multi.length}`);
   for (const [n, a] of multi.slice(0, 6)) console.log(`   ${n} → ${a.join(', ')}`);
@@ -191,6 +271,23 @@ wpsClient.invokeAction = async (action, params, appKey) => {
         '查 tool-annotations.ts 的 EXTRA_ANNOTATIONS 是否已写；忘了写就会静默退回名字推断。'
     );
     process.exit(1);
+  }
+
+  // 空数组 = 这个工具的注解只能来自手写表。上面那条只卡"名单里的"，
+  // 名单外的空数组没人管 —— 实测就是这么静默丢掉 18 个工具的注解的
+  // （覆盖 284/284 → 266/284，而丢的那批全是写入型工具）。
+  // 所以：留空必须有人负责，没人负责就非 0 退出，不许静默。
+  const emptyNoAnn = Object.keys(map).filter((n) => !map[n].length && !getToolAnnotations(n));
+  if (emptyNoAnn.length) {
+    console.error(
+      `✗ ${emptyNoAnn.length} 个工具动作名为空且拿不到手写注解：${emptyNoAnn.join(', ')}\n  ` +
+        '要么查清真实动作名写进 STATIC_ACTIONS，要么把注解写进 tool-annotations.ts 的 ' +
+        'EXTRA_ANNOTATIONS 并同步 handwritten-annotations.js。'
+    );
+    process.exit(1);
+  }
+  if (drift.length) {
+    console.log(`⚠ 观测值与静态表不一致（查源码是不是改了动作名）：\n  ${drift.join('\n  ')}`);
   }
   console.log(`\n已写入 ${path.relative(ROOT, OUT)}（条目 ${Object.keys(map).length} = 注册表 ${tools.length}）`);
   process.exit(0);

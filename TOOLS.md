@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**284 个工具**（8 内置 + 276 专业/组工具）· 默认列出 40 个 · 注解覆盖 284/284 · 真机验证 201/284
+**284 个工具**（8 内置 + 276 专业/组工具）· 默认列出 40 个 · 注解覆盖 279/284 · 真机验证 201/284
 
 | 标记 | 含义 |
 |---|---|
@@ -17,8 +17,8 @@
 |---|---|---|---|---|
 | `wps_list_tool_groups` | 是 | R | live | 列出所有工具组及当前是否已在列。<br><sub>别名：列出工具工具组 / 列举工具工具组 / 工具</sub> |
 | `wps_load_tool_group` | 是 | — | live | 加载一个工具组，加载后该组工具才会出现在工具列表里。<br><sub>别名：加载组 / 拉起组 / 把PPT工具弄出来</sub> |
-| `wps_route_intent` | 是 | — | live | 快速意图识别：给一句任务描述，告诉你需要开启哪些工具组、先用哪些工具。<br><sub>别名：意图识别 / 该用哪个组 / 这句话是干嘛</sub> |
-| `wps_search_tools` | 是 | — | live | 在所有工具里搜索（包括未加载组的工具），返回名字 + 所属组 + 是否已列出 + 中文别名 + 验证状态。<br><sub>别名：找工具 / 搜工具 / 有没有什么工具</sub> |
+| `wps_route_intent` | 是 | R | live | 快速意图识别：给一句任务描述，告诉你需要开启哪些工具组、先用哪些工具。<br><sub>别名：意图识别 / 该用哪个组 / 这句话是干嘛</sub> |
+| `wps_search_tools` | 是 | R | live | 在所有工具里搜索（包括未加载组的工具），返回名字 + 所属组 + 是否已列出 + 中文别名 + 验证状态。<br><sub>别名：找工具 / 搜工具 / 有没有什么工具</sub> |
 | `wps_unload_tool_group` | 是 | — | live | 卸载一个工具组，卸载后该组工具不再出现在工具列表里（仍可直接调用，但不推荐）。<br><sub>别名：卸载工具组合 / 工具 / 组合</sub> |
 
 ## 通用（22）
@@ -34,7 +34,7 @@
 | `wps_execute_method` | 是 | DN | live | 执行自定义WPS API方法<br><sub>别名：直接调COM / 万能方法 / 没有对应工具</sub> |
 | `wps_cache_data` |  | — | live | 缓存数据到MCP Server，用于跨应用数据传递。例如：从Excel读取数据后缓存，然后在PPT中使用。<br><sub>别名：暂存数据 / 缓存数据 / 存中间结果</sub> |
 | `wps_check_connection` |  | R | live | 检查WPS Office连接状态<br><sub>别名：检查连接 / 连接状态 / 通不通</sub> |
-| `wps_clear_cache` |  | DN | live | 清除MCP Server中的缓存数据<br><sub>别名：清缓存 / 清空暂存 / 删掉暂存数据</sub> |
+| `wps_clear_cache` |  | D | live | 清除MCP Server中的缓存数据<br><sub>别名：清缓存 / 清空暂存 / 删掉暂存数据</sub> |
 | `wps_common_batch` |  | DN | live | 一次执行 1~3 个操作，省掉逐个调用的往返。 |
 | `wps_common_get_app_info` |  | R | live | 获取WPS应用的基本信息。<br><sub>别名：获取应用信息 / 读取应用信息 / 查看应用信息</sub> |
 | `wps_common_get_selected_text` |  | R | live | 获取当前文档中选中的文本内容。<br><sub>别名：获取选中文本 / 读取选中文本 / 查看选中文本</sub> |
@@ -89,7 +89,7 @@
 | `wps_word_get_track_changes_status` |  | R | live | 获取当前文档的修订模式状态。<br><sub>别名：获取跟踪更改状态 / 读取跟踪更改状态 / 查看跟踪更改状态</sub> |
 | `wps_word_index` |  | — | live | 给文字编索引条目，或在光标处插入索引目录。<br><sub>别名：索引 / 关键词索引 / 索引表</sub> |
 | `wps_word_insert_bookmark` |  | N | live | 在当前光标位置或选中区域插入书签。<br><sub>别名：插入书签 / 新增书签 / 加入书签</sub> |
-| `wps_word_insert_comment` |  | N | live | 在Word文档选中内容处插入批注<br><sub>别名：加批注 / 插入批注 / 评论</sub> |
+| `wps_word_insert_comment` |  | — | live | 在Word文档选中内容处插入批注<br><sub>别名：加批注 / 插入批注 / 评论</sub> |
 | `wps_word_insert_footer` |  | N | live | 设置页脚内容。<br><sub>别名：插入页脚 / 新增页脚 / 加入页脚</sub> |
 | `wps_word_insert_header` |  | N | live | 设置页眉内容。<br><sub>别名：插入页眉 / 新增页眉 / 加入页眉</sub> |
 | `wps_word_insert_hyperlink` |  | N | live | 在文档中插入超链接（可指定显示文字与插入位置）。<br><sub>别名：超链接 / 加链接 / 插入链接</sub> |

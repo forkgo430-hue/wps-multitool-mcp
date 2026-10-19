@@ -30,5 +30,20 @@ module.exports = {
     'wps_common_snapshot_restore',
     'wps_common_snapshot_list',
     'wps_ppt_unify_font',
+    // 第 5 轮补：这 13 个不发 COM 动作（内置/本地）或动作名查不到，注解只能手写。
+    // 少了它们，生成器会把注解记成空数组而没人负责 —— 覆盖从 284/284 掉到 266/284。
+    'wps_cache_data',
+    'wps_get_cached_data',
+    'wps_list_cache',
+    'wps_clear_cache',
+    'wps_word_proofread_basic',
+    'wps_list_tool_groups',
+    'wps_load_tool_group',
+    'wps_unload_tool_group',
+    'wps_search_tools',
+    'wps_route_intent',
+    'wps_word_set_text_color',
+    'wps_word_set_line_spacing',
+    'wps_ppt_set_active_target',
   ],
 };

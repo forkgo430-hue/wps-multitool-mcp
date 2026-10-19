@@ -110,6 +110,41 @@ const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
     idempotentHint: true,
     openWorldHint: false,
   },
+
+  /**
+   * 【五】压根不发 COM 动作的工具（10 个）—— 副作用不在 WPS 里。
+   *   cache 系列写在 Node 侧内存；工具组三个改的是本进程的注册表；
+   *   wps_search_tools / wps_route_intent 只做字符串匹配；
+   *   wps_word_proofread_basic 是纯本地正则（描述里就写着"无需 API 调用"）。
+   *   按工具名推断会推出 cacheData / searchTools / proofreadBasic 这类名字，
+   *   而它们在 wps-com.ps1 里一个 case 都没有 —— 那不是"保守"，是拿假输入做安全判定。
+   */
+  wps_cache_data: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_get_cached_data: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_list_cache: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // 清的是自己建的缓存，但按"会丢数据"给 destructive —— 客户端该弹确认
+  wps_clear_cache: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  wps_word_proofread_basic: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_list_tool_groups: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_load_tool_group: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_unload_tool_group: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_search_tools: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_route_intent: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
+  /**
+   * 【六】动作名【查不到】但工具确实要改文档（2 个）+ 1 个改的是服务器状态。
+   *
+   * wps_word_set_text_color / wps_word_set_line_spacing 调的是 'setTextColor' /
+   * 'setLineSpacing'，而 wps-com.ps1 里根本没有这两个 case（实测：全文零命中）。
+   * 动作缺失是【另一条 bug】，已单列待修；但注解不能因为它就空着 ——
+   * 这两件事都是改用户文档的工具，AI 必须知道它们不是只读的。
+   *
+   * wps_ppt_set_active_target 会锁定后续所有 PPT 操作的目标文稿：它不改文档，
+   * 但决定了后面每一次写入落在哪份文件上。判成只读会让客户端跳过确认。
+   */
+  wps_word_set_text_color: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_word_set_line_spacing: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  wps_ppt_set_active_target: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
 /**
