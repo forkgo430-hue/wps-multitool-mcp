@@ -3,7 +3,7 @@
 > 本文件由 `wps-multitool-mcp/scripts/manual/gen-tools-doc.js` 从**运行时注册表**生成，请勿手改。
 > 改完工具跑一次 `node scripts/manual/gen-tools-doc.js`；CI 会重跑并 `git diff --exit-code`，对不上就红。
 
-**284 个工具**（8 内置 + 276 专业/组工具）· 默认列出 40 个 · 注解覆盖 279/284 · 真机验证 201/284
+**284 个工具**（8 内置 + 276 专业/组工具）· 默认列出 40 个 · 注解覆盖 284/284 · 真机验证 201/284
 
 | 标记 | 含义 |
 |---|---|
@@ -89,7 +89,7 @@
 | `wps_word_get_track_changes_status` |  | R | live | 获取当前文档的修订模式状态。<br><sub>别名：获取跟踪更改状态 / 读取跟踪更改状态 / 查看跟踪更改状态</sub> |
 | `wps_word_index` |  | — | live | 给文字编索引条目，或在光标处插入索引目录。<br><sub>别名：索引 / 关键词索引 / 索引表</sub> |
 | `wps_word_insert_bookmark` |  | N | live | 在当前光标位置或选中区域插入书签。<br><sub>别名：插入书签 / 新增书签 / 加入书签</sub> |
-| `wps_word_insert_comment` |  | — | live | 在Word文档选中内容处插入批注<br><sub>别名：加批注 / 插入批注 / 评论</sub> |
+| `wps_word_insert_comment` |  | N | live | 在Word文档选中内容处插入批注<br><sub>别名：加批注 / 插入批注 / 评论</sub> |
 | `wps_word_insert_footer` |  | N | live | 设置页脚内容。<br><sub>别名：插入页脚 / 新增页脚 / 加入页脚</sub> |
 | `wps_word_insert_header` |  | N | live | 设置页眉内容。<br><sub>别名：插入页眉 / 新增页眉 / 加入页眉</sub> |
 | `wps_word_insert_hyperlink` |  | N | live | 在文档中插入超链接（可指定显示文字与插入位置）。<br><sub>别名：超链接 / 加链接 / 插入链接</sub> |
@@ -284,7 +284,7 @@
 | `wps_ppt_set_3d_material` |  | — | static | 设置幻灯片中形状的3D材质效果。<br><sub>别名：设置3d材质 / 设定3d材质 / 材质</sub> |
 | `wps_ppt_set_3d_rotation` |  | — | static | 设置幻灯片中形状的3D旋转效果。<br><sub>别名：设置3d旋转 / 设定3d旋转 / 旋转</sub> |
 | `wps_ppt_set_active_target` |  | — | static | 锁定后续所有 PPT 操作的【目标演示文稿】（按文件名）。锁定后，本服务器会给所有演示类调用自动注入该文稿名，底层精确定位，彻…<br><sub>别名：设置当前目标 / 设定当前目标 / 当前</sub> |
-| `wps_ppt_set_animation` |  | — | static | 给形状加动画，或调整已有动画的播放顺序（第 8 轮合并了动画族 5 个工具）。<br><sub>别名：设置动画 / 添加动画 / 加动画</sub> |
+| `wps_ppt_set_animation` |  | N | static | 给形状加动画，或调整已有动画的播放顺序（第 8 轮合并了动画族 5 个工具）。<br><sub>别名：设置动画 / 添加动画 / 加动画</sub> |
 | `wps_ppt_set_background` |  | — | static | 设置背景：某一页、整份文稿、或幻灯片母版。<br><sub>别名：设置背景 / 换背景 / 背景色</sub> |
 | `wps_ppt_set_font_color` |  | — | static | 设置幻灯片中指定形状的文字颜色。<br><sub>别名：设置字体颜色 / 设定字体颜色 / 字体</sub> |
 | `wps_ppt_set_image_style` |  | — | static | 设置幻灯片中指定图片的样式。<br><sub>别名：设置图片样式 / 设定图片样式 / 图片</sub> |
