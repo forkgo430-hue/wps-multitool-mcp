@@ -268,3 +268,25 @@
     （不 FAIL——副本可能被用户自己改过）。可用 `--no-sync-check` 跳过（CI 上没装副本）。
   
   门禁在加入后被验证过**确实会红**：把原句写回 SKILL.md 后，3 条断言失败、进程退出码 1；改回后恢复全绿。
+
+---
+
+## 1.0.2 的补记（2026-10-20）
+
+> 本节是**事后补账**，不改版本号。发布 1.0.2 时清空了 `.changeset/`，导致下面这些
+> 已经随本版发出的内容**没有进 CHANGELOG**；而它们对应的 changeset（`next-release` /
+> `ppt-merge-2026-10-18`）还留在待发区，会让下一版把它们**再记一次**。
+> 已按 npm 上 `wps-multitool-mcp@1.0.2` 的实际包内容逐项核对（文件实存，不是推断），
+> 两条 changeset 已归档到 `.changeset-hold/`。
+>
+> 核对方式：`npm pack wps-multitool-mcp@1.0.2` → 看包内是否存在对应文件；
+> 同一份清单对照 `wps-multitool-mcp@1.0.1`：以下四项在 1.0.1 里**都不存在**，在 1.0.2 里**都存在**。
+
+- **写入可恢复**：`dist/tools/common/snapshot.js`（`wps_common_snapshot_create` / `_list` / `_restore`；
+  `wps_common_batch` 检测到破坏性步骤时自动快照）
+- **验证状态**：`dist/server/tool-verification.js` + `tool-verification.generated.js`（每工具 `live` / `static`，
+  默认档只收 live）
+- **一键接入**：`dist/cli/install.js`（`wps-multitool-mcp install`，写前备份、写后回读、失败自动还原）
+- **别名参数映射**：`dist/server/tool-aliases.generated.js` 的 `applyAliasParams`
+  （族合并时旧参数名要能搬到新参数上；没这条的话旧调用会 `Missing required parameter`，
+  或被静默忽略后按默认值乱改）
