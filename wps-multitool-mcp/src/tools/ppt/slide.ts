@@ -432,7 +432,7 @@ export const setFontColorHandler: ToolHandler = async (
       success: boolean;
       message: string;
     }>(
-      'setFontColor', // NOTE: 仅Windows支持
+      'setFontColor', // 第 1 期第 2 章第 2 轮：这句原为「仅Windows支持」，是假注释 —— 该动作曾长期不存在于 ps1。第 6 轮已补 case，现在 Windows 上真能用。
       { slideIndex, shapeIndex, color },
       WpsAppType.PRESENTATION
     );

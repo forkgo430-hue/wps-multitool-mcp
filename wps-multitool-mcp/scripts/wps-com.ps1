@@ -1562,8 +1562,10 @@ switch ($Action) {
     "setRangeData" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $(Resolve-Book $excel $p)
-        $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
+        # 第 1 期第 2 章第 2 轮：两句分支完全相同 + 没给 sheet 时 Sheets.Item($null) 会抛。
+        # wps_excel_evaluate_formula 的"写回单元格"要复用这个动作（它没有 sheet 参数），所以先修这层。
+        $sheet = $(Resolve-Sheet $excel $p)
+        if ($null -eq $sheet) { Output-Json @{ success = $false; error = "No active sheet" }; return }
         $range = $sheet.Range($p.range)
         for ($r = 0; $r -lt $p.data.Count; $r++) {
             for ($c = 0; $c -lt $p.data[$r].Count; $c++) { $range.Cells.Item($r + 1, $c + 1).Value2 = $p.data[$r][$c] }
@@ -1782,11 +1784,80 @@ switch ($Action) {
     "setFormula" {
         $excel = Get-WpsExcel
         if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
-        $wb = $(Resolve-Book $excel $p)
-        $sheet = if ($p.sheet -is [int]) { $wb.Sheets.Item($p.sheet) } else { $wb.Sheets.Item($p.sheet) }
-        $range = if ($p.range) { $sheet.Range($p.range) } else { $sheet.Cells.Item($p.row, $p.col) }
-        $range.Formula = $p.formula
-        Output-Json @{ success = $true }
+        # 第 1 期第 2 章第 2 轮：原来两句分支完全相同（`if ($p.sheet -is [int])` 两边都写
+        # `$wb.Sheets.Item($p.sheet)`），而且没给 sheet 时是 `Sheets.Item($null)` —— 会抛。
+        # wps_excel_auto_sum 要映射到这个动作（它没有 sheet 参数），所以必须先修好这层解析。
+        $sheet = $(Resolve-Sheet $excel $p)
+        if ($null -eq $sheet) { Output-Json @{ success = $false; error = "No active sheet" }; return }
+        $formula = [string]$p.formula
+        if (-not $formula) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 要给 formula（如 =SUM(A1:A10)）" }
+            return
+        }
+        $range = if ($p.range) { $sheet.Range([string]$p.range) } elseif ($p.row -and $p.col) { $sheet.Cells.Item($p.row, $p.col) } else { $null }
+        if ($null -eq $range) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 要给 range（如 A11）或 row+col" }
+            return
+        }
+        $range.Formula = $formula
+        # 读回：公式写进去之后单元格的【值】是多少。写公式不等于算出了数
+        # （引用空区域会得 0，引用坏区域会得 #REF!），把值一起回给调用方才算诚实。
+        $value = $null
+        try { $value = $range.Value2 } catch {}
+        Output-Json @{ success = $true; data = @{ range = [string]$p.range; formula = $formula; value = $value } }
+    }
+
+    # 第 1 期第 2 章第 2 轮新增：wps_excel_evaluate_formula 一直调 evaluateFormula，
+    # 而 ps1 里没有这个 case → 每次都是 Unknown action（这工具从上线起就没成功过）。
+    # 能力就是 Excel 的 Application.Evaluate：只算不写；给了 cell 才把结果落格。
+    # 与 setFormula 的分工：setFormula 是【把公式写进单元格（落盘）】，本动作是【算一个值出来（不落盘）】。
+    "evaluateFormula" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $formula = [string]$p.formula
+        if (-not $formula) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 要给 formula（如 =SUM(A1:A10) 或 1+2）" }
+            return
+        }
+        if (-not $formula.StartsWith('=')) { $formula = '=' + $formula }
+        $result = $null
+        try { $result = $excel.Evaluate($formula) } catch {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 公式无法计算：$($formula)。$($_.Exception.Message)" }
+            return
+        }
+        if ($null -eq $result) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 公式 $formula 没有返回值（语法错或引用了不存在的区域）" }
+            return
+        }
+        # 【只算不写】—— 这里刻意不落盘。
+        # 为什么：cancellable.ts:67 把 evaluateFormula 归在 READ_ONLY_EXTRA 里（客户端会据此
+        # 跳过写操作确认）。一个"被声明为只读"的动作如果偷偷写单元格，就是安全语义矛盾。
+        # 要落盘由 TS 侧再发一次 setRangeData（写入动作，注解本身是写入型），职责分开。
+        Output-Json @{ success = $true; data = @{ formula = $formula; result = $result } }
+    }
+
+    # 第 1 期第 2 章第 2 轮新增：wps_excel_set_zoom 一直调 setZoom，ps1 里没有 → Unknown action。
+    # 这是【窗口缩放】（ActiveWindow.Zoom，10-400），不是【打印缩放】（PageSetup.Zoom）——
+    # ps1 里 2706 行那个 $ps.Zoom 是 PageSetup 的，属于打印设置，两回事。
+    "setZoom" {
+        $excel = Get-WpsExcel
+        if ($null -eq $excel) { Output-Json @{ success = $false; error = "WPS Excel not running" }; return }
+        $pct = 0
+        if (-not [int]::TryParse([string]$p.percent, [ref]$pct)) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] percent 必须是整数（收到「$($p.percent)」）" }
+            return
+        }
+        if ($pct -lt 10 -or $pct -gt 400) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 缩放比例必须在 10-400 之间（收到 $pct）" }
+            return
+        }
+        $win = $excel.ActiveWindow
+        if ($null -eq $win) { Output-Json @{ success = $false; error = "没有活动窗口（工作簿可能未激活）" }; return }
+        $win.Zoom = $pct
+        # 读回真实值：WPS 可能夹取到自己的范围，回包要说"现在到底是多少"
+        $actual = $null
+        try { $actual = $win.Zoom } catch {}
+        Output-Json @{ success = $true; data = @{ zoom = $actual; requested = $pct } }
     }
 
     "setCellFormat" {
@@ -3947,11 +4018,18 @@ switch ($Action) {
         if ($null -eq $word) { Output-Json @{ success = $false; error = "WPS Word not running" }; return }
         $doc = $(Resolve-Doc $word $p)
         $breakType = if ($p.type) { $p.type } else { "page" }
-        $breakTypeMap = @{ page = 7; column = 8; section = 2; sectionContinuous = 3 }
+        # 第 1 期第 2 章第 2 轮：补 evenPage/oddPage（wdSectionBreakEvenPage=4 / OddPage=5）。
+        # 之前 wps_word_insert_section_break 走的是另一个不存在的动作，而要接住它的四种类型
+        # 就得让这个映射表认识这四个值 —— 否则 evenPage/oddPage 会静默退化成【分页符】，
+        # 用户以为分了节，其实只是换页（后面按节设页边距会全部落到同一节上）。
+        $breakTypeMap = @{ page = 7; column = 8; section = 2; sectionContinuous = 3; evenPage = 4; oddPage = 5 }
         $bt = $breakTypeMap[$breakType]
-        if ($null -eq $bt) { $bt = 7 }
+        if ($null -eq $bt) {
+            Output-Json @{ success = $false; error = "[勿重试·先改参数] 不认识的分隔符类型「$breakType」。可用：page / column / section / sectionContinuous / evenPage / oddPage" }
+            return
+        }
         $word.Selection.InsertBreak($bt)
-        Output-Json @{ success = $true; data = @{ type = $breakType } }
+        Output-Json @{ success = $true; data = @{ type = $breakType; code = $bt } }
     }
 
     "insertHeader" {

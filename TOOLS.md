@@ -96,7 +96,7 @@
 | `wps_word_insert_image` |  | N | live | 在Word文档中插入图片。<br><sub>别名：插入图片 / 新增图片 / 加入图片</sub> |
 | `wps_word_insert_page_break` |  | N | live | 在文档光标位置插入分页符<br><sub>别名：插入页面分隔符 / 新增页面分隔符 / 加入页面分隔符</sub> |
 | `wps_word_insert_paragraph` |  | N | live | 插入一个正文段落。给了 index 就插在该段之前，不给就追加到文末。<br><sub>别名：插入段落 / 新增段落 / 加入段落</sub> |
-| `wps_word_insert_section_break` |  | N | live | 插入分节符，用于将文档分为不同的节，以便对各节应用不同的页面设置。<br><sub>别名：插入节分隔符 / 新增节分隔符 / 加入节分隔符</sub> |
+| `wps_word_insert_section_break` |  | N | live | 在光标处插入分节符，把文档分成不同的节（各节可以有不同的页边距/纸张/页眉页脚）。<br><sub>别名：插入节分隔符 / 新增节分隔符 / 加入节分隔符</sub> |
 | `wps_word_insert_table_of_figures` |  | N | live | 在文末生成"图表目录"（基于题注标签；所以要先有 add_caption 加的题注）。<br><sub>别名：插入表格offigures / 新增表格offigures / 加入表格offigures</sub> |
 | `wps_word_list_styles` |  | R | live | 列出文档里的样式。<br><sub>别名：列出样式 / 列举样式 / 样式</sub> |
 | `wps_word_merge_table_cells` |  | N | live | 合并表格里的一块矩形区域。<br><sub>别名：合并单元格 / 合并表格单元格 / 表格</sub> |
@@ -114,7 +114,7 @@
 | `wps_word_set_line_spacing` |  | — | live | 设置段落行距。<br><sub>别名：设置行距间距 / 设定行距间距 / 行距</sub> |
 | `wps_word_set_page_setup` |  | — | live | 设置文档页面布局，包括页面方向和边距。<br><sub>别名：设置页面设置 / 设定页面设置 / 页面</sub> |
 | `wps_word_set_paragraph` |  | — | live | 设置当前段落格式（对齐方式、行间距等）<br><sub>别名：设置段落 / 设定段落 / 段落</sub> |
-| `wps_word_set_text_color` |  | — | live | 设置Word文档中选中文字的颜色<br><sub>别名：设置文本颜色 / 设定文本颜色 / 文本</sub> |
+| `wps_word_set_text_color` |  | — | live | 设置选中文字的颜色。颜色可以写颜色名（red / blue / green / black）或十六进制（#FF0000）。<br><sub>别名：设置文本颜色 / 设定文本颜色 / 文本</sub> |
 | `wps_word_smart_fill_field` |  | — | live | 智能填写Word模板中的字段。自动识别关键字附近的填写模式，在正确位置插入内容并保持原有格式。<br><sub>别名：智能填充域 / 填充 / 域</sub> |
 | `wps_word_split_cell` |  | N | live | 拆分一个已合并的单元格。<br><sub>别名：拆分单元格 / 分割单元格 / 单元格</sub> |
 | `wps_word_table_row_col` |  | N | live | 在表格里插入或删除行/列。<br><sub>别名：表格行col / 行</sub> |
@@ -138,7 +138,7 @@
 | `wps_excel_auto_fill` |  | — | live | [DEPRECATED·改用 wps_excel_fill_series] 自动填充单元格区域。根据源区域的数据模式自动填充到…<br><sub>别名：自动填充 / 填充</sub> |
 | `wps_excel_auto_filter` |  | — | live | 对Excel指定范围应用自动筛选。<br><sub>别名：自动筛选 / 筛选 / 过滤</sub> |
 | `wps_excel_auto_fit` |  | — | live | 按内容自动调整行高/列宽（等同 Excel 里双击列边界）。<br><sub>别名：自适应 / 自动调整列宽 / 自动列宽</sub> |
-| `wps_excel_auto_sum` |  | — | live | 对指定范围的列或行自动求和，并将结果写入目标单元格。<br><sub>别名：自动求和 / 求和</sub> |
+| `wps_excel_auto_sum` |  | — | live | 把一段区域求和的结果写进一个单元格（等价于在该格写 =SUM(区域)）。<br><sub>别名：自动求和 / 求和</sub> |
 | `wps_excel_clean_data` |  | — | live | 数据清洗工具，支持多种清洗操作的组合。<br><sub>别名：清洗数据 / 清理数据 / 数据</sub> |
 | `wps_excel_clear_pivot_table` |  | DN | live | 清空指定透视表的数据与字段布局，保留透视表本身的位置与格式。<br><sub>别名：清空透视表 / 透视表重置 / 把透视表内容清掉</sub> |
 | `wps_excel_clear_range` |  | DN | live | 清除指定范围的内容、格式或全部。<br><sub>别名：清除区域 / 清空区域 / 区域</sub> |
@@ -155,7 +155,7 @@
 | `wps_excel_delete_rows` |  | DN | live | 删除Excel中指定位置的一行或多行。<br><sub>别名：删除多行 / 批量删行 / 删除行</sub> |
 | `wps_excel_delete_sheet` |  | DN | live | 删除当前工作簿中的指定工作表。注意：此操作不可撤销。<br><sub>别名：删除工作表 / 删掉工作表 / 去掉工作表</sub> |
 | `wps_excel_diagnose_formula` |  | R | live | 诊断公式错误，分析原因并提供修复建议。<br><sub>别名：诊断公式 / 排查公式 / 公式</sub> |
-| `wps_excel_evaluate_formula` |  | R | live | 计算并返回公式结果<br><sub>别名：求值公式 / 计算公式 / 公式</sub> |
+| `wps_excel_evaluate_formula` |  | — | live | 算一个公式的【值】并返回，不改单元格（除非你给了 cell）。<br><sub>别名：求值公式 / 计算公式 / 公式</sub> |
 | `wps_excel_export_chart_as_image` |  | — | live | 将工作表中指定的图表导出为位图图片（PNG/JPG/JPEG/GIF/BMP）。<br><sub>别名：导出图表as图片 / 输出图表as图片 / 图表</sub> |
 | `wps_excel_export_range_as_image` |  | — | live | 将工作表中指定区域导出为位图图片（PNG/JPG/JPEG/GIF/BMP）。<br><sub>别名：区域转图片 / 导出图片 / 导出区域as图片</sub> |
 | `wps_excel_fill_series` |  | — | live | 自动填充序列数据。<br><sub>别名：填充序列 / 序列</sub> |
@@ -200,7 +200,7 @@
 | `wps_excel_set_sheet_page_setup` |  | — | live | 设置打印页面：方向、缩放比例、纸张大小、按宽高缩放到几页。<br><sub>别名：页面设置 / 打印设置 / 横向打印</sub> |
 | `wps_excel_set_sheet_print_titles` |  | — | live | 设置每页重复打印的行/列（等同"打印标题行"），或清除。<br><sub>别名：打印标题 / 每页重复表头 / 重复表头行</sub> |
 | `wps_excel_set_wrap_text` |  | — | live | 设置/取消单元格自动换行。表格里最常碰的排版动作。<br><sub>别名：自动换行 / 换行显示 / 文字折行</sub> |
-| `wps_excel_set_zoom` |  | — | live | 设置当前工作表的缩放比例（10-400%）。<br><sub>别名：设置缩放 / 显示比例 / 设定缩放</sub> |
+| `wps_excel_set_zoom` |  | — | live | 设置【当前窗口】的显示缩放（10-400%），只影响你看到的比例，不改变打印。<br><sub>别名：设置缩放 / 显示比例 / 设定缩放</sub> |
 | `wps_excel_show_columns` |  | — | live | 显示Excel中已隐藏的列。<br><sub>别名：显示列 / 展示列 / 列</sub> |
 | `wps_excel_show_rows` |  | — | live | 显示Excel中已隐藏的行。<br><sub>别名：显示行 / 展示行 / 行</sub> |
 | `wps_excel_sort_range` |  | — | live | 对Excel选定区域按指定列排序。<br><sub>别名：排序区域 / 区域 / 范围</sub> |

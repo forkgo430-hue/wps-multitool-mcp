@@ -42,8 +42,10 @@ module.exports = {
     'wps_unload_tool_group',
     'wps_search_tools',
     'wps_route_intent',
-    'wps_word_set_text_color',
-    'wps_word_set_line_spacing',
+    // 第 1 期第 2 章第 1 轮移出：wps_word_set_text_color / wps_word_set_line_spacing
+    // 原先在这里，是因为它们调的动作名在 ps1 里查不到（setTextColor / setLineSpacing，零命中），
+    // 动作名推不出来，只能挂手写注解表。动作名修对之后（setFont / setParagraph），
+    // 它们能观测到真实动作名了，就不再需要"手写注解兜底"这份特例。
     'wps_ppt_set_active_target',
   ],
 };

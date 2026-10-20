@@ -636,12 +636,22 @@ export const insertCommentHandler: ToolHandler = async (
  */
 export const setTextColorDefinition: ToolDefinition = {
   name: 'wps_word_set_text_color',
-  description: '设置Word文档中选中文字的颜色',
+  description:
+    '设置选中文字的颜色。颜色可以写颜色名（red / blue / green / black）或十六进制（#FF0000）。\n\n' +
+    '与 wps_word_set_font 的关系：**同一个底层动作（setFont）**，本工具是它的【颜色子集】——' +
+    '只暴露 color 这一个属性。只想改颜色用本工具；要同时改字体名、字号、加粗、下划线，' +
+    '用 wps_word_set_font。别两个混着用，它们改的是同一批字。\n\n' +
+    '作用范围：默认只改【当前选中的文字】；range="all" 改全文。',
   category: ToolCategory.DOCUMENT,
   inputSchema: {
     type: 'object',
     properties: {
       color: { type: 'string', description: '颜色值，如 "#FF0000"、"red"' },
+      range: {
+        type: 'string',
+        description: '应用范围：selection（当前选中，默认）/ all（全文）',
+        enum: ['selection', 'all'],
+      },
     },
     required: ['color'],
   },
@@ -650,20 +660,30 @@ export const setTextColorDefinition: ToolDefinition = {
 export const setTextColorHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
-  const { color } = args as { color: string };
+  const { color, range } = args as { color: string; range?: string };
   if (!color || color.trim() === '') {
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: '颜色值不能为空！' }], error: '颜色值为空' };
   }
   try {
     const response = await wpsClient.executeMethod<{ success: boolean; message: string }>(
-      'setTextColor', // NOTE: 仅Windows支持
-      { color },
+      // 第 1 期第 2 章第 1 轮修：原先调 'setTextColor'，而 wps-com.ps1 里【没有这个动作】
+      // （零命中）→ 每次调用都落到分发器的 default 分支报 Unknown action，工具等于从未生效。
+      // 能力本来就在 setFont 上（wps-com.ps1:3839），且参数名 color 两边一致，
+      // 所以只改动作名，PS 侧一行都不动。
+      'setFont',
+      { color, range: range || 'selection' },
       WpsAppType.WRITER
     );
+    if (!response.success) {
+      // PS 的失败信息在顶层 error 上，不在 data.message 里 —— 原来读错字段，
+      // 失败时只显示"设置失败"，把真正的原因（Unknown action 之类）吞掉。
+      const msg = (response as any)?.error || (response.data as any)?.message || '设置失败';
+      return { id: uuidv4(), success: false, content: [{ type: 'text', text: `设置文字颜色失败: ${msg}` }], error: msg };
+    }
     return {
       id: uuidv4(),
-      success: response.success,
-      content: [{ type: 'text', text: response.success ? `文字颜色已设置为 ${color}` : (response.data as any)?.message || '设置失败' }],
+      success: true,
+      content: [{ type: 'text', text: `文字颜色已设置为 ${color}` }],
     };
   } catch (e: any) {
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: `设置文字颜色出错: ${e.message}` }], error: e.message };

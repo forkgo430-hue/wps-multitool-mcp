@@ -670,12 +670,18 @@ export const protectWorkbookHandler: ToolHandler = async (
  */
 export const setZoomDefinition: ToolDefinition = {
   name: 'wps_excel_set_zoom',
-  description: '设置当前工作表的缩放比例（10-400%）。',
+  description:
+    '设置【当前窗口】的显示缩放（10-400%），只影响你看到的比例，不改变打印。\n\n' +
+    '与 wps_excel_set_sheet_page_setup 的关系（这两个最容易搞混）：\n' +
+    '- 本工具改的是 `ActiveWindow.Zoom` —— 屏幕缩放，看得清不清楚。\n' +
+    '- `set_sheet_page_setup` 改的是 `PageSetup.Zoom` / FitToPages —— 打印缩放，决定印出来几页。\n' +
+    '要"打印时缩到一页"用后者；要"把表放大了看"用本工具。\n\n' +
+    '使用场景：\n- "把表格放大到 150% 看"\n- "缩到 80% 看全貌"',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
     properties: {
-      percent: { type: 'number', description: '缩放百分比，范围10-400' },
+      percent: { type: 'number', description: '缩放百分比，范围10-400（屏幕缩放，不影响打印）' },
     },
     required: ['percent'],
   },
@@ -685,19 +691,31 @@ export const setZoomHandler: ToolHandler = async (
   args: Record<string, unknown>
 ): Promise<ToolCallResult> => {
   const { percent } = args as { percent: number };
-  if (percent < 10 || percent > 400) {
-    return { id: uuidv4(), success: false, content: [{ type: 'text', text: '缩放比例必须在10-400之间' }], error: '缩放比例超出范围' };
+  if (typeof percent !== 'number' || Number.isNaN(percent) || percent < 10 || percent > 400) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: `[勿重试·先改参数] 缩放比例必须在 10-400 之间（收到 ${String(percent)}）` }],
+      error: '缩放比例超出范围',
+    };
   }
   try {
-    const response = await wpsClient.executeMethod<{ message: string }>(
-      'setZoom', // NOTE: 仅Windows支持
+    const response = await wpsClient.executeMethod<{ zoom?: number; requested?: number }>(
+      // 第 1 期第 2 章第 2 轮：动作名没变（setZoom），ps1 里原先【没有这个 case】→ 一直 Unknown action。
+      // 本轮补了 case（ActiveWindow.Zoom）。注意它与 ps1 里 PageSetup.Zoom 是两回事（打印缩放）。
+      // 原来那句 "// NOTE: 仅Windows支持" 是假的：Windows 上也不支持，压根没这个 case。
+      'setZoom',
       { percent },
       WpsAppType.SPREADSHEET
     );
     if (!response.success) {
       return { id: uuidv4(), success: false, content: [{ type: 'text', text: `设置缩放失败: ${response.error}` }], error: response.error };
     }
-    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `缩放比例已设置为${percent}%` }] };
+    // 报"现在到底是多少"：WPS 可能夹取到自己的范围，回显请求值会骗人。
+    const actual = response.data?.zoom;
+    const shown = typeof actual === 'number' ? actual : percent;
+    const note = typeof actual === 'number' && actual !== percent ? `（请求 ${percent}%，实际 ${actual}% —— WPS 夹取到了自己的范围）` : '';
+    return { id: uuidv4(), success: true, content: [{ type: 'text', text: `窗口缩放已设为 ${shown}%${note}` }] };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return { id: uuidv4(), success: false, content: [{ type: 'text', text: `设置缩放出错: ${errMsg}` }], error: errMsg };

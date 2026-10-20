@@ -946,14 +946,21 @@ export const hideColumnHandler: ToolHandler = async (
  */
 export const autoSumDefinition: ToolDefinition = {
   name: 'wps_excel_auto_sum',
-  description: '对指定范围的列或行自动求和，并将结果写入目标单元格。',
+  description:
+    '把一段区域求和的结果写进一个单元格（等价于在该格写 =SUM(区域)）。\n\n' +
+    '与 wps_excel_set_formula 的关系：**同一个底层动作（setFormula）**，本工具是它的【求和子集】——' +
+    '只拼 =SUM(range) 这一种公式。要写别的公式（AVERAGE/IF/VLOOKUP/自拼表达式）用 wps_excel_set_formula；' +
+    '要算一个值但不落到单元格里，用 wps_excel_evaluate_formula。别两个混着用，它们改的是同一批单元格。\n\n' +
+    '写进去的是【公式】不是死数字：源区域改了，目标格会跟着变（这是特性，不是差异）。' +
+    '要死数字就先算再写值 —— 用 evaluate_formula 取结果，或 set_formula 里写死。\n\n' +
+    '使用场景：\n- "把 A1:A10 的和写在 A11"\n- "给这个月的数据加一行合计"',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
     properties: {
       range: {
         type: 'string',
-        description: '要求和的数据范围，如 "A1:A10" 或 "B2:F2"',
+        description: '要求和的【源】数据范围，如 "A1:A10" 或 "B2:F2"',
       },
       targetCell: {
         type: 'string',
@@ -972,14 +979,30 @@ export const autoSumHandler: ToolHandler = async (
     targetCell: string;
   };
 
+  // 这两个参数拼的是公式文本，空值会拼出 =SUM() —— 那是语法错，写进去只会得到 #NAME?。
+  // 在 TS 侧先拦住，比让 WPS 抛一句看不懂的错更省事。
+  if (!range || !range.trim() || !targetCell || !targetCell.trim()) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text', text: '[勿重试·先改参数] range 与 targetCell 都不能为空' }],
+      error: 'range/targetCell 为空',
+    };
+  }
+
   try {
+    const formula = `=SUM(${range.trim()})`;
     const response = await wpsClient.executeMethod<{
       range: string;
-      targetCell: string;
-      result: number;
+      formula: string;
+      value: unknown;
     }>(
-      'autoSum', // NOTE: 仅Windows支持
-      { range, targetCell },
+      // 第 1 期第 2 章第 2 轮修：原先调 'autoSum'，而 wps-com.ps1 里【没有这个动作】（零命中）
+      // → 每次调用都落到默认分支报 Unknown action，工具从上线起从未生效过。
+      // 能力本来就在 setFormula 上（它接受 range + formula），所以只改动作名 + 拼公式，PS 侧只补了 sheet 解析。
+      // 原来那句 "// NOTE: 仅Windows支持" 是假的：Windows 上也不支持，压根没这个 case。
+      'setFormula',
+      { range: targetCell.trim(), formula },
       WpsAppType.SPREADSHEET
     );
 
@@ -992,13 +1015,17 @@ export const autoSumHandler: ToolHandler = async (
       };
     }
 
+    // 读回值：公式写进去了不等于算出了数（引用空区域得 0，引用坏区域得 #REF!）。
+    // 有值就报，没读到就明说 —— 不能让用户以为一定成功了。
+    const v = response.data?.value;
+    const shown = v === undefined || v === null || v === '' ? '（没读到结果值，公式已写入，请用 wps_excel_get_cell_value 核对）' : String(v);
     return {
       id: uuidv4(),
       success: true,
       content: [
         {
           type: 'text',
-          text: `自动求和成功！\n求和范围: ${range}\n结果写入: ${targetCell}`,
+          text: `自动求和完成！\n求和范围: ${range}\n写入: ${targetCell} = ${formula}\n当前值: ${shown}`,
         },
       ],
     };

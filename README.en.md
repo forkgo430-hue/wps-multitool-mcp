@@ -188,7 +188,7 @@ Every row below cites `file:line` so you can check it yourself. Line numbers mat
 <!-- AUTO:tool-stats:start -->
 - **284 tools** (8 built-in + 276 specialized); **only 40 listed by default** (essential ∩ live-verified, load on demand — see `scripts/manual/basic-tier-verify.js`)
 - Distribution (by tool group, built-ins counted in their app group): Common 27 (incl. core) / Word 67 / Excel 89 / PPT 101
-- Annotations (measured): read-only 53 / destructive 33 / non-idempotent 105 — coverage 284/284
+- Annotations (measured): read-only 52 / destructive 33 / non-idempotent 105 — coverage 284/284
 <!-- AUTO:tool-stats:end -->
 
 <a id="requirements"></a>

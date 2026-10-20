@@ -1,9 +1,10 @@
 /**
  * 本文件由 scripts/gen-action-routes.js 自动生成，请勿手改。
- * 源：scripts/wps-com.ps1 的 switch ($Action) 分支。
+ * 源：scripts/wps-com.ps1 的【顶层】switch ($Action) 分支（嵌套 switch 的分支标签不算动作）。
  * 重新生成：node scripts/gen-action-routes.js
  *
- * 统计：common=30  word=72  ppt=111  excel=101  合计 314
+ * 统计：common=20  word=72  ppt=111  excel=103  合计 306
+ * 口径：可分发动作 306 个（含 __ 内部探针 10 个）→ 面向用户 296 个
  */
 
 import type { AppKey } from './action-routes';
@@ -19,7 +20,6 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "__probeWordCaps": 'word',
   "__sleep": 'common',
   "__sleepRead": 'common',
-  "acceptOne": 'common',
   "addAnimation": 'ppt',
   "addAnimationPreset": 'ppt',
   "addArrow": 'ppt',
@@ -42,8 +42,6 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "addStyle": 'word',
   "addTextBox": 'ppt',
   "addTitleDecoration": 'ppt',
-  "afterColon": 'common',
-  "afterLabel": 'common',
   "alignShapes": 'ppt',
   "applyColorScheme": 'ppt',
   "applyStyle": 'word',
@@ -110,6 +108,7 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "duplicateSlide": 'ppt',
   "enableTrackChanges": 'word',
   "endSlideShow": 'ppt',
+  "evaluateFormula": 'excel',
   "exportChartAsImage": 'excel',
   "exportRangeAsImage": 'excel',
   "exportSlideAsImage": 'ppt',
@@ -205,21 +204,17 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "openWorkbook": 'excel',
   "pasteRange": 'excel',
   "ping": 'common',
-  "placeholder": 'common',
   "protectSheet": 'excel',
   "protectWorkbook": 'excel',
   "quitWps": 'common',
   "refreshLinks": 'excel',
   "refreshPivotTables": 'excel',
-  "rejectOne": 'common',
   "removeAnimation": 'ppt',
   "removeConditionalFormat": 'excel',
   "removeDataValidation": 'excel',
   "removeDuplicates": 'excel',
   "removePptHyperlink": 'ppt',
   "removeSlideTransition": 'ppt',
-  "remove_duplicates": 'common',
-  "remove_empty_rows": 'common',
   "renameSheet": 'excel',
   "replaceBookmarkContent": 'word',
   "replaceInSheet": 'excel',
@@ -293,6 +288,7 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "setTextBoxStyle": 'ppt',
   "setTextBoxText": 'ppt',
   "setWrapText": 'excel',
+  "setZoom": 'excel',
   "showColumns": 'excel',
   "showRows": 'excel',
   "showWps": 'common',
@@ -309,11 +305,8 @@ export const ACTION_ROUTES: Record<string, AppKey> = {
   "switchWorkbook": 'excel',
   "textToColumns": 'excel',
   "transpose": 'excel',
-  "trim": 'common',
-  "underline": 'common',
   "unfreezePanes": 'excel',
   "unifyFont": 'ppt',
-  "unify_date": 'common',
   "unmergeCells": 'excel',
   "unprotectSheet": 'excel',
   "updateChart": 'excel',

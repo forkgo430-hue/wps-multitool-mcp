@@ -132,18 +132,17 @@ const EXTRA_ANNOTATIONS: Record<string, ToolAnnotations> = {
   wps_route_intent: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 
   /**
-   * 【六】动作名【查不到】但工具确实要改文档（2 个）+ 1 个改的是服务器状态。
-   *
-   * wps_word_set_text_color / wps_word_set_line_spacing 调的是 'setTextColor' /
-   * 'setLineSpacing'，而 wps-com.ps1 里根本没有这两个 case（实测：全文零命中）。
-   * 动作缺失是【另一条 bug】，已单列待修；但注解不能因为它就空着 ——
-   * 这两件事都是改用户文档的工具，AI 必须知道它们不是只读的。
+   * 【六】动作名【查不到】但工具确实要改文档（1 个）+ 1 个改的是服务器状态。
    *
    * wps_ppt_set_active_target 会锁定后续所有 PPT 操作的目标文稿：它不改文档，
    * 但决定了后面每一次写入落在哪份文件上。判成只读会让客户端跳过确认。
+   *
+   * 第 1 期第 2 章第 1 轮移出：wps_word_set_text_color / wps_word_set_line_spacing
+   * 原先也在这张表里，原因是它们调的动作名在 ps1 里查不到（setTextColor / setLineSpacing，
+   * 实测零命中）—— 动作缺失是另一条 bug，已单列修掉。动作名修对之后（setFont / setParagraph），
+   * 它们的注解由真动作名算出来，分类与原来手写的【逐字段相同】
+   * （readOnly=false / destructive=false / idempotent=true），所以这里不再需要特例。
    */
-  wps_word_set_text_color: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  wps_word_set_line_spacing: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   wps_ppt_set_active_target: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 

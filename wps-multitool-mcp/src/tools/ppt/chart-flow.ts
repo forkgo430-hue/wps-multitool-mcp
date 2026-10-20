@@ -44,6 +44,11 @@ export const insertPptChartDefinition: ToolDefinition = {
 - doughnut: 环形图
 - radar: 雷达图
 
+**⚠️ 插进来的图表先带的是 WPS 的默认数据**。这一步的 data 参数【不生效】——
+形状和图表类型会照你说的建，但数据是 WPS 自带的那份。
+要真数据：**接着调 wps_ppt_set_ppt_chart_data**，用本工具返回的 chartIndex 定位那张图。
+（返回里的 chartIndex 就是插入后形状总数，因为图表总是追加在最后。）
+
 使用场景：
 - "在第2页插入一个柱状图"
 - "添加销售数据的饼图"

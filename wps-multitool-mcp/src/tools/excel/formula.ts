@@ -322,24 +322,94 @@ export const diagnoseFormulaHandler: ToolHandler = async (
 
 export const evaluateFormulaDefinition: ToolDefinition = {
   name: 'wps_excel_evaluate_formula',
-  description: '计算并返回公式结果',
+  description:
+    '算一个公式的【值】并返回，不改单元格（除非你给了 cell）。\n\n' +
+    '与相邻工具的关系（三个长得很像，别混）：\n' +
+    '- wps_excel_set_formula：把公式【写进】单元格（落盘，之后源区域变了会跟着变）。\n' +
+    '- wps_excel_evaluate_formula（本工具）：只【算】，默认不写；给 cell 才把算好的**值**写进去（不是公式）。\n' +
+    '- wps_excel_auto_sum：本工具 + set_formula 的求和快捷方式，只拼 =SUM(区域) 并写进目标格。\n\n' +
+    '使用场景：\n- "先算一下这组数的和是多少"（不写表）\n- "算出来填到 B1"（给 cell）\n- "验一下这个公式对不对"',
   category: ToolCategory.SPREADSHEET,
   inputSchema: {
     type: 'object',
     properties: {
-      formula: { type: 'string', description: '要计算的公式，如 =SUM(A1:A10)' },
-      cell: { type: 'string', description: '目标单元格（可选），如 A1' },
+      formula: { type: 'string', description: '要计算的公式，如 =SUM(A1:A10)、=AVERAGE(B:B)、1+2（开头不加 = 会自动补）' },
+      cell: { type: 'string', description: '可选：把算好的【值】写进这个单元格，如 A1。不给就只返回不落盘' },
     },
     required: ['formula'],
   },
 };
 
 export const evaluateFormulaHandler = async (args: Record<string, unknown>) => {
-  const response = await wpsClient.executeMethod<{ success: boolean; result: unknown }>(
-    'evaluateFormula', args, WpsAppType.SPREADSHEET // NOTE: 仅Windows支持
+  const { formula, cell } = args as { formula?: string; cell?: string };
+  if (!formula || !formula.trim()) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text' as const, text: '[勿重试·先改参数] formula 不能为空（如 =SUM(A1:A10)）' }],
+      error: 'formula 为空',
+    };
+  }
+
+  const response = await wpsClient.executeMethod<{ formula: string; result: unknown }>(
+    // 第 1 期第 2 章第 2 轮：动作名没变（evaluateFormula），但 ps1 里原先【没有这个 case】，
+    // 一直是 Unknown action。本轮补了 case（Application.Evaluate，**只算不写**）。
+    // 原来那句 "// NOTE: 仅Windows支持" 是假的：Windows 上也不支持，压根没这个 case。
+    'evaluateFormula',
+    { formula: formula.trim() },
+    WpsAppType.SPREADSHEET
   );
 
-  return { id: uuidv4(), success: response.success, content: [{ type: "text" as const, text: JSON.stringify(response.data) }] };
+  if (!response.success) {
+    return {
+      id: uuidv4(),
+      success: false,
+      content: [{ type: 'text' as const, text: `公式计算失败: ${response.error ?? '未知原因'}` }],
+      error: response.error ?? '公式计算失败',
+    };
+  }
+
+  // 原来直接把 data 整个 JSON.stringify —— 失败时打的是 "undefined"，成功时打的是一坨字段名，
+  // 用户看不出"结果是多少"。这里只报结果，并把落盘位置说清。
+  const raw = response.data?.result;
+  const shown =
+    raw === null || raw === undefined
+      ? '（空）'
+      : typeof raw === 'object'
+        ? JSON.stringify(raw)
+        : String(raw);
+
+  // 落盘走单独的写入动作（setRangeData），不塞进 evaluateFormula 里：
+  // evaluateFormula 被 cancellable.ts 归为【只读】（客户端据此跳过写确认），
+  // 让它在给了 cell 时写单元格就是"声明只读却动手改"。拆开后两个动作各守各的注解。
+  let written = '';
+  if (cell && cell.trim()) {
+    const w = await wpsClient.executeMethod<{ success: boolean }>(
+      'setRangeData',
+      { range: cell.trim(), data: [[raw as string | number]] },
+      WpsAppType.SPREADSHEET
+    );
+    if (!w.success) {
+      return {
+        id: uuidv4(),
+        success: false,
+        content: [
+          {
+            type: 'text' as const,
+            text: `算出来了（${shown}），但写入 ${cell} 失败: ${w.error ?? '未知原因'}。值没有落盘，别当成已写入。`,
+          },
+        ],
+        error: w.error ?? '写入失败',
+      };
+    }
+    written = `\n已把该值写入 ${cell.trim()}（写的是值，不是公式）`;
+  }
+
+  return {
+    id: uuidv4(),
+    success: true,
+    content: [{ type: 'text' as const, text: `计算结果: ${shown}\n公式: ${response.data?.formula ?? formula}${written}` }],
+  };
 };
 
 export const setPrintAreaDefinition: ToolDefinition = {

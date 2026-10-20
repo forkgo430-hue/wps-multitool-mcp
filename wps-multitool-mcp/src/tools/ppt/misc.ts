@@ -555,6 +555,11 @@ export const addPptHyperlinkDefinition: ToolDefinition = {
 
 支持网页链接、邮件链接、幻灯片内部跳转等。
 
+**⚠️ 加上了，但目前读不回来**。实测：加完链接后，本项目里能读形状信息的几个接口
+（形状列表、文本框、页数）输出逐字节相同，导出成图片也不渲染它 ——
+对象模型里的超链接地址是写进去了，但**没有任何读接口把它返回给你**。
+所以"加完再查一遍查不到"是正常的，不代表没加上；要确认只能去 WPS 里点一下那个形状。
+
 使用场景：
 - "给按钮添加链接"
 - "设置点击跳转到网页"
@@ -636,6 +641,10 @@ export const addPptHyperlinkHandler: ToolHandler = async (
 export const removePptHyperlinkDefinition: ToolDefinition = {
   name: 'wps_ppt_remove_ppt_hyperlink',
   description: `移除幻灯片中形状的超链接。
+
+**⚠️ 同样读不回来**。实测：移除之后导出成图片的字节与添加之后完全相同，
+本项目也没有读接口能告诉你链接还在不在。所以"移除后再查一遍还有"或"没有了"
+都说明不了问题，要确认只能去 WPS 里点一下那个形状。
 
 使用场景：
 - "删除按钮的链接"
@@ -893,6 +902,11 @@ export const startSlideShowDefinition: ToolDefinition = {
   description: `开始幻灯片放映。
 
 可以从指定页面开始放映，默认从第1页开始。
+
+**⚠️ 放映是全屏的，退出只能由人按 Esc（或点一下屏幕）**。程序没法把它收尾 ——
+文稿可以关，但放映态退不出去，会把后续所有操作卡在放映画面上。
+所以：**调它之前先想好这一步之后还要不要继续自动操作**；
+如果后面还有活要干，先把活干完再放映。
 
 使用场景：
 - "放映幻灯片"

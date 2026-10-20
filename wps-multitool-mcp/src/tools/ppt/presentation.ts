@@ -424,6 +424,10 @@ export const setSlideThemeDefinition: ToolDefinition = {
 ApplyTemplate(文件)，没有"按主题名切换"的接口。传「商务主题」这种名字会明确报错，
 不会假装成功。
 
+**主题包从哪来**：.thmx 是 Office/WPS 的主题文件，需要你自己从模板里另存一份
+（Word/PPT 里「设计 → 变体 → 保存为模板」）。本工具不能凭空生成一个主题 ——
+它只负责把已有的主题文件套上去。
+
 使用场景：
 - "用这个模板文件的主题"  → theme: "D:\\\\模板\\\\商务.thmx"
 - "套用公司模板"          → theme: "D:\\\\公司\\\\模板.potx"
@@ -451,7 +455,7 @@ export const setSlideThemeHandler: ToolHandler = async (
       success: boolean;
       message: string;
     }>(
-      'setSlideTheme', // NOTE: 仅Windows支持
+      'setSlideTheme', // 第 1 期第 2 章第 2 轮：这句原为「仅Windows支持」，是假注释 —— 该动作曾长期不存在于 ps1。第 6 轮已补 case，现在 Windows 上真能用。
       { theme },
       WpsAppType.PRESENTATION
     );

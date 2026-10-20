@@ -37,6 +37,16 @@ const { AsyncLocalStorage } = require('async_hooks');
 const ROOT = path.resolve(__dirname, '..', '..');
 const OUT = path.join(ROOT, 'src', 'server', 'tool-annotations.generated.ts');
 
+/**
+ * 顶层 case 解析器与路由表生成器共用一份实现（第 1 期第 2 章第 2 轮）。
+ *
+ * 为什么不能各写一套：这里原先自己用正则扫整份 ps1，于是**嵌套 switch 的分支标签**
+ * （trim / remove_duplicates / unify_date / remove_empty_rows / placeholder / underline /
+ * afterColon / afterLabel / acceptOne / rejectOne）也被当成了合法动作名 —— 校验形同虚设，
+ * 而生成的路由表同样虚高 10。两套解析必然分裂，分裂的结局是"路由表说 304、校验说 314"。
+ */
+const { parseTopLevelCases } = require(path.join(ROOT, 'scripts', 'gen-action-routes.js'));
+
 const { wpsClient } = require(path.join(ROOT, 'dist', 'client', 'wps-client.js'));
 const { toolRegistry } = require(path.join(ROOT, 'dist', 'server', 'tool-registry.js'));
 const { allTools } = require(path.join(ROOT, 'dist', 'tools', 'index.js'));
@@ -78,6 +88,23 @@ const STATIC_ACTIONS = {
   wps_ppt_set_animation: ['addAnimation', 'setAnimationOrder'],
   wps_ppt_set_background: ['setMasterBackground', 'setBackgroundColor', 'setSlideBackground', 'getSlideCount'],
   wps_ppt_set_transition: ['applyTransitionToAll', 'setSlideTransition'],
+  // 第 1 期第 2 章第 1 轮：这两个原先调的是 ps1 里不存在的动作（setTextColor / setLineSpacing），
+  // 动作名推不出来，只能挂手写注解表。现在动作名修对了（setFont / setParagraph），
+  // 但它们仍然观测不到 —— handler 先校验必填参数（color / lineSpacing），
+  // 空参探测在走到调用出口之前就返回了。所以走静态表。
+  // 分类核对过：setFont / setParagraph 推出来的注解与原来的手写值【逐字段相同】
+  // （readOnly=false / destructive=false / idempotent=true），所以换成真动作名不改变安全语义。
+  wps_word_set_text_color: ['setFont'],
+  wps_word_set_line_spacing: ['setParagraph'],
+  // 第 1 期第 2 章第 2 轮：auto_sum 原先调 'autoSum'（ps1 里不存在）→ 注解是拿假动作名算的。
+  // 现在改调 setFormula，但它在发出命令前先校验 range/targetCell，空参探测到不了出口，
+  // 观测不到 → 走静态表。setFormula 的注解是"写入/非破坏/幂等"，与本工具语义一致。
+  wps_excel_auto_sum: ['setFormula'],
+  // 同上：evaluate_formula 先校验 formula，空参探测到不了出口。
+  // 它有两个动作：算（evaluateFormula，只读）与可选落盘（setRangeData，写入）。
+  // 必须两个都登记 —— 只登记 evaluateFormula 会让工具被标成"只读"，
+  // 而它给了 cell 就会写单元格，客户端拿这个注解会跳过写确认。
+  wps_excel_evaluate_formula: ['evaluateFormula', 'setRangeData'],
 };
 /** 观测值与静态表不一致的工具（漂移线索，只告警不退出） */
 const drift = [];
@@ -159,7 +186,7 @@ wpsClient.invokeAction = async (action, params, appKey) => {
   };
 
   /**
-   * wps-com.ps1 里真实存在的动作名全集。
+   * wps-com.ps1 的【顶层】switch ($Action) 直接 case 名全集。
    *
    * 为什么必须校验：150ms 超时之下，**慢 handler 会在走到出口之前就被判超时**，
    * 于是它落进 infer() 兜底 —— 而 infer 是纯字符串变换，推出来的名字**不一定存在**。
@@ -171,21 +198,32 @@ wpsClient.invokeAction = async (action, params, appKey) => {
    * 后果不是注解表难看：这张表喂 tool-annotations.ts 的 destructiveHint /
    * idempotentHint，写进去一个不存在的动作名，判定就基于假输入做决策。
    *
-   * 所以：**推断出来的名字必须在 wps-com.ps1 里查得到，否则不许写。**
+   * ★ 第 1 期第 2 章第 2 轮：这里原来是"扫整份文件的正则"，会把嵌套 switch 的
+   *   分支标签也算成合法动作（trim / placeholder / acceptOne…），于是校验永远绿。
+   *   现在与路由表生成器共用 parseTopLevelCases（按括号深度只取顶层 case）。
    */
-  const realActions = new Set(
-    fs
-      .readFileSync(path.join(ROOT, 'scripts', 'wps-com.ps1'), 'utf8')
-      .split('\n')
-      .map((l) => l.match(/^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\{/))
-      .filter(Boolean)
-      .map((m) => m[1])
-  );
+  let topLevel;
+  try {
+    topLevel = parseTopLevelCases(path.join(ROOT, 'scripts', 'wps-com.ps1'));
+  } catch (e) {
+    console.error(`✗ 解析 wps-com.ps1 的顶层 case 失败：${e.message}`);
+    process.exit(1);
+  }
+  const realActions = new Set(topLevel.cases.map((c) => c.name));
+
+  /**
+   * 豁免名单：确实合法、但不在 ps1 顶层 switch 里的动作名。
+   *
+   * **目前为空** —— 也就是说"表里出现的每个动作名都必须能在 ps1 顶层查到"。
+   * 真要加，必须写清出处（哪个文件/哪个机制产生了这个动作，为什么不走 ps1 分发），
+   * 否则它就变成第二个"校验永远绿"的口子。
+   */
+  const EXEMPT_ACTIONS = new Set([]);
 
   // 静态表本身也要受同一条约束：写进去的名字必须在 ps1 里真有这个 case。
   // 不然"消灭 flaky"就变成了"把一个假名字固化下来"，比抖动更糟。
   const badStatic = Object.entries(STATIC_ACTIONS).flatMap(([tool, acts]) =>
-    acts.filter((a) => !realActions.has(a)).map((a) => `${tool} → ${a}`)
+    acts.filter((a) => !realActions.has(a) && !EXEMPT_ACTIONS.has(a)).map((a) => `${tool} → ${a}`)
   );
   if (badStatic.length) {
     console.error(`✗ 静态表里有 wps-com.ps1 中不存在的动作名：${badStatic.join(', ')}`);
@@ -218,6 +256,33 @@ wpsClient.invokeAction = async (action, params, appKey) => {
         unresolved.push(name);
       }
     }
+  }
+
+  // ---- 2.5 全量交叉校验：表里【每一个】动作名都必须在 ps1 顶层 switch 里存在 ----
+  // 这是本轮真正要堵的口子（T2）。
+  // 原来只有 STATIC_ACTIONS（手写的那几个）受校验，**自动观测到的名字完全不校验** ——
+  // 于是 wps_excel_auto_sum 调 'autoSum'、wps_excel_set_zoom 调 'setZoom' 这类
+  // "ps1 里压根没有的动作" 一路写进注解表，谁也没红过。工具从上线起就没成功过一次。
+  // 现在不分来源（观测 / 静态 / 推断），一律对着顶层 case 查；查不到就非 0 退出。
+  const missingActions = [];
+  for (const [tool, acts] of Object.entries(map)) {
+    for (const a of acts) {
+      if (!realActions.has(a) && !EXEMPT_ACTIONS.has(a)) missingActions.push({ tool, action: a });
+    }
+  }
+  if (missingActions.length) {
+    console.error(
+      `✗ 有 ${missingActions.length} 个动作名在 wps-com.ps1 的【顶层】switch 里不存在。` +
+        '这些工具调用时会回 Unknown action（等于从未生效）：'
+    );
+    for (const m of missingActions) console.error(`   - ${m.action}   ← 工具 ${m.tool}`);
+    console.error(
+      '  修法（二选一）：\n' +
+        '    ① TS 侧改调 ps1 里已存在的等价动作（如 autoSum → setFormula）；\n' +
+        '    ② 给 wps-com.ps1 加 case（先查重名、case 独占一行），再重跑本脚本 + gen-action-routes.js。\n' +
+        '  注意：嵌套 switch 的分支标签（trim/placeholder/acceptOne…）不是动作，别往 ps1 里加同名 case 糊过去。'
+    );
+    process.exit(1);
   }
 
   // ---- 3. 落盘 ------------------------------------------------------------
@@ -253,6 +318,11 @@ wpsClient.invokeAction = async (action, params, appKey) => {
   console.log(`  手写注解（不推断）    : ${HANDWRITTEN.size} → ${[...HANDWRITTEN].join(', ')}`);
   console.log(`一工具多动作    : ${multi.length}`);
   for (const [n, a] of multi.slice(0, 6)) console.log(`   ${n} → ${a.join(', ')}`);
+  const checkedActions = new Set(Object.values(map).flat());
+  console.log(
+    `动作名交叉校验  : ${checkedActions.size} 个动作名全部存在于 ps1 顶层 switch` +
+      `（ps1 顶层 case ${topLevel.total} 个，重复 ${topLevel.dups.length} 个）`
+  );
 
   // 自检：注解表条目必须与真实注册表一致，否则就是漂移
   if (Object.keys(map).length !== tools.length) {
