@@ -23,7 +23,17 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const DIR = __dirname;
-const ALL = true;
+/**
+ * 档位开关。
+ *
+ * 2026-10-20 修：这里原本硬编码 `const ALL = true;`，于是 `npm run verify` 与
+ * `npm run verify:all` 行为完全一样 —— 文件头与 package.json 都承诺"无参是快测档"，
+ * 实际不存在这个档位。改回读 argv 后：
+ *   npm run verify     → 快测（FAST 14 项，不起子进程）
+ *   npm run verify:all → 全量（FAST + HEAVY 7 项，含真 WPS）
+ * CI 走的是 verify:all，行为不变。
+ */
+const ALL = process.argv.includes('--all');
 
 /** 不需要 spawn 子进程的快测：本地随手跑、CI 每提交都跑 */
 const FAST = [

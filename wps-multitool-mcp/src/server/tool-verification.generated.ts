@@ -51,7 +51,7 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_excel_delete_rows": "live",
   "wps_excel_delete_sheet": "live",
   "wps_excel_diagnose_formula": "live",
-  "wps_excel_evaluate_formula": "live",
+  "wps_excel_evaluate_formula": "static",
   "wps_excel_export_chart_as_image": "live",
   "wps_excel_export_range_as_image": "live",
   "wps_excel_fill_series": "live",
@@ -116,7 +116,7 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
   "wps_excel_unprotect_sheet": "live",
   "wps_excel_update_chart": "live",
   "wps_excel_update_pivot_table": "live",
-  "wps_excel_write_range": "live",
+  "wps_excel_write_range": "static",
   "wps_execute_method": "live",
   "wps_get_active_presentation": "static",
   "wps_get_active_workbook": "live",
@@ -297,4 +297,4 @@ export const TOOL_VERIFICATION: Readonly<Record<string, ToolVerification>> = {
 };
 
 /** 生成时的总量，供自检/文档使用（别手写这些数字） */
-export const VERIFICATION_TOTALS = { live: 201, static: 83, total: 284 } as const;
+export const VERIFICATION_TOTALS = { live: 199, static: 85, total: 284 } as const;
